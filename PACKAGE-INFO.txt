@@ -1,0 +1,134 @@
+═══════════════════════════════════════════════════════════════════
+ MUT-MASTER PACKAGE INFORMATION
+═══════════════════════════════════════════════════════════════════
+
+Package Name:    MUT-MASTER
+Version:         1.0.0
+Package Size:    7.7 MB (without node_modules)
+Created:         November 21, 2025
+Status:          ✅ Production Ready
+
+═══════════════════════════════════════════════════════════════════
+ CONTENTS VERIFICATION
+═══════════════════════════════════════════════════════════════════
+
+✅ Source Code
+   • src/ - React frontend (screens, components, store)
+   • electron/ - Electron main process & hardware integration
+   • python/ - Python utilities (stitching, pipeline)
+   • MUT-distribution/ - Production video pipeline
+
+✅ Configuration Files
+   • package.json - Node dependencies
+   • tsconfig.json - TypeScript config
+   • vite.config.ts - Vite bundler config
+   • tailwind.config.ts - Tailwind CSS config
+   • postcss.config.js - PostCSS config
+
+✅ Environment Files (WITH CREDENTIALS)
+   • ./.env - Main application config
+   • ./MUT-distribution/.env - AWS credentials for pipeline
+   • ./python/.env - Python utilities config
+
+✅ Assets & Templates
+   • frames/ - Frame templates (frame1.png, frame2.png)
+   • public/ - Static assets (logos, frames)
+   • assets/ - Additional assets
+
+✅ Documentation
+   • README-SETUP.md - Complete setup guide
+   • PACKAGE-INFO.txt - This file
+   • DEVELOPMENT_PLAN.md - Development documentation
+   • FLOW.md - Application flow documentation
+   • NICEPAY_ANALYSIS.md - Payment integration docs
+
+✅ Python Scripts
+   • MUT-distribution/pipeline.py - Main processing pipeline
+   • python/stitch_images.py - Image stitching utility
+   • MUT-distribution/requirements.txt - Python dependencies
+
+═══════════════════════════════════════════════════════════════════
+ RECENT FIXES INCLUDED
+═══════════════════════════════════════════════════════════════════
+
+✅ Countdown Timer Synchronization
+   - Fixed timing bug for consistent 1-second intervals
+   - All 3 photos now have smooth countdown
+
+✅ Photo Counter Display
+   - Fixed "1/3" appearing twice bug
+   - Now correctly shows: 1/3 → 2/3 → 3/3
+
+✅ Camera Flash Effect
+   - Added white flash animation on capture
+   - 300ms smooth fade in/out effect
+
+✅ AWS Upload Cleanup
+   - Automatic video deletion after S3 upload
+   - Saves disk space, keeps QR codes
+   - Cleans up: final video, stitched video, temp images
+
+═══════════════════════════════════════════════════════════════════
+ QUICK START
+═══════════════════════════════════════════════════════════════════
+
+1. Install dependencies:
+   npm install
+
+2. Install Python packages:
+   cd MUT-distribution && pip3 install -r requirements.txt
+   cd ../python && pip3 install -r requirements.txt
+
+3. Run development server:
+   npm run dev
+
+4. Build for production:
+   npm run build
+
+═══════════════════════════════════════════════════════════════════
+ SECURITY WARNING
+═══════════════════════════════════════════════════════════════════
+
+⚠️  THIS PACKAGE CONTAINS SENSITIVE CREDENTIALS ⚠️
+
+The .env files include:
+• AWS Access Key ID
+• AWS Secret Access Key
+• S3 Bucket configurations
+• API credentials
+
+BEFORE SHARING PUBLICLY:
+1. Remove or redact all .env files
+2. Replace credentials with placeholders
+3. Add .env to .gitignore
+
+═══════════════════════════════════════════════════════════════════
+ EXCLUDED FROM PACKAGE (Can be regenerated)
+═══════════════════════════════════════════════════════════════════
+
+• node_modules/ - Install with: npm install
+• dist/ dist-electron/ - Build with: npm run build
+• output/ - Generated videos (auto-cleaned after upload)
+• .git/ - Version control history
+
+═══════════════════════════════════════════════════════════════════
+ SYSTEM REQUIREMENTS
+═══════════════════════════════════════════════════════════════════
+
+• Node.js 18+ and npm
+• Python 3.8+
+• FFmpeg (for video processing)
+• macOS/Windows/Linux
+• Camera device (for photo capture)
+
+═══════════════════════════════════════════════════════════════════
+ SUPPORT
+═══════════════════════════════════════════════════════════════════
+
+For setup issues, refer to:
+• README-SETUP.md - Complete setup guide
+• Troubleshooting section in README-SETUP.md
+
+═══════════════════════════════════════════════════════════════════
+ END OF PACKAGE INFO
+═══════════════════════════════════════════════════════════════════

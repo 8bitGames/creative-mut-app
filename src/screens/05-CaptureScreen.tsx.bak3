@@ -1,0 +1,170 @@
+// src/screens/05-CaptureScreen.tsx
+import { useEffect, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useAppStore } from '@/store/appStore';
+
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      duration: 0.3,
+    },
+  },
+  exit: { opacity: 0 },
+};
+
+const countdownVariants = {
+  initial: { scale: 0.5, opacity: 0 },
+  animate: {
+    scale: [0.5, 1.2, 1],
+    opacity: [0, 1, 1],
+    transition: {
+      duration: 0.8,
+      ease: 'easeOut',
+    },
+  },
+  exit: {
+    scale: 1.5,
+    opacity: 0,
+    transition: {
+      duration: 0.3,
+    },
+  },
+};
+
+export function CaptureScreen() {
+  const setScreen = useAppStore((state) => state.setScreen);
+  const [countdown, setCountdown] = useState<number | null>(3);
+  const [photoNumber] = useState(1); // Could be managed in session store if needed
+
+  useEffect(() => {
+    // Countdown sequence: 3, 2, 1, then capture
+    const countdownTimer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev === null || prev <= 1) {
+          clearInterval(countdownTimer);
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    // Navigate to processing screen after 5 seconds total
+    const navigationTimer = setTimeout(() => {
+      setScreen('processing');
+    }, 5000);
+
+    return () => {
+      clearInterval(countdownTimer);
+      clearTimeout(navigationTimer);
+    };
+  }, [setScreen]);
+
+  return (
+    <motion.div
+      className="fullscreen bg-black text-white flex flex-col items-center justify-between py-10 px-8 relative"
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+      exit="exit"
+    >
+      {/* Top Bar */}
+      <div className="w-full flex items-center justify-between">
+        <p className="text-xl font-medium text-gray-300">촬영 중입니다...</p>
+        <div className="bg-white text-black px-5 py-2 rounded-full">
+          <p className="text-lg font-bold">
+            사진 {photoNumber}/3
+          </p>
+        </div>
+      </div>
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col items-center justify-center gap-8 w-full">
+        {/* Countdown Display */}
+        <div className="relative w-64 h-64 flex items-center justify-center">
+          <AnimatePresence mode="wait">
+            {countdown !== null && countdown > 0 && (
+              <motion.div
+                key={countdown}
+                variants={countdownVariants}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                className="absolute"
+              >
+                <p className="text-[12rem] font-bold text-white leading-none">
+                  {countdown}
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Flash effect when countdown reaches 0 */}
+          {countdown === null && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: [0, 1, 0] }}
+              transition={{ duration: 0.5, times: [0, 0.1, 1] }}
+              className="absolute inset-0 bg-white rounded-full"
+            />
+          )}
+        </div>
+
+        {/* Camera Preview Placeholder - Portrait 9:16 */}
+        <div className="relative w-full px-6">
+          <div className="bg-gray-900 border-4 border-white rounded-2xl overflow-hidden aspect-[9/16] shadow-2xl">
+            {/* Preview Placeholder */}
+            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-900">
+              <div className="text-center">
+                <div className="text-6xl mb-3">📷</div>
+                <p className="text-2xl text-gray-400">
+                  Camera Preview
+                </p>
+                <p className="text-lg text-gray-500 mt-1">
+                  1080 × 1920
+                </p>
+              </div>
+            </div>
+
+            {/* Frame Overlay Guides */}
+            <div className="absolute inset-0 pointer-events-none">
+              {/* Center Cross */}
+              <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
+                <div className="w-12 h-0.5 bg-white opacity-50" />
+                <div className="w-0.5 h-12 bg-white opacity-50 absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2" />
+              </div>
+
+              {/* Corner Guides */}
+              <div className="absolute top-4 left-4 w-8 h-8 border-t-2 border-l-2 border-white opacity-50" />
+              <div className="absolute top-4 right-4 w-8 h-8 border-t-2 border-r-2 border-white opacity-50" />
+              <div className="absolute bottom-4 left-4 w-8 h-8 border-b-2 border-l-2 border-white opacity-50" />
+              <div className="absolute bottom-4 right-4 w-8 h-8 border-b-2 border-r-2 border-white opacity-50" />
+            </div>
+
+            {/* Recording Indicator */}
+            <div className="absolute top-4 left-4 flex items-center gap-2">
+              <motion.div
+                animate={{ opacity: [1, 0.3, 1] }}
+                transition={{ duration: 1.5, repeat: Infinity }}
+                className="w-4 h-4 bg-red-500 rounded-full"
+              />
+              <p className="text-lg font-bold text-white">REC</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Capture Hint (shown briefly) */}
+      {countdown === null && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full text-center mb-4"
+        >
+          <p className="text-3xl font-medium text-green-400">✓ 촬영 완료</p>
+        </motion.div>
+      )}
+    </motion.div>
+  );
+}

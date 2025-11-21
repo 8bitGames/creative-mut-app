@@ -1,0 +1,224 @@
+// src/screens/07-ResultScreen.tsx
+import { useEffect } from 'react';
+import { motion } from 'framer-motion';
+import { Download, Printer, QrCode, Sparkles, CheckCircle2 } from 'lucide-react';
+import { useAppStore } from '@/store/appStore';
+import { useSessionStore } from '@/store/sessionStore';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Separator } from '@/components/ui/separator';
+import { Logo } from '@/components/Logo';
+
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      duration: 0.5,
+      staggerChildren: 0.15,
+    },
+  },
+  exit: { opacity: 0 },
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 20 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.5,
+      ease: 'easeOut',
+    },
+  },
+};
+
+const buttonVariants = {
+  hidden: { opacity: 0, scale: 0.9 },
+  visible: {
+    opacity: 1,
+    scale: 1,
+    transition: {
+      duration: 0.4,
+      ease: 'easeOut',
+    },
+  },
+  hover: {
+    scale: 1.05,
+    transition: {
+      duration: 0.2,
+    },
+  },
+  tap: {
+    scale: 0.95,
+  },
+};
+
+export function ResultScreen() {
+  const setScreen = useAppStore((state) => state.setScreen);
+  const processedResult = useSessionStore((state) => state.processedResult);
+
+  // Auto-redirect to idle if no result
+  useEffect(() => {
+    if (!processedResult) {
+      console.error('No processed result found, returning to idle');
+      setTimeout(() => setScreen('idle'), 2000);
+    }
+  }, [processedResult, setScreen]);
+
+  const handlePrint = () => {
+    setScreen('image-selection');
+  };
+
+  const handleSkip = () => {
+    setScreen('completion');
+  };
+
+  if (!processedResult) {
+    return (
+      <div className="fullscreen bg-white text-black flex items-center justify-center">
+        <p className="text-3xl">결과를 불러오는 중...</p>
+      </div>
+    );
+  }
+
+  return (
+    <motion.div
+      className="fullscreen bg-white text-black flex flex-col items-center justify-between p-16"
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+      exit="exit"
+    >
+      {/* Header */}
+      <motion.div className="text-center" variants={itemVariants}>
+        <motion.div
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          transition={{ type: 'spring', stiffness: 200, delay: 0.2 }}
+          className="inline-block mb-6"
+        >
+          <div className="relative">
+            <CheckCircle2 className="w-32 h-32 text-green-600" strokeWidth={2} />
+            <motion.div
+              className="absolute inset-0"
+              animate={{ rotate: 360 }}
+              transition={{ duration: 20, repeat: Infinity, ease: 'linear' }}
+            >
+              <Sparkles className="w-32 h-32 text-yellow-400" strokeWidth={1.5} />
+            </motion.div>
+          </div>
+        </motion.div>
+        <h1 className="text-7xl font-bold mb-4">완성!</h1>
+        <p className="text-3xl text-gray-600">홀로그램 영상이 준비되었습니다</p>
+      </motion.div>
+
+      {/* Content */}
+      <div className="flex-1 flex items-center justify-center w-full max-w-6xl gap-12">
+        {/* Video Preview */}
+        <motion.div variants={itemVariants} className="flex-1">
+          <Card className="border-4 border-black overflow-hidden">
+            <div className="aspect-video bg-black flex items-center justify-center">
+              {processedResult.videoPath ? (
+                <video
+                  src={`file://${processedResult.videoPath}`}
+                  autoPlay
+                  loop
+                  muted
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="text-white text-2xl">비디오 미리보기</div>
+              )}
+            </div>
+          </Card>
+        </motion.div>
+
+        <Separator orientation="vertical" className="h-96 w-1 bg-black" />
+
+        {/* QR Code & Download Info */}
+        <motion.div variants={itemVariants} className="flex-1 flex flex-col items-center gap-8">
+          <Logo className="w-48" color="black" />
+
+          <Card className="border-4 border-black p-8">
+            <div className="flex flex-col items-center gap-6">
+              <QrCode className="w-16 h-16" strokeWidth={2} />
+              <h2 className="text-3xl font-bold">QR 코드로 다운로드</h2>
+
+              {/* QR Code Display */}
+              <motion.div
+                className="w-64 h-64 bg-white border-4 border-black flex items-center justify-center relative"
+                whileHover={{ scale: 1.05 }}
+                transition={{ type: 'spring', stiffness: 300 }}
+              >
+                {processedResult.qrCodePath ? (
+                  <>
+                    <img
+                      src={`file://${processedResult.qrCodePath}`}
+                      alt="QR Code"
+                      className="w-full h-full object-contain p-4"
+                    />
+                    <motion.div
+                      className="absolute inset-0 border-4 border-blue-500"
+                      animate={{
+                        opacity: [0, 0.5, 0],
+                        scale: [0.95, 1.05, 0.95],
+                      }}
+                      transition={{ duration: 2, repeat: Infinity }}
+                    />
+                  </>
+                ) : (
+                  <div className="text-center text-gray-500">QR 코드</div>
+                )}
+              </motion.div>
+
+              <div className="text-center space-y-2">
+                <p className="text-xl text-gray-600">스마트폰으로 QR 코드를 스캔하면</p>
+                <p className="text-xl text-gray-600">영상을 다운로드할 수 있습니다</p>
+              </div>
+
+              {processedResult.s3Url && (
+                <div className="mt-4 p-4 bg-gray-100 rounded-lg max-w-full overflow-hidden">
+                  <p className="text-sm text-gray-500 break-all">{processedResult.s3Url}</p>
+                </div>
+              )}
+            </div>
+          </Card>
+        </motion.div>
+      </div>
+
+      {/* Action Buttons */}
+      <motion.div className="flex gap-8" variants={itemVariants}>
+        <motion.div variants={buttonVariants} whileHover="hover" whileTap="tap">
+          <Button
+            size="lg"
+            variant="outline"
+            onClick={handleSkip}
+            className="border-4 border-black text-black hover:bg-black hover:text-white px-20 py-12 text-4xl font-bold touch-target transition-colors"
+          >
+            <Download className="w-12 h-12 mr-4" strokeWidth={2.5} />
+            다운로드만 하기
+          </Button>
+        </motion.div>
+
+        <motion.div variants={buttonVariants} whileHover="hover" whileTap="tap">
+          <Button
+            size="lg"
+            onClick={handlePrint}
+            className="bg-black text-white hover:bg-gray-800 px-20 py-12 text-4xl font-bold touch-target border-4 border-black"
+          >
+            <Printer className="w-12 h-12 mr-4" strokeWidth={2.5} />
+            사진 인쇄하기
+          </Button>
+        </motion.div>
+      </motion.div>
+
+      {/* Footer */}
+      <motion.div className="text-center" variants={itemVariants}>
+        <p className="text-2xl text-gray-500">
+          사진 인쇄 시 추가 요금이 발생합니다 (5,000원)
+        </p>
+      </motion.div>
+    </motion.div>
+  );
+}

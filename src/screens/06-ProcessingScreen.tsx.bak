@@ -1,0 +1,192 @@
+// src/screens/06-ProcessingScreen.tsx
+import { useEffect, useState } from 'react';
+import { motion } from 'framer-motion';
+import { Loader2 } from 'lucide-react';
+import { useAppStore } from '@/store/appStore';
+import { useSessionStore } from '@/store/sessionStore';
+import { Progress } from '@/components/ui/progress';
+import { Logo } from '@/components/Logo';
+
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      duration: 0.5,
+      staggerChildren: 0.2,
+      delayChildren: 0.2,
+    },
+  },
+  exit: { opacity: 0 },
+};
+
+const headingVariants = {
+  hidden: { opacity: 0, y: -20 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.6,
+      ease: 'easeOut',
+    },
+  },
+};
+
+const logoVariants = {
+  hidden: { opacity: 0, scale: 0.8 },
+  visible: {
+    opacity: 1,
+    scale: 1,
+    transition: {
+      duration: 0.6,
+      ease: 'easeOut',
+    },
+  },
+};
+
+const progressVariants = {
+  hidden: { opacity: 0, y: 20 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.5,
+      ease: 'easeOut',
+    },
+  },
+};
+
+const messageVariants = {
+  hidden: { opacity: 0, x: -20 },
+  visible: {
+    opacity: 1,
+    x: 0,
+    transition: {
+      duration: 0.4,
+    },
+  },
+  exit: {
+    opacity: 0,
+    x: 20,
+    transition: {
+      duration: 0.3,
+    },
+  },
+};
+
+export function ProcessingScreen() {
+  const setScreen = useAppStore((state) => state.setScreen);
+  const { capturedImages, selectedFrame, setProcessedResult } = useSessionStore();
+  const [progress, setProgress] = useState(0);
+  const [currentMessage, setCurrentMessage] = useState('처리 시작...');
+
+  useEffect(() => {
+    startProcessing();
+
+    // Set up progress listener
+    const removeProgressListener = window.electron.video.onProgress((progressData) => {
+      setProgress(progressData.progress);
+      setCurrentMessage(progressData.message);
+    });
+
+    // Set up completion listener
+    const removeCompleteListener = window.electron.video.onComplete((result) => {
+      if (result.success && result.result) {
+        // Save the processing result to session store
+        setProcessedResult(result.result);
+
+        // Navigate to result screen
+        setTimeout(() => {
+          setScreen('result');
+        }, 500);
+      } else {
+        console.error('Video processing failed:', result.error);
+        // Show error and return to idle
+        alert('비디오 처리 중 오류가 발생했습니다: ' + result.error);
+        setTimeout(() => {
+          setScreen('idle');
+        }, 2000);
+      }
+    });
+
+    return () => {
+      removeProgressListener();
+      removeCompleteListener();
+    };
+  }, [setScreen, capturedImages, selectedFrame, setProcessedResult]);
+
+  const startProcessing = async () => {
+    try {
+      // For now, use placeholder paths since we don't have real camera integration yet
+      // TODO: Replace with actual captured video paths
+      const inputVideo = capturedImages[0] || 'video/input_video.mp4';
+      const chromaVideo = selectedFrame?.chromaVideoPath || 'chroma/chroma_video.mp4';
+
+      await window.electron.video.process({
+        inputVideo,
+        chromaVideo,
+        subtitleText: 'MUT 홀로그램 스튜디오',
+        s3Folder: 'mut-hologram',
+      });
+    } catch (error) {
+      console.error('Failed to start video processing:', error);
+    }
+  };
+
+  return (
+    <motion.div
+      className="fullscreen bg-white text-black flex flex-col items-center justify-between p-16"
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+      exit="exit"
+    >
+      {/* Header */}
+      <motion.div className="text-center mt-12" variants={headingVariants}>
+        <h1 className="text-7xl font-bold mb-4">촬영 종료</h1>
+        <p className="text-4xl text-gray-600 font-medium">홀로그램 제작 중</p>
+      </motion.div>
+
+      {/* Content */}
+      <div className="flex-1 flex flex-col items-center justify-center gap-16 w-full max-w-3xl">
+        {/* Logo */}
+        <motion.div variants={logoVariants}>
+          <Logo className="w-64" color="black" />
+        </motion.div>
+
+        {/* Spinner */}
+        <motion.div variants={logoVariants}>
+          <Loader2 className="w-32 h-32 text-black animate-spin" strokeWidth={2} />
+        </motion.div>
+
+        {/* Progress Bar */}
+        <motion.div className="w-full space-y-6" variants={progressVariants}>
+          <Progress value={progress} className="h-6" />
+          <div className="flex justify-between text-2xl text-gray-600">
+            <span>처리 중...</span>
+            <span className="font-bold">{progress}%</span>
+          </div>
+        </motion.div>
+
+        {/* Status Messages */}
+        <motion.div className="h-24 flex items-center justify-center" variants={progressVariants}>
+          <motion.p
+            key={currentMessage}
+            variants={messageVariants}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            className="text-3xl font-medium text-gray-700"
+          >
+            {currentMessage}
+          </motion.p>
+        </motion.div>
+      </div>
+
+      {/* Footer */}
+      <motion.div className="text-center mb-12" variants={progressVariants}>
+        <p className="text-2xl text-gray-500">클라우드 전송 시 대기화면</p>
+      </motion.div>
+    </motion.div>
+  );
+}

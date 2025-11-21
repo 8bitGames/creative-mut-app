@@ -1,0 +1,15 @@
+# Core Dependencies for MUT Video Processing Pipeline
+# Minimal requirements for production use
+
+# AWS S3 Upload
+boto3>=1.34.0
+python-dotenv>=1.0.0
+
+# QR Code Generation
+qrcode[pil]>=7.4.2
+Pillow>=10.0.0
+
+# Note: FFmpeg and FFprobe must be installed separately on your system
+# macOS: brew install ffmpeg
+# Ubuntu: sudo apt-get install ffmpeg
+# Windows: https://ffmpeg.org/download.html
