@@ -1,12 +1,10 @@
 // src/screens/07-ResultScreen.tsx
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Download, CreditCard, QrCode, Sparkles, CheckCircle2, Clock } from 'lucide-react';
+import { CheckCircle2, Clock } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { useSessionStore } from '@/store/sessionStore';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
 import { Logo } from '@/components/Logo';
 
 const containerVariants = {
@@ -58,8 +56,8 @@ export function ResultScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
   const processedResult = useSessionStore((state) => state.processedResult);
   const [timeRemaining, setTimeRemaining] = useState(60);
-  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
-  const [videoDataUrl, setVideoDataUrl] = useState<string | null>(null);
+  // const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
+  // const [videoDataUrl, setVideoDataUrl] = useState<string | null>(null);
 
   // Auto-redirect to idle if no result
   useEffect(() => {
@@ -70,65 +68,63 @@ export function ResultScreen() {
   }, [processedResult, setScreen]);
 
   // Load QR code and video as data URLs via IPC
+  // useEffect(() => {
+  //   if (!processedResult) return;
+  //
+  //   const loadFiles = async () => {
+  //     // Load QR code
+  //     if (processedResult.qrCodePath) {
+  //       try {
+  //         // @ts-ignore
+  //         const result = await window.electron.file.readAsDataUrl(processedResult.qrCodePath);
+  //         if (result.success) {
+  //           setQrCodeDataUrl(result.dataUrl);
+  //         } else {
+  //           console.error('Failed to load QR code:', result.error);
+  //         }
+  //       } catch (error) {
+  //         console.error('Error loading QR code:', error);
+  //       }
+  //     }
+  //
+  //     // Load video
+  //     if (processedResult.videoPath) {
+  //       try {
+  //         // @ts-ignore
+  //         const result = await window.electron.file.readAsDataUrl(processedResult.videoPath);
+  //         if (result.success) {
+  //           setVideoDataUrl(result.dataUrl);
+  //         } else {
+  //           console.error('Failed to load video:', result.error);
+  //         }
+  //       } catch (error) {
+  //         console.error('Error loading video:', error);
+  //       }
+  //     }
+  //   };
+  //
+  //   loadFiles();
+  // }, [processedResult]);
+
+  // Update hologram window to show QR code with video background
   useEffect(() => {
-    if (!processedResult) return;
+    if (processedResult && processedResult.qrCodePath && processedResult.s3Url) {
+      console.log('📺 [ResultScreen] Sending video and QR to hologram window');
+      console.log(`   QR Code: ${processedResult.qrCodePath}`);
+      console.log(`   Video (S3): ${processedResult.s3Url}`);
 
-    const loadFiles = async () => {
-      // Load QR code
-      if (processedResult.qrCodePath) {
-        try {
-          // @ts-ignore
-          const result = await window.electron.file.readAsDataUrl(processedResult.qrCodePath);
-          if (result.success) {
-            setQrCodeDataUrl(result.dataUrl);
-          } else {
-            console.error('Failed to load QR code:', result.error);
-          }
-        } catch (error) {
-          console.error('Error loading QR code:', error);
-        }
-      }
-
-      // Load video
-      if (processedResult.videoPath) {
-        try {
-          // @ts-ignore
-          const result = await window.electron.file.readAsDataUrl(processedResult.videoPath);
-          if (result.success) {
-            setVideoDataUrl(result.dataUrl);
-          } else {
-            console.error('Failed to load video:', result.error);
-          }
-        } catch (error) {
-          console.error('Error loading video:', error);
-        }
-      }
-    };
-
-    loadFiles();
-  }, [processedResult]);
-
-  // Update hologram window to show QR code
-  useEffect(() => {
-    if (processedResult && processedResult.qrCodePath) {
       // @ts-ignore - Electron API
       if (window.electron?.hologram) {
-        // @ts-ignore
+        // @ts-ignore - Use S3 URL for video (local file is deleted)
         window.electron.hologram.showQR(
           processedResult.qrCodePath,
-          processedResult.videoPath
+          processedResult.s3Url  // Use S3 URL instead of local path
         );
       }
     }
 
-    // Reset to logo when leaving this screen
-    return () => {
-      // @ts-ignore
-      if (window.electron?.hologram) {
-        // @ts-ignore
-        window.electron.hologram.showLogo();
-      }
-    };
+    // Don't reset to logo - keep video + QR visible through photo selection, payment, and printing
+    // Only reset when going back to start/idle (handled in PrintingScreen)
   }, [processedResult]);
 
   // 60-second timeout
@@ -149,12 +145,26 @@ export function ResultScreen() {
     };
   }, [setScreen]);
 
-  const handleSelect = () => {
-    setScreen('image-selection');
-  };
+  // const handleSelect = () => {
+  //   setScreen('image-selection');
+  // };
 
   const handlePay = () => {
-    setScreen('payment');
+    // CRITICAL: Ensure hologram stays in result mode before navigating
+    if (processedResult && processedResult.qrCodePath && processedResult.s3Url) {
+      console.log('🎭 [ResultScreen] Ensuring hologram persists before navigation to image-selection');
+      // @ts-ignore - Electron API
+      if (window.electron?.hologram) {
+        // @ts-ignore - Re-send to ensure state persists
+        window.electron.hologram.showQR(
+          processedResult.qrCodePath,
+          processedResult.s3Url
+        );
+      }
+    }
+
+    // Navigate to image selection screen to choose which photo to print
+    setScreen('image-selection');
   };
 
   if (!processedResult) {

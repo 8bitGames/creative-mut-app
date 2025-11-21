@@ -23,6 +23,7 @@ export interface VideoProcessingResult {
   s3Url: string;
   s3Key: string;
   qrCodePath: string;
+  framePaths: string[];
   compositionTime: number;
   totalTime: number;
 }
@@ -306,6 +307,88 @@ export class PythonBridge extends EventEmitter {
       stitchProcess.on('error', (error) => {
         reject(new Error(`Failed to start stitcher process: ${error}`));
       });
+    });
+  }
+
+  /**
+   * Extract frames from video at specific timestamps using FFmpeg
+   */
+  async extractFrames(videoPath: string, timestamps: number[]): Promise<string[]> {
+    return new Promise(async (resolve, reject) => {
+      console.log(`\n${'='.repeat(70)}`);
+      console.log(`📸 [PythonBridge] EXTRACTING FRAMES FROM VIDEO`);
+      console.log(`${'='.repeat(70)}`);
+      console.log(`   Video: ${videoPath}`);
+      console.log(`   Timestamps: ${timestamps.join('s, ')}s`);
+
+      try {
+        // Create output directory for frames
+        const fs = await import('fs/promises');
+        const timestamp = Date.now();
+        const outputDir = path.join(this.pipelineWorkingDir, 'output', `frames_${timestamp}`);
+        await fs.mkdir(outputDir, { recursive: true });
+        console.log(`   Output directory: ${outputDir}`);
+
+        const extractedFrames: string[] = [];
+
+        // Extract each frame sequentially
+        for (let i = 0; i < timestamps.length; i++) {
+          const time = timestamps[i];
+          const framePath = path.join(outputDir, `frame_${time}s.jpg`);
+
+          console.log(`\n   Extracting frame ${i + 1}/${timestamps.length} at ${time}s...`);
+
+          // FFmpeg command to extract frame at specific timestamp
+          // -ss: seek to timestamp
+          // -i: input video
+          // -frames:v 1: extract 1 frame
+          // -q:v 2: high quality (1-31, lower is better)
+          const args = [
+            '-ss', time.toString(),
+            '-i', videoPath,
+            '-frames:v', '1',
+            '-q:v', '2',
+            '-y', // overwrite
+            framePath
+          ];
+
+          await new Promise<void>((resolveFrame, rejectFrame) => {
+            const ffmpegProcess = spawn('ffmpeg', args);
+
+            let stderr = '';
+
+            ffmpegProcess.stderr?.on('data', (data) => {
+              stderr += data.toString();
+            });
+
+            ffmpegProcess.on('close', (code) => {
+              if (code !== 0) {
+                console.error(`   ❌ FFmpeg failed with code ${code}`);
+                console.error(`   Error: ${stderr}`);
+                rejectFrame(new Error(`FFmpeg failed to extract frame at ${time}s`));
+              } else {
+                console.log(`   ✅ Frame extracted: ${framePath}`);
+                extractedFrames.push(framePath);
+                resolveFrame();
+              }
+            });
+
+            ffmpegProcess.on('error', (error) => {
+              rejectFrame(new Error(`Failed to start FFmpeg: ${error}`));
+            });
+          });
+        }
+
+        console.log(`\n✅ [PythonBridge] All frames extracted successfully!`);
+        console.log(`   Total frames: ${extractedFrames.length}`);
+        console.log(`${'='.repeat(70)}\n`);
+
+        resolve(extractedFrames);
+      } catch (error) {
+        console.error(`❌ [PythonBridge] Frame extraction failed:`, error);
+        console.log(`${'='.repeat(70)}\n`);
+        reject(error);
+      }
     });
   }
 

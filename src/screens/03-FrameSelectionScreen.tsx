@@ -1,4 +1,5 @@
 // src/screens/03-FrameSelectionScreen.tsx
+import { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
 import { useSessionStore } from '@/store/sessionStore';
@@ -65,7 +66,16 @@ const cardVariants = {
 
 export function FrameSelectionScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
+  const selectedFrame = useSessionStore((state) => state.selectedFrame);
   const setSelectedFrame = useSessionStore((state) => state.setSelectedFrame);
+
+  // Auto-select first frame if none is selected
+  useEffect(() => {
+    if (!selectedFrame && frames.length > 0) {
+      console.log('🖼️ [FrameSelectionScreen] Auto-selecting first frame as default');
+      setSelectedFrame(frames[0] as Frame);
+    }
+  }, [selectedFrame, setSelectedFrame]);
 
   const handleFrameSelect = (frame: Frame) => {
     setSelectedFrame(frame);

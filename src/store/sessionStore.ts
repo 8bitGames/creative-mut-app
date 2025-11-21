@@ -10,6 +10,8 @@ import type { Frame, ProcessingResult } from './types';
 interface SessionState {
   // Session data
   capturedImages: string[];
+  recordedVideoBlob: Blob | null;
+  recordedVideoUrl: string | null;
   selectedFrame: Frame | null;
   processedResult: ProcessingResult | null;
   selectedPrintImage: string | null;
@@ -19,9 +21,11 @@ interface SessionState {
   // Actions
   addCapturedImage: (imagePath: string) => void;
   setCapturedImages: (images: string[]) => void;
+  setRecordedVideo: (blob: Blob, url: string) => void;
   setSelectedFrame: (frame: Frame | null) => void;
   setProcessedResult: (result: ProcessingResult | null) => void;
   setSelectedPrintImage: (imagePath: string | null) => void;
+  cleanupSessionFiles: () => Promise<void>;
   clearSession: () => void;
 }
 
@@ -40,6 +44,8 @@ export const useSessionStore = create<SessionState>()(
   immer((set) => ({
     // Initial state
     capturedImages: [],
+    recordedVideoBlob: null,
+    recordedVideoUrl: null,
     selectedFrame: null,
     processedResult: null,
     selectedPrintImage: null,
@@ -56,6 +62,13 @@ export const useSessionStore = create<SessionState>()(
     setCapturedImages: (images) =>
       set((state) => {
         state.capturedImages = images;
+      }),
+
+    // Set the recorded video blob and URL
+    setRecordedVideo: (blob, url) =>
+      set((state) => {
+        state.recordedVideoBlob = blob;
+        state.recordedVideoUrl = url;
       }),
 
     // Set the selected frame template
@@ -76,10 +89,59 @@ export const useSessionStore = create<SessionState>()(
         state.selectedPrintImage = imagePath;
       }),
 
+    // Cleanup all session files (videos, frames, QR codes)
+    cleanupSessionFiles: async () => {
+      const state = useSessionStore.getState();
+
+      console.log('🗑️ [SessionStore] Cleaning up session files...');
+
+      // @ts-ignore - Electron API
+      if (!window.electron?.file) {
+        console.warn('⚠️ [SessionStore] Electron file API not available - skipping cleanup');
+        return;
+      }
+
+      const filesToDelete: string[] = [];
+
+      // Add processed video file
+      if (state.processedResult?.videoPath) {
+        filesToDelete.push(state.processedResult.videoPath);
+      }
+
+      // Add QR code file
+      if (state.processedResult?.qrCodePath) {
+        filesToDelete.push(state.processedResult.qrCodePath);
+      }
+
+      // Note: Frame images are NOT deleted - they are preserved in /frames directory
+
+      console.log(`   Found ${filesToDelete.length} files to delete`);
+
+      // Delete each file
+      for (const filePath of filesToDelete) {
+        try {
+          console.log(`   Deleting: ${filePath}`);
+          // @ts-ignore
+          const result = await window.electron.file.delete(filePath);
+          if (result.success) {
+            console.log(`   ✅ Deleted: ${filePath}`);
+          } else {
+            console.warn(`   ⚠️ Failed to delete ${filePath}: ${result.error}`);
+          }
+        } catch (error) {
+          console.error(`   ❌ Error deleting ${filePath}:`, error);
+        }
+      }
+
+      console.log('✅ [SessionStore] File cleanup complete');
+    },
+
     // Clear all session data and start fresh
     clearSession: () =>
       set((state) => {
         state.capturedImages = [];
+        state.recordedVideoBlob = null;
+        state.recordedVideoUrl = null;
         state.selectedFrame = null;
         state.processedResult = null;
         state.selectedPrintImage = null;

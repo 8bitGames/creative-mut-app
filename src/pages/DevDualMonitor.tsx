@@ -2,7 +2,6 @@
 // Development-only view to test dual-monitor setup in browser
 import { AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
-import { useSessionStore } from '@/store/sessionStore';
 import { IdleScreen } from '@/screens/01-IdleScreen';
 import { StartScreen } from '@/screens/01-StartScreen';
 import { FrameSelectionScreen } from '@/screens/03-FrameSelectionScreen';
@@ -12,27 +11,11 @@ import { ProcessingScreen } from '@/screens/06-ProcessingScreen';
 import { ResultScreen } from '@/screens/07-ResultScreen';
 import { ImageSelectionScreen } from '@/screens/08-ImageSelectionScreen';
 import { PaymentScreen } from '@/screens/09-PaymentScreen';
-import { HologramWindow } from '@/components/HologramWindow';
+import { PrintingScreen } from '@/screens/10-PrintingScreen';
+import { HologramPage } from '@/pages/HologramPage';
 
 export function DevDualMonitor() {
   const currentScreen = useAppStore((state) => state.currentScreen);
-  const { selectedFrame, processedResult } = useSessionStore();
-
-  // Determine hologram mode based on current screen
-  let hologramMode: 'logo' | 'result' | 'recording-prep' = 'logo';
-  let hologramProps: any = {};
-
-  if (currentScreen === 'recording-guide' && selectedFrame) {
-    hologramMode = 'recording-prep';
-    hologramProps.framePath = selectedFrame.templatePath;
-  } else if (currentScreen === 'recording' && selectedFrame) {
-    hologramMode = 'recording-prep';
-    hologramProps.framePath = selectedFrame.templatePath;
-  } else if (currentScreen === 'result' && processedResult) {
-    hologramMode = 'result';
-    hologramProps.qrCodePath = processedResult.qrCodePath;
-    hologramProps.videoPath = processedResult.videoPath;
-  }
 
   return (
     <div className="w-screen h-screen bg-gray-900 flex items-center justify-center gap-4 p-4">
@@ -52,6 +35,7 @@ export function DevDualMonitor() {
             {currentScreen === 'result' && <ResultScreen key="result" />}
             {currentScreen === 'image-selection' && <ImageSelectionScreen key="image-selection" />}
             {currentScreen === 'payment' && <PaymentScreen key="payment" />}
+            {currentScreen === 'printing' && <PrintingScreen key="printing" />}
           </AnimatePresence>
         </div>
       </div>
@@ -62,10 +46,7 @@ export function DevDualMonitor() {
           MONITOR 2 - HOLOGRAM DISPLAY (9:16)
         </div>
         <div className="w-full h-full">
-          <HologramWindow
-            mode={hologramMode}
-            {...hologramProps}
-          />
+          <HologramPage />
         </div>
       </div>
     </div>

@@ -17,6 +17,15 @@ let cameraController: CameraController | null = null;
 let printerController: PrinterController | null = null;
 let cardReader: CardReaderController | null = null;
 
+// Persistent hologram state - survives screen transitions
+let hologramState: {
+  mode: 'logo' | 'result';
+  qrCodePath?: string;
+  videoPath?: string;
+} = {
+  mode: 'logo',
+};
+
 const isDevelopment = process.env.NODE_ENV !== 'production';
 
 function createWindow() {
@@ -31,12 +40,13 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      webSecurity: false, // Disable CORS for S3 video loading in split-screen
     },
   });
 
   if (isDevelopment) {
-    // Load split view in development with Electron APIs
-    mainWindow.loadURL('http://localhost:5173/#/dev');
+    // Load split view in development (now always shows split view)
+    mainWindow.loadURL('http://localhost:5173/');
     mainWindow.webContents.openDevTools();
   } else {
     // Load from built files
@@ -72,6 +82,7 @@ function createHologramWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      webSecurity: false, // Disable CORS for S3 video loading
     },
   });
 
@@ -153,12 +164,13 @@ app.whenReady().then(async () => {
   console.log('✅ All systems initialized\n');
 
   createWindow();
-  createHologramWindow();
+  // Disabled: Using split-screen view for testing instead of separate hologram window
+  // createHologramWindow();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
-      createHologramWindow();
+      // createHologramWindow();
     }
   });
 });
@@ -284,10 +296,19 @@ ipcMain.handle('video:process', async (_event, params) => {
   }
 
   try {
+    // Convert URL path to filesystem path for frame overlay
+    let frameOverlayPath = params.chromaVideo;
+    if (params.chromaVideo && params.chromaVideo.startsWith('/')) {
+      // URL path like "/frame1.png" -> filesystem path
+      const relativePath = params.chromaVideo.substring(1);
+      frameOverlayPath = path.join(app.getAppPath(), 'public', relativePath);
+      console.log(`   Frame overlay converted: ${params.chromaVideo} -> ${frameOverlayPath}`);
+    }
+
     // Process video using Python pipeline
     const result = await pythonBridge.processVideo({
       inputVideo: params.inputVideo,
-      chromaVideo: params.chromaVideo,
+      frameOverlay: frameOverlayPath,
       subtitleText: params.subtitleText,
       s3Folder: params.s3Folder || 'mut-hologram',
     });
@@ -412,10 +433,19 @@ ipcMain.handle('image:save-blob', async (_event, blobData: string, filename: str
     console.log(`   ✓ Temp directory: ${tempDir}`);
 
     // Convert base64 to buffer
-    // Blob data comes in format: "data:image/jpeg;base64,..."
-    const base64Data = blobData.replace(/^data:image\/\w+;base64,/, '');
+    // Blob data comes in format: "data:image/jpeg;base64,..." or "data:video/webm;base64,..."
+    const dataUrlPrefix = blobData.substring(0, 50);
+    console.log(`   Data URL prefix: ${dataUrlPrefix}...`);
+
+    const base64Data = blobData.replace(/^data:[^;]+;base64,/, '');
+    console.log(`   Base64 data length after strip: ${base64Data.length} chars`);
+
     const buffer = Buffer.from(base64Data, 'base64');
     console.log(`   ✓ Buffer size: ${(buffer.length / 1024).toFixed(2)} KB`);
+
+    // Log first 16 bytes in hex to verify file format
+    const hexHeader = buffer.slice(0, 16).toString('hex').toUpperCase();
+    console.log(`   File header (hex): ${hexHeader}`);
 
     // Save to file
     const filePath = path.join(tempDir, filename);
@@ -430,6 +460,81 @@ ipcMain.handle('image:save-blob', async (_event, blobData: string, filename: str
     };
   } catch (error) {
     console.error(`❌ [IPC] Failed to save blob:`, error);
+    console.log(`${'='.repeat(70)}\n`);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    };
+  }
+});
+
+// Extract frames from video at specific timestamps
+ipcMain.handle('video:extract-frames', async (_event, videoPath: string, timestamps: number[]) => {
+  console.log(`📸 Frame extraction requested: ${videoPath} at [${timestamps.join(', ')}]s`);
+
+  if (!pythonBridge) {
+    return {
+      success: false,
+      error: 'Python bridge not initialized'
+    };
+  }
+
+  try {
+    const framePaths = await pythonBridge.extractFrames(videoPath, timestamps);
+
+    console.log(`✅ Frames extracted successfully: ${framePaths.length} frames`);
+
+    return {
+      success: true,
+      framePaths: framePaths
+    };
+  } catch (error) {
+    console.error('❌ Frame extraction error:', error);
+
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+    return {
+      success: false,
+      error: errorMessage
+    };
+  }
+});
+
+// Save video buffer (raw bytes) directly to file
+ipcMain.handle('video:save-buffer', async (_event, byteArray: number[], filename: string) => {
+  console.log(`\n${'='.repeat(70)}`);
+  console.log(`💾 [IPC] SAVING VIDEO BUFFER TO FILE`);
+  console.log(`${'='.repeat(70)}`);
+  console.log(`   Filename: ${filename}`);
+  console.log(`   Buffer size: ${(byteArray.length / 1024).toFixed(2)} KB`);
+
+  try {
+    // Create temp directory if it doesn't exist
+    const tempDir = path.join(app.getPath('temp'), 'mut-captures');
+    await fs.mkdir(tempDir, { recursive: true });
+    console.log(`   ✓ Temp directory: ${tempDir}`);
+
+    // Convert array to Buffer
+    const buffer = Buffer.from(byteArray);
+    console.log(`   ✓ Buffer created: ${(buffer.length / 1024).toFixed(2)} KB`);
+
+    // Log first 16 bytes for debugging
+    const hexHeader = buffer.slice(0, 16).toString('hex').toUpperCase();
+    console.log(`   File header (hex): ${hexHeader}`);
+
+    // Save to file
+    const filePath = path.join(tempDir, filename);
+    await fs.writeFile(filePath, buffer);
+    console.log(`   ✓ File saved: ${filePath}`);
+    console.log(`✅ VIDEO BUFFER SAVED SUCCESSFULLY`);
+    console.log(`${'='.repeat(70)}\n`);
+
+    return {
+      success: true,
+      filePath: filePath
+    };
+  } catch (error) {
+    console.error(`❌ [IPC] Failed to save buffer:`, error);
     console.log(`${'='.repeat(70)}\n`);
     return {
       success: false,
@@ -510,32 +615,59 @@ ipcMain.handle('payment:get-status', async () => {
   };
 });
 
-// Hologram window control
+// Hologram window control with persistent state
 ipcMain.handle('hologram:set-mode', async (_event, mode, data) => {
   console.log('🎭 Hologram mode change requested:', mode);
 
-  if (!hologramWindow) {
-    return { success: false, error: 'Hologram window not initialized' };
+  // Update persistent state
+  hologramState = {
+    mode,
+    qrCodePath: data?.qrCodePath,
+    videoPath: data?.videoPath,
+  };
+  console.log('💾 Hologram state stored:', hologramState);
+
+  if (!mainWindow) {
+    return { success: false, error: 'Main window not initialized' };
   }
 
-  // Send mode change to hologram window
-  hologramWindow.webContents.send('hologram:update', { mode, ...data });
+  // Send mode change to main window (split-screen mode)
+  mainWindow.webContents.send('hologram:update', hologramState);
 
   return { success: true };
 });
 
 ipcMain.handle('hologram:show-qr', async (_event, qrCodePath, videoPath) => {
-  console.log('🎭 Hologram showing QR code:', qrCodePath);
+  console.log('🎭 [IPC] hologram:show-qr called');
+  console.log('   QR Code:', qrCodePath);
+  console.log('   Video path:', videoPath);
 
-  if (!hologramWindow) {
-    return { success: false, error: 'Hologram window not initialized' };
-  }
-
-  hologramWindow.webContents.send('hologram:update', {
+  // Update persistent state
+  hologramState = {
     mode: 'result',
     qrCodePath,
     videoPath,
-  });
+  };
+  console.log('💾 [IPC] Hologram state updated:', JSON.stringify(hologramState));
+
+  if (!mainWindow) {
+    console.error('❌ [IPC] Main window is NULL - cannot send message!');
+    return { success: false, error: 'Main window not initialized' };
+  }
+
+  if (mainWindow.isDestroyed()) {
+    console.error('❌ [IPC] Main window is DESTROYED - cannot send message!');
+    return { success: false, error: 'Main window destroyed' };
+  }
+
+  console.log('✅ [IPC] Main window exists and is not destroyed');
+  console.log('   isLoading:', mainWindow.webContents.isLoading());
+  console.log('   URL:', mainWindow.webContents.getURL());
+
+  // Send IPC message to main window (split-screen mode)
+  console.log('📤 [IPC] Sending hologram:update to main window...');
+  mainWindow.webContents.send('hologram:update', hologramState);
+  console.log('✅ [IPC] Message sent successfully');
 
   return { success: true };
 });
@@ -543,15 +675,25 @@ ipcMain.handle('hologram:show-qr', async (_event, qrCodePath, videoPath) => {
 ipcMain.handle('hologram:show-logo', async () => {
   console.log('🎭 Hologram showing logo');
 
-  if (!hologramWindow) {
-    return { success: false, error: 'Hologram window not initialized' };
+  // Update persistent state
+  hologramState = {
+    mode: 'logo',
+  };
+  console.log('💾 Hologram state stored:', hologramState);
+
+  if (!mainWindow) {
+    return { success: false, error: 'Main window not initialized' };
   }
 
-  hologramWindow.webContents.send('hologram:update', {
-    mode: 'logo',
-  });
+  mainWindow.webContents.send('hologram:update', hologramState);
 
   return { success: true };
+});
+
+// Get current hologram state (for restoring after screen changes)
+ipcMain.handle('hologram:get-state', async () => {
+  console.log('🎭 Hologram state requested:', hologramState);
+  return { success: true, state: hologramState };
 });
 
 // Read local file and return as data URL for secure loading in renderer
@@ -589,6 +731,37 @@ ipcMain.handle('file:read-as-data-url', async (_event, filePath: string) => {
     return { success: true, dataUrl };
   } catch (error) {
     console.error(`❌ [IPC] Failed to read file: ${filePath}`, error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+});
+
+// Delete local file
+ipcMain.handle('file:delete', async (_event, filePath: string) => {
+  try {
+    console.log(`🗑️ [IPC] Deleting file: ${filePath}`);
+
+    // Resolve relative paths relative to MUT-distribution directory
+    let absolutePath = filePath;
+    if (!path.isAbsolute(filePath)) {
+      absolutePath = path.join(app.getAppPath(), 'MUT-distribution', filePath);
+      console.log(`   Resolved to absolute path: ${absolutePath}`);
+    }
+
+    // Check if file exists before attempting to delete
+    try {
+      await fs.access(absolutePath);
+    } catch {
+      console.warn(`⚠️ [IPC] File does not exist, skipping: ${absolutePath}`);
+      return { success: true, skipped: true };
+    }
+
+    // Delete the file
+    await fs.unlink(absolutePath);
+    console.log(`✅ [IPC] File deleted successfully: ${absolutePath}`);
+
+    return { success: true };
+  } catch (error) {
+    console.error(`❌ [IPC] Failed to delete file: ${filePath}`, error);
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
 });

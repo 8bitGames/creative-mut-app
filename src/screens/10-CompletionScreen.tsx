@@ -58,7 +58,8 @@ const pulseVariants = {
 
 export function CompletionScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
-  const { selectedPrintImage, clearSession } = useSessionStore();
+  const selectedPrintImage = useSessionStore((state) => state.selectedPrintImage);
+  const clearSession = useSessionStore((state) => state.clearSession);
   const [countdown, setCountdown] = useState(5);
 
   const isPrintSession = selectedPrintImage !== null;

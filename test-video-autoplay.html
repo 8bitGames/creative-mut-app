@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Autoplay Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: black;
+            font-family: system-ui, -apple-system, sans-serif;
+            overflow: hidden;
+        }
+
+        .container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        .qr-code {
+            position: absolute;
+            top: 32px;
+            right: 32px;
+            background: white;
+            padding: 16px;
+            border-radius: 16px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
+            z-index: 10;
+        }
+
+        .qr-placeholder {
+            width: 192px;
+            height: 192px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 14px;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .status {
+            position: absolute;
+            bottom: 32px;
+            left: 32px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            max-width: 500px;
+            z-index: 10;
+        }
+
+        .status-item {
+            margin: 8px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-icon {
+            font-size: 20px;
+        }
+
+        .loading {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 24px;
+            background: black;
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Loading indicator -->
+        <div id="loading" class="loading">
+            비디오 로딩 중...
+        </div>
+
+        <!-- Video element -->
+        <video
+            id="testVideo"
+            autoplay
+            loop
+            muted
+            playsinline
+            preload="auto"
+            crossorigin="anonymous"
+            style="display: none;"
+        ></video>
+
+        <!-- Dim overlay -->
+        <div class="overlay" style="display: none;" id="overlay"></div>
+
+        <!-- QR code placeholder -->
+        <div class="qr-code">
+            <div class="qr-placeholder">
+                QR Code would appear here
+            </div>
+        </div>
+
+        <!-- Status panel -->
+        <div class="status">
+            <div style="font-weight: bold; margin-bottom: 12px;">Video Autoplay Test</div>
+            <div class="status-item">
+                <span class="status-icon" id="urlStatus">⏳</span>
+                <span>URL: <code style="font-size: 11px;">S3 Video</code></span>
+            </div>
+            <div class="status-item">
+                <span class="status-icon" id="loadStatus">⏳</span>
+                <span id="loadText">Loading...</span>
+            </div>
+            <div class="status-item">
+                <span class="status-icon" id="playStatus">⏳</span>
+                <span id="playText">Waiting for play...</span>
+            </div>
+            <div class="status-item">
+                <span class="status-icon" id="readyStatus">⏳</span>
+                <span id="readyText">Ready State: 0</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Test video URL
+        const VIDEO_URL = 'https://mut-demo-2025.s3.ap-northeast-2.amazonaws.com/mut-hologram/final_20251121_224102.mp4';
+
+        const video = document.getElementById('testVideo');
+        const loading = document.getElementById('loading');
+        const overlay = document.getElementById('overlay');
+
+        // Status elements
+        const urlStatus = document.getElementById('urlStatus');
+        const loadStatus = document.getElementById('loadStatus');
+        const loadText = document.getElementById('loadText');
+        const playStatus = document.getElementById('playStatus');
+        const playText = document.getElementById('playText');
+        const readyStatus = document.getElementById('readyStatus');
+        const readyText = document.getElementById('readyText');
+
+        console.log('🎬 Starting video autoplay test');
+        console.log('📹 Video URL:', VIDEO_URL);
+
+        // Set video source
+        video.src = VIDEO_URL;
+        urlStatus.textContent = '✅';
+
+        // Video event listeners
+        video.addEventListener('loadstart', () => {
+            console.log('📹 Video load started');
+            loadStatus.textContent = '⏳';
+            loadText.textContent = 'Load started...';
+        });
+
+        video.addEventListener('loadedmetadata', () => {
+            console.log('📊 Video metadata loaded');
+            console.log('   Duration:', video.duration, 'seconds');
+            console.log('   Video size:', video.videoWidth, 'x', video.videoHeight);
+            loadStatus.textContent = '📊';
+            loadText.textContent = `Metadata loaded (${video.videoWidth}x${video.videoHeight})`;
+        });
+
+        video.addEventListener('loadeddata', () => {
+            console.log('✅ Video data loaded');
+            loadStatus.textContent = '✅';
+            loadText.textContent = 'Data loaded';
+
+            // Hide loading, show video
+            loading.classList.add('hidden');
+            video.style.display = 'block';
+            overlay.style.display = 'block';
+
+            // Force play
+            console.log('🎬 Attempting to play video...');
+            video.play()
+                .then(() => {
+                    console.log('✅ Video playing successfully!');
+                    playStatus.textContent = '▶️';
+                    playText.textContent = 'Playing!';
+                })
+                .catch(err => {
+                    console.error('❌ Play failed:', err);
+                    playStatus.textContent = '❌';
+                    playText.textContent = 'Play failed: ' + err.message;
+                });
+        });
+
+        video.addEventListener('canplay', () => {
+            console.log('🎬 Video can play');
+            readyStatus.textContent = '✅';
+            readyText.textContent = 'Ready State: ' + video.readyState + ' (Can play)';
+        });
+
+        video.addEventListener('play', () => {
+            console.log('▶️ Video is playing');
+            playStatus.textContent = '▶️';
+            playText.textContent = 'Video is playing!';
+        });
+
+        video.addEventListener('playing', () => {
+            console.log('▶️ Video playing (after buffering)');
+        });
+
+        video.addEventListener('pause', () => {
+            console.log('⏸️ Video paused');
+            playStatus.textContent = '⏸️';
+            playText.textContent = 'Video paused';
+        });
+
+        video.addEventListener('waiting', () => {
+            console.log('⏳ Video waiting for data');
+            playText.textContent = 'Buffering...';
+        });
+
+        video.addEventListener('stalled', () => {
+            console.warn('⚠️ Video stalled');
+        });
+
+        video.addEventListener('error', (e) => {
+            console.error('❌ Video error:', e);
+            if (video.error) {
+                const errorMessages = {
+                    1: 'MEDIA_ERR_ABORTED - Fetching was aborted',
+                    2: 'MEDIA_ERR_NETWORK - Network error',
+                    3: 'MEDIA_ERR_DECODE - Decoding error',
+                    4: 'MEDIA_ERR_SRC_NOT_SUPPORTED - Format not supported'
+                };
+                console.error('   Error code:', video.error.code);
+                console.error('   Error message:', video.error.message);
+                console.error('   Error type:', errorMessages[video.error.code] || 'Unknown');
+
+                loadStatus.textContent = '❌';
+                loadText.textContent = errorMessages[video.error.code] || 'Error loading video';
+            }
+        });
+
+        // Update ready state
+        setInterval(() => {
+            readyText.textContent = 'Ready State: ' + video.readyState;
+        }, 100);
+
+        // Retry play after 1 second if not playing
+        setTimeout(() => {
+            if (video.paused) {
+                console.log('🔄 Retrying play...');
+                video.play()
+                    .then(() => console.log('✅ Retry successful!'))
+                    .catch(err => console.error('❌ Retry failed:', err));
+            }
+        }, 1000);
+    </script>
+</body>
+</html>

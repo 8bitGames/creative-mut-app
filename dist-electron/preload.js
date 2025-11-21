@@ -12,8 +12,10 @@ const imageAPI = {
   saveBlob: (blobData, filename) => ipcRenderer.invoke("image:save-blob", blobData, filename)
 };
 const videoAPI = {
+  saveBuffer: (byteArray, filename) => ipcRenderer.invoke("video:save-buffer", byteArray, filename),
   process: (params) => ipcRenderer.invoke("video:process", params),
   processFromImages: (params) => ipcRenderer.invoke("video:process-from-images", params),
+  extractFrames: (videoPath, timestamps) => ipcRenderer.invoke("video:extract-frames", videoPath, timestamps),
   cancel: (taskId) => ipcRenderer.invoke("video:cancel", taskId),
   onProgress: (callback) => {
     const listener = (_event, data) => callback(data);
@@ -42,12 +44,14 @@ const paymentAPI = {
   }
 };
 const fileAPI = {
-  readAsDataUrl: (filePath) => ipcRenderer.invoke("file:read-as-data-url", filePath)
+  readAsDataUrl: (filePath) => ipcRenderer.invoke("file:read-as-data-url", filePath),
+  delete: (filePath) => ipcRenderer.invoke("file:delete", filePath)
 };
 const hologramAPI = {
   setMode: (mode, data) => ipcRenderer.invoke("hologram:set-mode", mode, data),
   showQR: (qrCodePath, videoPath) => ipcRenderer.invoke("hologram:show-qr", qrCodePath, videoPath),
-  showLogo: () => ipcRenderer.invoke("hologram:show-logo")
+  showLogo: () => ipcRenderer.invoke("hologram:show-logo"),
+  getState: () => ipcRenderer.invoke("hologram:get-state")
 };
 const ipcRendererAPI = {
   on: (channel, callback) => {

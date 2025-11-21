@@ -56,29 +56,16 @@ const progressVariants = {
   },
 };
 
-const messageVariants = {
-  hidden: { opacity: 0, x: -20 },
-  visible: {
-    opacity: 1,
-    x: 0,
-    transition: {
-      duration: 0.4,
-    },
-  },
-  exit: {
-    opacity: 0,
-    x: 20,
-    transition: {
-      duration: 0.3,
-    },
-  },
-};
+// Removed: messageVariants (not showing messages anymore)
 
 export function ProcessingScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
-  const { capturedImages, selectedFrame, setProcessedResult } = useSessionStore();
+  const recordedVideoBlob = useSessionStore((state) => state.recordedVideoBlob);
+  const selectedFrame = useSessionStore((state) => state.selectedFrame);
+  const setProcessedResult = useSessionStore((state) => state.setProcessedResult);
+  const setCapturedImages = useSessionStore((state) => state.setCapturedImages);
   const [progress, setProgress] = useState(0);
-  const [currentMessage, setCurrentMessage] = useState('처리 시작...');
+  // Removed: currentMessage state (showing only progress bar now)
 
   useEffect(() => {
     // Check if running in Electron
@@ -92,14 +79,14 @@ export function ProcessingScreen() {
         setProgress(progress);
         if (progress >= 100) {
           clearInterval(interval);
-          // Mock result - use a data URL for QR code that works in browser
-          // Generate a simple QR code data URL (this is a placeholder - will be replaced with actual generated QR)
+          // Mock result
           const mockQrDataUrl = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0id2hpdGUiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZm9udC1zaXplPSIyMCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPk1vY2sgUVIgQ29kZTwvdGV4dD48L3N2Zz4=';
           setProcessedResult({
             videoPath: '/mock/video.mp4',
             s3Url: 'https://mock-s3.com/video.mp4',
             s3Key: 'mock-key',
             qrCodePath: mockQrDataUrl,
+            framePaths: [],
             compositionTime: 5000,
             totalTime: 5000,
           });
@@ -115,7 +102,7 @@ export function ProcessingScreen() {
     // @ts-ignore
     const removeProgressListener = window.electron.video.onProgress((progressData) => {
       setProgress(progressData.progress);
-      setCurrentMessage(progressData.message);
+      // Progress message removed - only showing progress bar
     });
 
     // Set up completion listener
@@ -125,10 +112,32 @@ export function ProcessingScreen() {
         // Save the processing result to session store
         setProcessedResult(result.result);
 
-        // Navigate to result screen
-        setTimeout(() => {
-          setScreen('result');
-        }, 500);
+        // CRITICAL: Validate that exactly 3 frames were extracted
+        const REQUIRED_FRAMES = 3;
+        if (result.result.framePaths && result.result.framePaths.length === REQUIRED_FRAMES) {
+          console.log(`✅ [ProcessingScreen] Received ${result.result.framePaths.length} extracted frames from pipeline`);
+          console.log(`   Frame paths:`, result.result.framePaths);
+          setCapturedImages(result.result.framePaths);
+
+          // Navigate to result screen
+          setTimeout(() => {
+            setScreen('result');
+          }, 500);
+        } else {
+          // Frame extraction failed - show error
+          const frameCount = result.result.framePaths ? result.result.framePaths.length : 0;
+          const errorMsg = `프레임 추출 오류: ${REQUIRED_FRAMES}개의 사진이 필요하지만 ${frameCount}개만 추출되었습니다.`;
+          console.error(`❌ [ProcessingScreen] ${errorMsg}`);
+          console.error(`   Expected ${REQUIRED_FRAMES} frames, got ${frameCount}`);
+          if (result.result.framePaths) {
+            console.error(`   Received frames:`, result.result.framePaths);
+          }
+
+          alert(errorMsg + '\n처음부터 다시 시도해주세요.');
+          setTimeout(() => {
+            setScreen('idle');
+          }, 2000);
+        }
       } else {
         console.error('Video processing failed:', result.error);
         // Show error and return to idle
@@ -143,13 +152,13 @@ export function ProcessingScreen() {
       removeProgressListener();
       removeCompleteListener();
     };
-  }, [setScreen, capturedImages, selectedFrame, setProcessedResult]);
+  }, [setScreen, recordedVideoBlob, selectedFrame, setProcessedResult, setCapturedImages]);
 
   const startProcessing = async () => {
     console.log(`\n${'='.repeat(70)}`);
     console.log(`🎬 [ProcessingScreen] STARTING VIDEO PROCESSING`);
     console.log(`${'='.repeat(70)}`);
-    console.log(`   Captured images: ${capturedImages.length}`);
+    console.log(`   Recorded video blob: ${recordedVideoBlob ? `${(recordedVideoBlob.size / 1024).toFixed(2)} KB` : '(none)'}`);
     console.log(`   Selected frame: ${selectedFrame?.name || '(none)'}`);
 
     try {
@@ -160,70 +169,87 @@ export function ProcessingScreen() {
         return;
       }
 
-      if (capturedImages.length !== 3) {
-        throw new Error(`Expected 3 captured images, got ${capturedImages.length}`);
+      if (!recordedVideoBlob) {
+        throw new Error('No recorded video blob found');
       }
 
       if (!selectedFrame) {
         throw new Error('No frame selected');
       }
 
-      setProgress(5);
-      setCurrentMessage('이미지 저장 중...');
+      setProgress(80);
+      // Message removed
 
-      // Step 1: Convert blob URLs to base64 and save as files
-      console.log(`\n💾 [ProcessingScreen] Saving ${capturedImages.length} images to files...`);
-      const imagePaths: string[] = [];
+      // Step 1: Convert video blob to base64 and save as file
+      console.log(`\n💾 [ProcessingScreen] Saving video to file...`);
+      console.log(`   Blob size: ${(recordedVideoBlob.size / 1024).toFixed(2)} KB`);
+      console.log(`   Blob type: ${recordedVideoBlob.type}`);
 
-      for (let i = 0; i < capturedImages.length; i++) {
-        const blobUrl = capturedImages[i];
-        console.log(`\n📸 [ProcessingScreen] Processing image ${i + 1}/3:`);
-        console.log(`   Blob URL: ${blobUrl}`);
-
-        // Fetch blob and convert to base64
-        const response = await fetch(blobUrl);
-        const blob = await response.blob();
-        console.log(`   ✓ Blob size: ${(blob.size / 1024).toFixed(2)} KB`);
-
-        // Convert to base64
-        const base64 = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.readAsDataURL(blob);
-        });
-        console.log(`   ✓ Base64 length: ${base64.length} chars`);
-
-        // Save via Electron IPC
-        const filename = `capture_${Date.now()}_${i + 1}.jpg`;
-        console.log(`   → Saving as: ${filename}`);
-
-        // @ts-ignore
-        const saveResult = await window.electron.image.saveBlob(base64, filename);
-
-        if (!saveResult.success) {
-          throw new Error(`Failed to save image ${i + 1}: ${saveResult.error}`);
-        }
-
-        console.log(`   ✅ Saved to: ${saveResult.filePath}`);
-        imagePaths.push(saveResult.filePath);
+      // Validate blob
+      if (recordedVideoBlob.size === 0) {
+        throw new Error('Video blob has zero size');
       }
 
-      console.log(`\n✅ [ProcessingScreen] All images saved!`);
-      imagePaths.forEach((path, i) => {
-        console.log(`   Image ${i + 1}: ${path}`);
-      });
+      // Convert blob to array buffer
+      const arrayBuffer = await recordedVideoBlob.arrayBuffer();
+      console.log(`   ✓ ArrayBuffer size: ${(arrayBuffer.byteLength / 1024).toFixed(2)} KB`);
 
-      setProgress(15);
-      setCurrentMessage('비디오 생성 중...');
+      // Check first 16 bytes to verify WebM header
+      const bytes = new Uint8Array(arrayBuffer);
+      const hexHeader = Array.from(bytes.slice(0, 16))
+        .map(b => b.toString(16).padStart(2, '0').toUpperCase())
+        .join('');
+      console.log(`   Blob header (hex): ${hexHeader}`);
+      console.log(`   Expected WebM header: 1A45DFA3...`);
 
-      // Step 2: Process images through pipeline
-      console.log(`\n🎬 [ProcessingScreen] Starting video processing...`);
-      console.log(`   Frame template: ${selectedFrame.templatePath}`);
+      // Convert to array for IPC transfer (avoiding base64 conversion issues)
+      const byteArray = Array.from(bytes);
+      console.log(`   ✓ Byte array length: ${byteArray.length} bytes`);
+
+      // Determine file extension based on blob type
+      const extension = recordedVideoBlob.type.includes('mp4') ? 'mp4' : 'webm';
+      const filename = `recording_${Date.now()}.${extension}`;
+      console.log(`   → Saving as: ${filename} (type: ${recordedVideoBlob.type})`);
 
       // @ts-ignore
-      await window.electron.video.processFromImages({
-        imagePaths: imagePaths,
-        frameTemplatePath: selectedFrame.templatePath,
+      const saveResult = await window.electron.video.saveBuffer(byteArray, filename);
+
+      if (!saveResult.success) {
+        throw new Error(`Failed to save video: ${saveResult.error}`);
+      }
+
+      console.log(`   ✅ Saved to: ${saveResult.filePath}`);
+      const videoPath = saveResult.filePath;
+
+      setProgress(85);
+      // Message removed
+
+      // Step 2: Process video - extract screenshots, upload to AWS, generate QR
+      console.log(`\n🎬 [ProcessingScreen] Starting video processing...`);
+      console.log(`   Video path: ${videoPath}`);
+      console.log(`   Frame template: ${selectedFrame.templatePath}`);
+      console.log(`   Screenshots will be extracted at: 5s, 10s, 15s`);
+
+      // Call video processing with the recorded video file
+      // The Python pipeline will:
+      // 1. Apply frame overlay to video
+      // 2. Upload the video to AWS S3
+      // 3. Generate QR code
+
+      // Convert frame template URL to filesystem path
+      let frameFilesystemPath = selectedFrame.templatePath;
+      if (selectedFrame.templatePath.startsWith('/')) {
+        // URL path like "/frame1.png" needs to be converted to filesystem path
+        // This will be handled by the Python bridge, but we need to pass the URL
+        frameFilesystemPath = selectedFrame.templatePath;
+      }
+
+      console.log(`   Frame template path: ${frameFilesystemPath}`);
+
+      // @ts-ignore
+      await window.electron.video.process({
+        inputVideo: videoPath,
+        chromaVideo: frameFilesystemPath, // Pass frame template path (will be mapped to frameOverlay)
         subtitleText: 'MUT 홀로그램 스튜디오',
         s3Folder: 'mut-hologram',
       });
@@ -276,24 +302,8 @@ export function ProcessingScreen() {
         </motion.div>
 
         {/* Status Messages */}
-        <motion.div className="h-24 flex items-center justify-center" variants={progressVariants}>
-          <motion.p
-            key={currentMessage}
-            variants={messageVariants}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-            className="text-3xl font-medium text-gray-700"
-          >
-            {currentMessage}
-          </motion.p>
-        </motion.div>
+        {/* Progress message removed - showing only progress bar */}
       </div>
-
-      {/* Footer */}
-      <motion.div className="text-center mb-12" variants={progressVariants}>
-        <p className="text-2xl text-gray-500">클라우드 전송 시 대기화면</p>
-      </motion.div>
     </motion.div>
   );
 }

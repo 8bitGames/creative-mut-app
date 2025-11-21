@@ -44,6 +44,7 @@ export interface VideoProcessingResult {
   s3Url: string;
   s3Key: string;
   qrCodePath: string;
+  framePaths: string[];
   compositionTime: number;
   totalTime: number;
 }

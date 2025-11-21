@@ -16,7 +16,8 @@ export type Screen =
   | 'processing'        // Screen 5
   | 'result'            // Screen 6
   | 'image-selection'   // Screen 7
-  | 'payment';          // Screen 8
+  | 'payment'           // Screen 8
+  | 'printing';         // Screen 9
 
 // ============================================
 // Frame Types
@@ -40,6 +41,7 @@ export interface ProcessingResult {
   s3Url: string;
   s3Key: string;
   qrCodePath: string;
+  framePaths: string[];
   compositionTime: number;
   totalTime: number;
 }

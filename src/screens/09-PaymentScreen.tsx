@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CreditCard, Loader2, CheckCircle, XCircle, Clock, Sparkles } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
+import { useSessionStore } from '@/store/sessionStore';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -51,9 +52,47 @@ const cardVariants = {
 
 export function PaymentScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
+  const processedResult = useSessionStore((state) => state.processedResult);
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>(PaymentStatus.WAITING);
   const [timeLeft, setTimeLeft] = useState(30);
   const [message, setMessage] = useState('');
+
+  // CRITICAL: Ensure hologram display (video + QR) persists when entering this screen
+  // AGGRESSIVE APPROACH: Poll every 500ms to ensure hologram stays in correct state
+  useEffect(() => {
+    console.log('🎭 [PaymentScreen] Component mounted - setting up hologram persistence');
+    console.log(`   processedResult exists: ${!!processedResult}`);
+    console.log(`   qrCodePath exists: ${!!processedResult?.qrCodePath}`);
+    console.log(`   s3Url exists: ${!!processedResult?.s3Url}`);
+
+    if (!processedResult || !processedResult.qrCodePath || !processedResult.s3Url) {
+      console.error('❌ [PaymentScreen] Missing processedResult data - cannot persist hologram!');
+      return;
+    }
+
+    const maintainHologram = () => {
+      console.log('🔄 [PaymentScreen] Maintaining hologram display (video + QR)');
+      // @ts-ignore - Electron API
+      if (window.electron?.hologram) {
+        // @ts-ignore
+        window.electron.hologram.showQR(
+          processedResult.qrCodePath,
+          processedResult.s3Url
+        );
+      }
+    };
+
+    // Call immediately
+    maintainHologram();
+
+    // Poll every 500ms to ensure state persists
+    const interval = setInterval(maintainHologram, 500);
+
+    return () => {
+      console.log('🛑 [PaymentScreen] Stopping hologram polling');
+      clearInterval(interval);
+    };
+  }, [processedResult]);
 
   useEffect(() => {
     // Start payment process (mock implementation)
@@ -77,8 +116,8 @@ export function PaymentScreen() {
     setPaymentStatus(PaymentStatus.WAITING);
     setMessage('카드를 삽입해주세요');
 
-    // Mock payment simulation (replace with actual payment integration)
-    // Simulate card insertion after 3 seconds
+    // Mock payment simulation - ALWAYS SUCCEEDS for testing
+    // Simulate card insertion after 1 second
     setTimeout(() => {
       setPaymentStatus(PaymentStatus.CARD_INSERTED);
       setMessage('카드가 감지되었습니다');
@@ -88,19 +127,13 @@ export function PaymentScreen() {
         setMessage('결제 처리 중...');
 
         setTimeout(() => {
-          // Mock success (80% success rate)
-          const isSuccess = Math.random() > 0.2;
-
-          if (isSuccess) {
-            setPaymentStatus(PaymentStatus.APPROVED);
-            setMessage('결제가 완료되었습니다!');
-          } else {
-            setPaymentStatus(PaymentStatus.DECLINED);
-            setMessage('결제가 거부되었습니다');
-          }
-        }, 2000);
-      }, 1000);
-    }, 3000);
+          // ALWAYS SUCCEED for testing
+          setPaymentStatus(PaymentStatus.APPROVED);
+          setMessage('결제가 완료되었습니다!');
+          console.log('✅ [PaymentScreen] Payment approved - will navigate to printing in 1 second');
+        }, 1000);
+      }, 500);
+    }, 1000);
   };
 
   const handleTimeout = () => {
@@ -121,10 +154,14 @@ export function PaymentScreen() {
     startPayment();
   };
 
-  // Auto-proceed on success
+  // Auto-proceed on success - navigate to printing screen
   useEffect(() => {
     if (paymentStatus === PaymentStatus.APPROVED) {
-      setTimeout(() => setScreen('idle'), 2000);
+      console.log('💳 [PaymentScreen] Payment approved! Navigating to printing screen...');
+      setTimeout(() => {
+        console.log('📄 [PaymentScreen] Navigating to printing screen NOW');
+        setScreen('printing');
+      }, 1000); // Reduced from 2000ms to 1000ms
     }
   }, [paymentStatus, setScreen]);
 

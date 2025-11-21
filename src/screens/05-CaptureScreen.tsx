@@ -45,64 +45,24 @@ const flashVariants = {
   },
 };
 
+type CapturePhase = 'transition' | 'recording';
+
 export function CaptureScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
   const selectedFrame = useSessionStore((state) => state.selectedFrame);
-  const addCapturedImage = useSessionStore((state) => state.addCapturedImage);
-  const [countdown, setCountdown] = useState<number | null>(5);
-  const [photoNumber, setPhotoNumber] = useState(1);
+  const setRecordedVideo = useSessionStore((state) => state.setRecordedVideo);
+
+  const [phase, setPhase] = useState<CapturePhase>('transition');
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [photoNumber, setPhotoNumber] = useState(0); // 0 means no photos yet
   const [showFlash, setShowFlash] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0); // Elapsed recording time in seconds
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const skipCountdownRef = useRef<() => void>(() => {});
-  const currentCountdownRef = useRef(5);
-
-  // Capture photo from video stream
-  const capturePhoto = useCallback(() => {
-    console.log('📸 [CaptureScreen] capturePhoto() called - Photo #' + photoNumber);
-
-    if (!videoRef.current || !canvasRef.current) {
-      console.warn('⚠️ [CaptureScreen] Missing video or canvas ref');
-      return;
-    }
-
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const context = canvas.getContext('2d');
-
-    if (!context) {
-      console.warn('⚠️ [CaptureScreen] No canvas context');
-      return;
-    }
-
-    console.log(`📐 [CaptureScreen] Video dimensions: ${video.videoWidth}x${video.videoHeight}`);
-
-    // Set canvas size to match video
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-
-    // Draw the video frame to canvas (mirrored)
-    context.translate(canvas.width, 0);
-    context.scale(-1, 1);
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    context.setTransform(1, 0, 0, 1, 0, 0); // Reset transform
-
-    console.log('🎨 [CaptureScreen] Frame drawn to canvas, converting to blob...');
-
-    // Convert canvas to blob and store
-    canvas.toBlob((blob) => {
-      if (blob) {
-        const imageUrl = URL.createObjectURL(blob);
-        addCapturedImage(imageUrl);
-        console.log(`✅ [CaptureScreen] Photo ${photoNumber} captured successfully!`);
-        console.log(`   📊 Blob size: ${(blob.size / 1024).toFixed(2)} KB`);
-        console.log(`   🔗 Image URL: ${imageUrl}`);
-      } else {
-        console.error('❌ [CaptureScreen] Failed to create blob from canvas');
-      }
-    }, 'image/jpeg', 0.95);
-  }, [photoNumber, addCapturedImage]);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const shutterSoundRef = useRef<HTMLAudioElement | null>(null);
 
   // Initialize camera stream
   useEffect(() => {
@@ -122,311 +82,384 @@ export function CaptureScreen() {
         });
 
         console.log('✅ [CaptureScreen] Camera access granted!');
-        console.log(`   📊 Stream tracks: ${stream.getTracks().length}`);
-        stream.getTracks().forEach(track => {
-          console.log(`   🎬 Track: ${track.kind} - ${track.label} (${track.enabled ? 'enabled' : 'disabled'})`);
-        });
-
         streamRef.current = stream;
+
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           console.log('📺 [CaptureScreen] Stream assigned to video element');
-        } else {
-          console.warn('⚠️ [CaptureScreen] Video ref not available yet');
         }
       } catch (error) {
         console.error('❌ [CaptureScreen] Failed to access camera:', error);
-        if (error instanceof Error) {
-          console.error(`   Error name: ${error.name}`);
-          console.error(`   Error message: ${error.message}`);
-        }
       }
     };
 
     startCamera();
 
+    // Load shutter sound
+    shutterSoundRef.current = new Audio('/sounds/camera-shutter.mp3');
+
     // Cleanup: Stop camera when component unmounts
     return () => {
       console.log('🛑 [CaptureScreen] Component unmounting - Stopping camera...');
       if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => {
-          track.stop();
-          console.log(`   ⏹️ Stopped track: ${track.kind} - ${track.label}`);
-        });
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
       }
     };
   }, []);
 
-  // Control hologram display during recording
+  // Monitor 2 stays on logo throughout
   useEffect(() => {
-    console.log('🎭 [CaptureScreen] Setting up hologram display...');
+    console.log('🎭 [CaptureScreen] Monitor 2 remains on logo');
 
     // @ts-ignore
-    if (window.electron?.hologram && selectedFrame) {
-      console.log(`📺 [CaptureScreen] Sending hologram update: mode=recording-prep, frame=${selectedFrame.templatePath}`);
+    if (window.electron?.hologram) {
+      console.log(`📺 [CaptureScreen] Keeping Monitor 2 in logo mode`);
       // @ts-ignore
-      window.electron.hologram.setMode('recording-prep', {
-        framePath: selectedFrame.templatePath,
-      });
+      window.electron.hologram.setMode('logo');
+    // @ts-ignore
     } else if (!window.electron?.hologram) {
       console.log('ℹ️ [CaptureScreen] Electron hologram API not available (running in browser)');
-    } else if (!selectedFrame) {
-      console.warn('⚠️ [CaptureScreen] No frame selected!');
     }
 
     return () => {
-      console.log('🎭 [CaptureScreen] Hologram control cleanup (not resetting to logo)');
+      console.log('🎭 [CaptureScreen] Hologram control cleanup');
     };
-  }, [selectedFrame]);
+  }, []);
 
-  useEffect(() => {
-    console.log('⏱️ [CaptureScreen] Starting countdown timer...');
+  // Play photo effect (flash + sound) - no actual photo capture
+  const playPhotoEffect = useCallback(() => {
+    console.log(`📸 [CaptureScreen] Playing photo effect (flash + sound)`);
 
-    let currentPhoto = 1;
-    let currentCountdown = 5;
-    let mainTimer: NodeJS.Timeout | null = null;
+    // Play shutter sound
+    if (shutterSoundRef.current) {
+      shutterSoundRef.current.currentTime = 0;
+      shutterSoundRef.current.play().catch(err => console.warn('Could not play shutter sound:', err));
+    }
 
-    console.log(`📸 [CaptureScreen] Photo ${currentPhoto}/3 - Countdown starting from ${currentCountdown}`);
+    // Show flash effect
+    setShowFlash(true);
+    setTimeout(() => setShowFlash(false), 300);
 
-    // Function to start/restart the countdown timer
-    const startCountdown = () => {
-      console.log(`⏱️ [CaptureScreen] Starting countdown from ${currentCountdown} for photo ${currentPhoto}/3`);
+    console.log('✅ [CaptureScreen] Photo effect played (no actual capture)');
+  }, []);
 
-      // Clear any existing timer to prevent overlaps
-      if (mainTimer) {
-        clearInterval(mainTimer);
+  // Start video recording
+  const startVideoRecording = useCallback(() => {
+    if (!streamRef.current) {
+      console.error('❌ [CaptureScreen] No stream available for recording');
+      return;
+    }
+
+    try {
+      console.log('🎬 [CaptureScreen] Starting video recording...');
+      recordedChunksRef.current = [];
+
+      // Try different codecs in order of preference (MP4 first for better compatibility)
+      let options;
+      let mimeType = 'video/webm'; // fallback
+
+      if (MediaRecorder.isTypeSupported('video/mp4')) {
+        mimeType = 'video/mp4';
+        options = { mimeType: 'video/mp4' };
+        console.log('   Using codec: MP4');
+      } else if (MediaRecorder.isTypeSupported('video/mp4;codecs=avc1')) {
+        mimeType = 'video/mp4';
+        options = { mimeType: 'video/mp4;codecs=avc1' };
+        console.log('   Using codec: MP4 (H.264/AVC1)');
+      } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+        mimeType = 'video/webm';
+        options = { mimeType: 'video/webm;codecs=vp9' };
+        console.log('   Using codec: WebM (VP9)');
+      } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
+        mimeType = 'video/webm';
+        options = { mimeType: 'video/webm;codecs=vp8' };
+        console.log('   Using codec: WebM (VP8)');
+      } else {
+        mimeType = 'video/webm';
+        options = { mimeType: 'video/webm' };
+        console.log('   Using codec: WebM (default)');
       }
 
-      mainTimer = setInterval(() => {
-        currentCountdown--;
-        currentCountdownRef.current = currentCountdown; // Keep ref in sync
-        console.log(`⏱️ [CaptureScreen] Countdown: ${currentCountdown} (Photo ${currentPhoto}/3)`);
+      const mediaRecorder = new MediaRecorder(streamRef.current, options);
 
-        if (currentCountdown === 0) {
-          // Clear the timer immediately when we hit 0 to prevent timing issues
-          if (mainTimer) {
-            clearInterval(mainTimer);
-            mainTimer = null;
-          }
+      // Handle data chunks as they become available
+      mediaRecorder.ondataavailable = async (event) => {
+        if (event.data && event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+          console.log(`📦 [CaptureScreen] Received video chunk #${recordedChunksRef.current.length}: ${(event.data.size / 1024).toFixed(2)} KB`);
 
-          console.log(`\n${'='.repeat(70)}`);
-          console.log(`📸 PHOTO CAPTURE ${currentPhoto}/3 STARTING`);
-          console.log(`${'='.repeat(70)}`);
-          console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
-          console.log(`📷 Photo number: ${currentPhoto}`);
-
-          // Hide countdown number
-          setCountdown(null);
-
-          // Trigger camera flash effect
-          setShowFlash(true);
-          setTimeout(() => setShowFlash(false), 300);
-
-          // Inline photo capture logic with detailed logging
-          if (videoRef.current && canvasRef.current) {
-            const video = videoRef.current;
-            const canvas = canvasRef.current;
-            const context = canvas.getContext('2d');
-
-            if (context) {
-              console.log(`\n📹 VIDEO STREAM STATUS:`);
-              console.log(`   ✓ Video element ready: true`);
-              console.log(`   ✓ Video width: ${video.videoWidth}px`);
-              console.log(`   ✓ Video height: ${video.videoHeight}px`);
-              console.log(`   ✓ Video aspect ratio: ${(video.videoWidth / video.videoHeight).toFixed(2)}`);
-              console.log(`   ✓ Video ready state: ${video.readyState} (4 = HAVE_ENOUGH_DATA)`);
-              console.log(`   ✓ Video paused: ${video.paused}`);
-              console.log(`   ✓ Video current time: ${video.currentTime.toFixed(2)}s`);
-
-              console.log(`\n🖼️ CANVAS PREPARATION:`);
-              canvas.width = video.videoWidth;
-              canvas.height = video.videoHeight;
-              console.log(`   ✓ Canvas width set to: ${canvas.width}px`);
-              console.log(`   ✓ Canvas height set to: ${canvas.height}px`);
-
-              console.log(`\n🎨 DRAWING TO CANVAS:`);
-              console.log(`   → Applying mirror transform (scaleX: -1)`);
-              context.translate(canvas.width, 0);
-              context.scale(-1, 1);
-              console.log(`   → Drawing video frame to canvas...`);
-              const drawStart = performance.now();
-              context.drawImage(video, 0, 0, canvas.width, canvas.height);
-              const drawEnd = performance.now();
-              console.log(`   ✓ Frame drawn in ${(drawEnd - drawStart).toFixed(2)}ms`);
-              context.setTransform(1, 0, 0, 1, 0, 0);
-              console.log(`   ✓ Transform reset`);
-
-              console.log(`\n💾 BLOB CONVERSION:`);
-              console.log(`   → Converting canvas to JPEG blob (quality: 95%)...`);
-              const blobStart = performance.now();
-
-              canvas.toBlob((blob) => {
-                const blobEnd = performance.now();
-
-                if (blob) {
-                  console.log(`   ✓ Blob created in ${(blobEnd - blobStart).toFixed(2)}ms`);
-                  console.log(`   ✓ Blob size: ${(blob.size / 1024).toFixed(2)} KB`);
-                  console.log(`   ✓ Blob type: ${blob.type}`);
-
-                  const imageUrl = URL.createObjectURL(blob);
-                  console.log(`\n🔗 BLOB URL CREATED:`);
-                  console.log(`   → ${imageUrl}`);
-
-                  console.log(`\n💿 STORING IMAGE:`);
-                  addCapturedImage(imageUrl);
-                  console.log(`   ✓ Image added to session store`);
-                  console.log(`   ✓ Total images in store: ${currentPhoto}`);
-
-                  console.log(`\n✅ PHOTO ${currentPhoto}/3 CAPTURED SUCCESSFULLY!`);
-                  console.log(`${'='.repeat(70)}\n`);
-                } else {
-                  console.error(`\n❌ BLOB CREATION FAILED`);
-                  console.error(`   → Canvas toBlob returned null`);
-                  console.error(`${'='.repeat(70)}\n`);
-                }
-              }, 'image/jpeg', 0.95);
+          // DEBUG: Check first chunk header
+          if (recordedChunksRef.current.length === 1) {
+            const arrayBuffer = await event.data.slice(0, 16).arrayBuffer();
+            const bytes = new Uint8Array(arrayBuffer);
+            const hexHeader = Array.from(bytes).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('');
+            console.log(`   🔍 First chunk header: ${hexHeader}`);
+            console.log(`   🔍 Expected EBML:      1A45DFA3...`);
+            if (hexHeader.startsWith('1A45DFA3')) {
+              console.log(`   ✅ Valid WebM EBML header detected!`);
             } else {
-              console.error(`\n❌ CANVAS CONTEXT NOT AVAILABLE`);
-              console.error(`${'='.repeat(70)}\n`);
+              console.warn(`   ⚠️  Invalid header - missing EBML!`);
             }
-          } else {
-            console.error(`\n❌ VIDEO OR CANVAS REF NOT AVAILABLE`);
-            console.error(`   Video ref: ${videoRef.current ? 'available' : 'NULL'}`);
-            console.error(`   Canvas ref: ${canvasRef.current ? 'available' : 'NULL'}`);
-            console.error(`${'='.repeat(70)}\n`);
           }
-
-          setTimeout(() => {
-            if (currentPhoto < 3) {
-              // Prepare for next photo
-              currentPhoto++;
-              setPhotoNumber(currentPhoto); // Update UI to show next photo number
-              currentCountdown = 5;
-              setCountdown(5);
-              console.log(`\n🔄 PREPARING FOR NEXT PHOTO:`);
-              console.log(`   → Moving to photo ${currentPhoto}/3`);
-              console.log(`   → Countdown reset to ${currentCountdown} seconds`);
-              console.log(`   → Restarting countdown timer...\n`);
-
-              // Start a fresh countdown timer for the next photo
-              startCountdown();
-            } else {
-              // All photos captured, navigate to processing
-              console.log(`\n${'='.repeat(70)}`);
-              console.log(`🎉 ALL PHOTOS CAPTURED!`);
-              console.log(`${'='.repeat(70)}`);
-              console.log(`✓ Total photos: 3`);
-              console.log(`✓ Session complete`);
-              console.log(`→ Navigating to processing screen...`);
-              console.log(`${'='.repeat(70)}\n`);
-
-              setTimeout(() => {
-                setScreen('processing');
-              }, 500);
-            }
-          }, 200); // Brief pause before next photo
         } else {
-          setCountdown(currentCountdown);
+          console.warn('⚠️ [CaptureScreen] Received empty data chunk');
         }
-      }, 1000);
-    };
+      };
 
-    // Start the initial countdown
-    startCountdown();
+      // Handle recording errors
+      mediaRecorder.onerror = (event) => {
+        console.error('❌ [CaptureScreen] MediaRecorder error:', event);
+      };
 
-    // Expose skip function - force immediate capture by clearing timer and setting countdown to 0
-    skipCountdownRef.current = () => {
-      console.log('⏩ [CaptureScreen] Skipping countdown via spacebar - forcing immediate capture');
+      // Handle recording start
+      mediaRecorder.onstart = () => {
+        console.log('▶️ [CaptureScreen] MediaRecorder started successfully');
+        console.log(`   MIME type: ${mediaRecorder.mimeType}`);
+        console.log(`   State: ${mediaRecorder.state}`);
+      };
 
-      // Clear the current timer
-      if (mainTimer) {
-        clearInterval(mainTimer);
-        mainTimer = null;
+      mediaRecorder.onstop = () => {
+        console.log('🎬 [CaptureScreen] Video recording stopped');
+
+        // CRITICAL FIX: Wait for all pending ondataavailable events to complete
+        // This ensures all chunks (including the EBML header) are collected
+        setTimeout(() => {
+          console.log(`   Total chunks received: ${recordedChunksRef.current.length}`);
+
+          if (recordedChunksRef.current.length === 0) {
+            console.error('❌ [CaptureScreen] No video data recorded!');
+            return;
+          }
+
+          // Log chunk sizes for debugging
+          const totalSize = recordedChunksRef.current.reduce((acc, chunk) => acc + chunk.size, 0);
+          console.log(`   Total data size: ${(totalSize / 1024).toFixed(2)} KB`);
+
+          // Log first chunk to verify header
+          if (recordedChunksRef.current[0]) {
+            console.log(`   First chunk size: ${(recordedChunksRef.current[0].size / 1024).toFixed(2)} KB`);
+          }
+
+          // Create blob with proper MIME type (use the detected mimeType)
+          const blob = new Blob(recordedChunksRef.current, { type: mimeType });
+          console.log(`✅ [CaptureScreen] Video blob created: ${(blob.size / 1024).toFixed(2)} KB`);
+          console.log(`   MIME type: ${mimeType}`);
+
+          // Verify blob has data
+          if (blob.size === 0) {
+            console.error('❌ [CaptureScreen] Blob has zero size!');
+            return;
+          }
+
+          // Store video in session
+          const videoUrl = URL.createObjectURL(blob);
+          setRecordedVideo(blob, videoUrl);
+          console.log(`💾 [CaptureScreen] Video stored in session: ${videoUrl}`);
+        }, 200); // 200ms delay to ensure all chunks are collected
+      };
+
+      // Start recording WITHOUT timeslice to ensure EBML header is in first chunk
+      // Timeslice causes chunks to be split incorrectly, missing initialization segment
+      mediaRecorder.start(); // No timeslice - data only emitted on stop()
+      mediaRecorderRef.current = mediaRecorder;
+      console.log('✅ [CaptureScreen] MediaRecorder started (no timeslice for header integrity)');
+    } catch (error) {
+      console.error('❌ [CaptureScreen] Failed to start video recording:', error);
+    }
+  }, [setRecordedVideo]);
+
+  // Stop video recording
+  const stopVideoRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      console.log('⏹️ [CaptureScreen] Stopping video recording...');
+      console.log(`   Current state: ${mediaRecorderRef.current.state}`);
+
+      // Request any remaining data before stopping
+      try {
+        mediaRecorderRef.current.requestData();
+        console.log('✅ [CaptureScreen] Requested final data from MediaRecorder');
+
+        // CRITICAL FIX: Wait for final ondataavailable event before stopping
+        setTimeout(() => {
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            mediaRecorderRef.current.stop();
+            console.log('✅ [CaptureScreen] MediaRecorder stopped');
+          }
+        }, 100);
+      } catch (err) {
+        console.warn('⚠️ [CaptureScreen] Could not request final data:', err);
+        // Still try to stop
+        mediaRecorderRef.current.stop();
       }
+    }
+  }, []);
 
-      // Hide countdown and trigger flash immediately
-      setCountdown(null);
+  // Main timer - controls phase transitions and recording flow
+  useEffect(() => {
+    console.log('⏱️ [CaptureScreen] Starting main timer...');
 
-      // Force countdown to 0 to trigger capture
-      currentCountdown = 0;
-      currentCountdownRef.current = 0;
+    let elapsedTime = 0;
+    const mainTimer = setInterval(() => {
+      elapsedTime++;
+      console.log(`⏱️ [CaptureScreen] Elapsed: ${elapsedTime}s | Phase: ${phase}`);
 
-      // Manually trigger the capture logic by restarting the timer
-      // which will immediately hit the countdown === 0 condition
-      startCountdown();
-    };
+      if (elapsedTime === 1) {
+        // Start recording immediately (no transition delay)
+        console.log('🎬 [CaptureScreen] Starting recording phase...');
+        setPhase('recording');
+        setRecordingTime(1);
+        setCountdown(4); // 4 seconds until first photo
+        setPhotoNumber(1);
+        startVideoRecording();
+      } else if (elapsedTime > 1 && elapsedTime <= 15) {
+        // Recording phase (1-15s = 15 seconds of recording)
+        const recordingElapsed = elapsedTime; // Time since recording started: 1-15
+        setRecordingTime(recordingElapsed);
+
+        // Calculate countdown for next photo
+        // Photos at recordingElapsed = 5, 10, 15
+        let nextPhotoTime: number;
+        if (recordingElapsed < 5) {
+          nextPhotoTime = 5;
+        } else if (recordingElapsed < 10) {
+          nextPhotoTime = 10;
+        } else {
+          nextPhotoTime = 15;
+        }
+        const timeUntilNextPhoto = nextPhotoTime - recordingElapsed;
+        setCountdown(timeUntilNextPhoto);
+
+        // Play photo effects at exactly 5s, 10s, 15s of recording time
+        if (recordingElapsed === 5 || recordingElapsed === 10 || recordingElapsed === 15) {
+          console.log(`📸 [CaptureScreen] Photo effect trigger at ${recordingElapsed}s of recording`);
+          playPhotoEffect();
+
+          // Update photo number for UI display
+          if (recordingElapsed === 5) setPhotoNumber(2);
+          if (recordingElapsed === 10) setPhotoNumber(3);
+        }
+      } else if (elapsedTime === 16) {
+        // Stop recording and navigate (after 15s of recording + 1s buffer)
+        console.log('🏁 [CaptureScreen] Recording complete, stopping...');
+        stopVideoRecording();
+        clearInterval(mainTimer);
+
+        setTimeout(() => {
+          setScreen('processing');
+        }, 500);
+      }
+    }, 1000);
 
     return () => {
-      console.log('🛑 [CaptureScreen] Clearing countdown timer');
-      if (mainTimer) {
-        clearInterval(mainTimer);
-      }
+      console.log('🛑 [CaptureScreen] Clearing main timer');
+      clearInterval(mainTimer);
     };
-  }, [setScreen, addCapturedImage]);
-
-  // Keyboard listener for spacebar to skip countdown
-  useEffect(() => {
-    const handleKeyPress = (event: KeyboardEvent) => {
-      if (event.code === 'Space' && countdown !== null && countdown > 0) {
-        event.preventDefault();
-        skipCountdownRef.current();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyPress);
-    return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [countdown]);
+  }, [phase, setScreen, startVideoRecording, stopVideoRecording, playPhotoEffect]);
 
   return (
     <motion.div
-      className="fullscreen bg-black text-white flex flex-col items-center justify-between py-10 px-8 relative"
+      className="fullscreen bg-black text-white flex items-center justify-center relative overflow-hidden"
       variants={containerVariants}
       initial="hidden"
       animate="visible"
       exit="exit"
     >
-      {/* Top Bar */}
-      <div className="w-full flex items-center justify-between">
-        <p className="text-xl font-medium text-gray-300">촬영 중입니다...</p>
-        <div className="bg-white text-black px-5 py-2 rounded-full">
-          <p className="text-lg font-bold">
-            사진 {photoNumber}/3
-          </p>
-        </div>
-      </div>
-
-      {/* Main Content Area - Centered Countdown */}
-      <div className="absolute inset-0 flex items-center justify-center">
-        {/* Countdown Display */}
-        <AnimatePresence mode="wait">
-          {countdown !== null && countdown > 0 && (
-            <motion.div
-              key={countdown}
-              variants={countdownVariants}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-            >
-              <p className="text-[12rem] font-bold text-white leading-none">
-                {countdown}
-              </p>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      {/* Hidden video element for camera capture - not displayed on screen */}
+      {/* Live Camera Feed - Full Screen Background */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted
-        className="hidden"
-        style={{ transform: 'scaleX(-1)' }}
+        className="absolute inset-0 w-full h-full object-cover"
+        style={{ transform: 'scaleX(-1)' }} // Mirror the video
       />
 
-      {/* Hidden canvas for photo capture */}
-      <canvas ref={canvasRef} className="hidden" />
+      {/* Frame Overlay - Always visible at 100% opacity during both phases */}
+      {selectedFrame && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <img
+            src={selectedFrame.templatePath}
+            alt="Frame Overlay"
+            className="w-full h-full object-contain opacity-100"
+          />
+        </div>
+      )}
+
+      {/* Semi-transparent overlay for better text readability */}
+      <div className="absolute inset-0 bg-black bg-opacity-20 pointer-events-none" />
+
+      {/* TRANSITION PHASE UI - Removed to avoid flash effect */}
+
+      {/* RECORDING PHASE UI */}
+      {phase === 'recording' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-between py-10 px-8 z-10">
+          {/* Top Section - Recording Indicator + Instructions */}
+          <div className="w-full flex flex-col items-center gap-6">
+            {/* Recording Indicator Bar */}
+            <div className="w-full flex items-center justify-between">
+              <div className="flex items-center gap-3 bg-black bg-opacity-50 px-4 py-2 rounded-full">
+                <motion.div
+                  className="w-6 h-6 bg-red-500 rounded-full"
+                  animate={{ opacity: [1, 0.3, 1] }}
+                  transition={{ duration: 1.5, repeat: Infinity }}
+                />
+                <p className="text-xl font-medium">REC {recordingTime}s</p>
+              </div>
+
+              <div className="bg-white text-black px-5 py-2 rounded-full">
+                <p className="text-lg font-bold">
+                  사진 {photoNumber}/3
+                </p>
+              </div>
+            </div>
+
+            {/* Instructions - Top - Hide after 3 seconds */}
+            <AnimatePresence>
+              {recordingTime <= 3 && (
+                <motion.div
+                  initial={{ opacity: 0, y: -20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.5 }}
+                  className="text-center"
+                >
+                  <h2 className="text-4xl font-bold leading-tight drop-shadow-2xl bg-black bg-opacity-50 px-8 py-4 rounded-2xl">
+                    5초에 한 번, 원하시는 포즈로<br />
+                    촬영을 진행해주세요!
+                  </h2>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* Center - Empty (just camera feed) */}
+          <div className="flex-1"></div>
+
+          {/* Bottom Section - Countdown */}
+          <div className="w-full flex items-center justify-center pb-12">
+            <div className="relative flex items-center justify-center">
+              <AnimatePresence mode="wait">
+                {countdown !== null && countdown > 0 && (
+                  <motion.div
+                    key={countdown}
+                    variants={countdownVariants}
+                    initial="initial"
+                    animate="animate"
+                    exit="exit"
+                  >
+                    <p className="text-[16rem] font-bold text-white leading-none drop-shadow-2xl">
+                      {countdown}
+                    </p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Camera Flash Effect */}
       <AnimatePresence>

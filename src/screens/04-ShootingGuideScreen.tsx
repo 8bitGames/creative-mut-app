@@ -1,7 +1,6 @@
 // src/screens/04-ShootingGuideScreen.tsx
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Camera } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { useSessionStore } from '@/store/sessionStore';
 
@@ -30,30 +29,6 @@ const headingVariants = {
   },
 };
 
-const iconVariants = {
-  hidden: { opacity: 0, scale: 0.8 },
-  visible: {
-    opacity: 1,
-    scale: 1,
-    transition: {
-      duration: 0.6,
-      ease: 'easeOut',
-    },
-  },
-};
-
-const guideBoxVariants = {
-  hidden: { opacity: 0, y: 20 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: {
-      duration: 0.5,
-      ease: 'easeOut',
-    },
-  },
-};
-
 const countdownVariants = {
   initial: { scale: 0.5, opacity: 0 },
   animate: {
@@ -77,29 +52,74 @@ export function ShootingGuideScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
   const selectedFrame = useSessionStore((state) => state.selectedFrame);
   const [countdown, setCountdown] = useState<number | null>(10);
+  const [showInstructions, setShowInstructions] = useState(true);
+  const [videoReady, setVideoReady] = useState(false); // Track when video is ready
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
-  // Show frame on hologram window when countdown starts
+  // Monitor 2 stays on logo - ensure it's set to logo mode
   useEffect(() => {
-    console.log('📺 [ShootingGuideScreen] Component mounted - Setting up hologram display...');
+    console.log('📺 [ShootingGuideScreen] Monitor 2 will show logo');
 
     // @ts-ignore
-    if (window.electron?.hologram && selectedFrame) {
-      console.log(`🎭 [ShootingGuideScreen] Sending hologram update: recording-prep with frame ${selectedFrame.templatePath}`);
+    if (window.electron?.hologram) {
+      console.log(`🎭 [ShootingGuideScreen] Setting Monitor 2 to logo mode`);
       // @ts-ignore
-      window.electron.hologram.setMode('recording-prep', {
-        framePath: selectedFrame.templatePath,
-      });
+      window.electron.hologram.setMode('logo');
+    // @ts-ignore
     } else if (!window.electron?.hologram) {
       console.log('ℹ️ [ShootingGuideScreen] Electron hologram API not available (running in browser)');
-    } else if (!selectedFrame) {
-      console.warn('⚠️ [ShootingGuideScreen] No frame selected!');
     }
 
-    // Don't reset to logo - let the hologram stay in recording-prep mode
     return () => {
-      console.log('🎭 [ShootingGuideScreen] Cleanup - Keeping hologram in recording-prep mode');
+      console.log('🎭 [ShootingGuideScreen] Cleanup - Monitor 2 remains on logo');
     };
-  }, [selectedFrame]);
+  }, []);
+
+  // Initialize camera for Monitor 1
+  useEffect(() => {
+    console.log('📷 [ShootingGuideScreen] Initializing camera for Monitor 1...');
+
+    const startCamera = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1080 },
+            height: { ideal: 1920 },
+            facingMode: 'user'
+          },
+          audio: false
+        });
+
+        console.log('✅ [ShootingGuideScreen] Camera access granted!');
+        streamRef.current = stream;
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          console.log('📺 [ShootingGuideScreen] Camera stream assigned to video element');
+        }
+      } catch (error) {
+        console.error('❌ [ShootingGuideScreen] Failed to access camera:', error);
+        // Still show UI even if camera fails (for testing)
+        setVideoReady(true);
+      }
+    };
+
+    startCamera();
+
+    return () => {
+      console.log('🛑 [ShootingGuideScreen] Stopping camera...');
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
+
+  // Handle video ready event
+  const handleVideoReady = () => {
+    console.log('✅ [ShootingGuideScreen] Video is ready to play');
+    setVideoReady(true);
+  };
 
   useEffect(() => {
     // Auto-start 10-second countdown
@@ -109,10 +129,14 @@ export function ShootingGuideScreen() {
           clearInterval(countdownTimer);
           return null;
         }
-        // TODO: Play sound effect here
         return prev - 1;
       });
     }, 1000);
+
+    // Hide instructions after 5 seconds
+    const instructionsTimer = setTimeout(() => {
+      setShowInstructions(false);
+    }, 5000);
 
     // Navigate to recording screen after countdown finishes
     const navigationTimer = setTimeout(() => {
@@ -121,88 +145,104 @@ export function ShootingGuideScreen() {
 
     return () => {
       clearInterval(countdownTimer);
+      clearTimeout(instructionsTimer);
       clearTimeout(navigationTimer);
     };
   }, [setScreen]);
 
   return (
     <motion.div
-      className="fullscreen bg-white text-black flex flex-col items-center justify-between py-12 px-10"
+      className="fullscreen bg-black text-white flex items-center justify-center relative overflow-hidden"
       variants={containerVariants}
       initial="hidden"
       animate="visible"
       exit="exit"
     >
-      {/* Header */}
-      <motion.div className="text-center mt-8" variants={headingVariants}>
-        <h1 className="text-5xl font-bold mb-3">촬영 가이드</h1>
-      </motion.div>
+      {/* Live Camera Feed - Full Screen Background */}
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        onLoadedData={handleVideoReady}
+        onCanPlay={handleVideoReady}
+        className="absolute inset-0 w-full h-full object-cover"
+        style={{
+          transform: 'scaleX(-1)', // Mirror the video
+          opacity: videoReady ? 1 : 0, // Hide until ready
+          transition: 'opacity 0.3s ease-in'
+        }}
+      />
 
-      {/* Content */}
-      <div className="flex-1 flex flex-col items-center justify-center gap-8 w-full px-4">
-        {/* Camera Icon */}
+      {/* Frame Overlay - Show only when video is ready */}
+      {selectedFrame && videoReady && (
         <motion.div
-          variants={iconVariants}
-          className="w-40 h-40 bg-black rounded-full flex items-center justify-center shadow-2xl"
+          className="absolute inset-0 flex items-center justify-center pointer-events-none"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.3 }}
         >
-          <Camera className="w-24 h-24 text-white" strokeWidth={1.5} />
+          <img
+            src={selectedFrame.templatePath}
+            alt="Frame Overlay"
+            className="w-full h-full object-contain opacity-100"
+          />
         </motion.div>
+      )}
 
-        {/* Instructions */}
-        <motion.div className="text-center px-6" variants={guideBoxVariants}>
-          <p className="text-3xl font-medium mb-6">
-            바닥의 발자국 위치로 이동하여
-          </p>
-          <p className="text-3xl font-medium">
-            전신이 화면 안에 들어오도록 서주세요
-          </p>
-        </motion.div>
+      {/* Semi-transparent overlay for better text readability */}
+      <div className="absolute inset-0 bg-black bg-opacity-30 pointer-events-none" />
 
-        {/* Visual Guide Box with Countdown Overlay */}
-        <motion.div
-          variants={guideBoxVariants}
-          className="relative w-full"
-        >
-          {/* Standing Position Guide */}
-          <div className="bg-gray-100 border-4 border-dashed border-gray-400 rounded-2xl py-12 px-8 flex flex-col items-center justify-center">
-            <div className="text-center">
-              <div className="text-7xl mb-3">🧍</div>
-              <p className="text-2xl text-gray-600 font-medium">
-                이곳에 서주세요
-              </p>
-            </div>
-          </div>
-
-          {/* Corner Markers */}
-          <div className="absolute top-0 left-0 w-12 h-12 border-t-6 border-l-6 border-black rounded-tl-2xl" />
-          <div className="absolute top-0 right-0 w-12 h-12 border-t-6 border-r-6 border-black rounded-tr-2xl" />
-          <div className="absolute bottom-0 left-0 w-12 h-12 border-b-6 border-l-6 border-black rounded-bl-2xl" />
-          <div className="absolute bottom-0 right-0 w-12 h-12 border-b-6 border-r-6 border-black rounded-br-2xl" />
-        </motion.div>
-
-        {/* Countdown Display */}
-        <div className="relative w-48 h-48 flex items-center justify-center">
-          <AnimatePresence mode="wait">
-            {countdown !== null && countdown > 0 && (
-              <motion.div
-                key={countdown}
-                variants={countdownVariants}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                className="absolute"
-              >
-                <p className="text-[10rem] font-bold text-black leading-none">
-                  {countdown}
+      {/* UI Overlay */}
+      <div className="relative z-10 flex flex-col items-center justify-between h-full py-12 px-10 w-full">
+        {/* Header - Combined Instructions - Show only for first 5 seconds */}
+        <AnimatePresence>
+          {showInstructions && (
+            <motion.div
+              className="text-center w-full"
+              variants={headingVariants}
+              initial="hidden"
+              animate="visible"
+              exit={{ opacity: 0, y: -20, transition: { duration: 0.5 } }}
+            >
+              <div className="bg-black bg-opacity-80 px-10 py-8 rounded-3xl inline-block">
+                <h1 className="text-5xl font-bold mb-6 drop-shadow-lg leading-tight">
+                  홀로그램 촬영을 시작합니다.
+                </h1>
+                <p className="text-3xl drop-shadow-lg leading-relaxed">
+                  바닥의 발자국 위치에서<br />
+                  프레임 안에 전신이 들어오도록 서주세요.
                 </p>
-              </motion.div>
-            )}
-          </AnimatePresence>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Center - Empty space */}
+        <div className="flex-1"></div>
+
+        {/* Bottom - Countdown */}
+        <div className="flex flex-col items-center gap-8">
+          <div className="relative w-48 h-48 flex items-center justify-center">
+            <AnimatePresence mode="wait">
+              {countdown !== null && countdown > 0 && (
+                <motion.div
+                  key={countdown}
+                  variants={countdownVariants}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                  className="absolute"
+                >
+                  <p className="text-[10rem] font-bold text-white leading-none drop-shadow-2xl">
+                    {countdown}
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       </div>
-
-      {/* Bottom Spacing */}
-      <div className="h-8"></div>
     </motion.div>
   );
 }

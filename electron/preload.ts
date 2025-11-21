@@ -1,4 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
+import type { IpcRendererEvent } from 'electron';
 
 // Camera API
 const cameraAPI = {
@@ -22,6 +23,9 @@ const imageAPI = {
 
 // Video Processing API
 const videoAPI = {
+  saveBuffer: (byteArray: number[], filename: string) =>
+    ipcRenderer.invoke('video:save-buffer', byteArray, filename),
+
   process: (params: {
     inputVideo: string;
     chromaVideo: string;
@@ -35,6 +39,9 @@ const videoAPI = {
     subtitleText?: string;
     s3Folder?: string;
   }) => ipcRenderer.invoke('video:process-from-images', params),
+
+  extractFrames: (videoPath: string, timestamps: number[]) =>
+    ipcRenderer.invoke('video:extract-frames', videoPath, timestamps),
 
   cancel: (taskId: string) => ipcRenderer.invoke('video:cancel', taskId),
 
@@ -59,6 +66,7 @@ const videoAPI = {
       s3Url: string;
       s3Key: string;
       qrCodePath: string;
+      framePaths: string[];
       compositionTime: number;
       totalTime: number;
     };
@@ -71,6 +79,7 @@ const videoAPI = {
         s3Url: string;
         s3Key: string;
         qrCodePath: string;
+        framePaths: string[];
         compositionTime: number;
         totalTime: number;
       };
@@ -119,6 +128,7 @@ const paymentAPI = {
 // File API
 const fileAPI = {
   readAsDataUrl: (filePath: string) => ipcRenderer.invoke('file:read-as-data-url', filePath),
+  delete: (filePath: string) => ipcRenderer.invoke('file:delete', filePath),
 };
 
 // Hologram API
@@ -130,12 +140,14 @@ const hologramAPI = {
     ipcRenderer.invoke('hologram:show-qr', qrCodePath, videoPath),
 
   showLogo: () => ipcRenderer.invoke('hologram:show-logo'),
+
+  getState: () => ipcRenderer.invoke('hologram:get-state'),
 };
 
 // IPC Renderer API for hologram window
 const ipcRendererAPI = {
   on: (channel: string, callback: (...args: any[]) => void) => {
-    ipcRenderer.on(channel, (_event, ...args) => callback(...args));
+    ipcRenderer.on(channel, (_event: IpcRendererEvent, ...args: any[]) => callback(...args));
   },
   removeListener: (channel: string, callback: (...args: any[]) => void) => {
     ipcRenderer.removeListener(channel, callback);

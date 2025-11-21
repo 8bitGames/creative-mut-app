@@ -1,7 +1,7 @@
 // src/screens/08-ImageSelectionScreen.tsx
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Check, ArrowLeft, ArrowRight } from 'lucide-react';
+import { Check, ArrowRight } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { useSessionStore } from '@/store/sessionStore';
 import { Button } from '@/components/ui/button';
@@ -56,10 +56,129 @@ export function ImageSelectionScreen() {
   const capturedImages = useSessionStore((state) => state.capturedImages);
   const selectedPrintImage = useSessionStore((state) => state.selectedPrintImage);
   const setSelectedPrintImage = useSessionStore((state) => state.setSelectedPrintImage);
+  const processedResult = useSessionStore((state) => state.processedResult);
 
   const [localSelection, setLocalSelection] = useState<string | null>(
     selectedPrintImage || (capturedImages.length > 0 ? capturedImages[0] : null)
   );
+
+  // State for loading images as data URLs
+  const [imageDataUrls, setImageDataUrls] = useState<{ [key: string]: string }>({});
+  const [loadingImages, setLoadingImages] = useState(true);
+
+  // 60-second countdown timer
+  const [timeRemaining, setTimeRemaining] = useState(60);
+
+  // CRITICAL: Ensure hologram display (video + QR) persists when entering this screen
+  // AGGRESSIVE APPROACH: Poll every 500ms to ensure hologram stays in correct state
+  useEffect(() => {
+    console.log('🎭 [ImageSelectionScreen] Component mounted - setting up hologram persistence');
+    console.log(`   processedResult exists: ${!!processedResult}`);
+    console.log(`   qrCodePath exists: ${!!processedResult?.qrCodePath}`);
+    console.log(`   s3Url exists: ${!!processedResult?.s3Url}`);
+
+    if (!processedResult || !processedResult.qrCodePath || !processedResult.s3Url) {
+      console.error('❌ [ImageSelectionScreen] Missing processedResult data - cannot persist hologram!');
+      return;
+    }
+
+    const maintainHologram = () => {
+      console.log('🔄 [ImageSelectionScreen] Maintaining hologram display (video + QR)');
+      // @ts-ignore - Electron API
+      if (window.electron?.hologram) {
+        // @ts-ignore
+        window.electron.hologram.showQR(
+          processedResult.qrCodePath,
+          processedResult.s3Url
+        );
+      }
+    };
+
+    // Call immediately
+    maintainHologram();
+
+    // Poll every 500ms to ensure state persists
+    const interval = setInterval(maintainHologram, 500);
+
+    return () => {
+      console.log('🛑 [ImageSelectionScreen] Stopping hologram polling');
+      clearInterval(interval);
+    };
+  }, [processedResult]);
+
+  // Load images via IPC as data URLs
+  useEffect(() => {
+    const loadImages = async () => {
+      console.log('🖼️ [ImageSelectionScreen] Loading images via IPC');
+      console.log(`   Total images: ${capturedImages.length}`);
+      console.log(`   Image paths:`, capturedImages);
+
+      // CRITICAL: Validate that we have exactly 3 images
+      const REQUIRED_IMAGES = 3;
+      if (capturedImages.length !== REQUIRED_IMAGES) {
+        console.error(`❌ [ImageSelectionScreen] Expected ${REQUIRED_IMAGES} images, got ${capturedImages.length}`);
+        alert(`오류: ${REQUIRED_IMAGES}개의 사진이 필요하지만 ${capturedImages.length}개만 있습니다.\n처음부터 다시 시도해주세요.`);
+        setTimeout(() => setScreen('start'), 2000);
+        setLoadingImages(false);
+        return;
+      }
+
+      const dataUrls: { [key: string]: string } = {};
+
+      for (let i = 0; i < capturedImages.length; i++) {
+        const imagePath = capturedImages[i];
+        console.log(`   Loading image ${i + 1}/${capturedImages.length}: ${imagePath}`);
+
+        try {
+          // @ts-ignore
+          if (window.electron?.file) {
+            // @ts-ignore
+            const result = await window.electron.file.readAsDataUrl(imagePath);
+            if (result.success) {
+              dataUrls[imagePath] = result.dataUrl;
+              console.log(`   ✅ Image ${i + 1} loaded successfully`);
+            } else {
+              console.error(`   ❌ Failed to load image ${i + 1}:`, result.error);
+            }
+          } else {
+            console.warn('⚠️ [ImageSelectionScreen] Electron API not available');
+          }
+        } catch (error) {
+          console.error(`   ❌ Error loading image ${i + 1}:`, error);
+        }
+      }
+
+      setImageDataUrls(dataUrls);
+      setLoadingImages(false);
+      console.log(`✅ [ImageSelectionScreen] Loaded ${Object.keys(dataUrls).length} images`);
+
+      // Validate all images loaded successfully
+      if (Object.keys(dataUrls).length !== REQUIRED_IMAGES) {
+        console.error(`❌ [ImageSelectionScreen] Failed to load all images: ${Object.keys(dataUrls).length}/${REQUIRED_IMAGES}`);
+        alert(`오류: 일부 사진을 불러올 수 없습니다.\n처음부터 다시 시도해주세요.`);
+        setTimeout(() => setScreen('start'), 2000);
+      }
+    };
+
+    loadImages();
+  }, [capturedImages, setScreen]);
+
+  // 60-second countdown timer
+  useEffect(() => {
+    const countdownTimer = setInterval(() => {
+      setTimeRemaining((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+
+    return () => clearInterval(countdownTimer);
+  }, []);
+
+  // Handle timeout expiry separately to avoid setState during render
+  useEffect(() => {
+    if (timeRemaining === 0) {
+      console.log('⏱️ [ImageSelectionScreen] Time expired, returning to start');
+      setScreen('start');
+    }
+  }, [timeRemaining, setScreen]);
 
   const handleImageSelect = (imagePath: string) => {
     setLocalSelection(imagePath);
@@ -72,31 +191,43 @@ export function ImageSelectionScreen() {
     }
   };
 
-  const handleBack = () => {
-    setScreen('result');
-  };
-
   return (
     <motion.div
-      className="fullscreen bg-white text-black flex flex-col items-center justify-between p-16"
+      className="fullscreen bg-white text-black flex flex-col items-center justify-between p-8"
       variants={containerVariants}
       initial="hidden"
       animate="visible"
       exit="exit"
     >
-      {/* Header */}
-      <motion.div className="text-center" variants={itemVariants}>
-        <h1 className="text-5xl font-bold mb-3">사진 선택</h1>
-        <p className="text-2xl text-gray-600">인쇄할 사진을 선택해주세요</p>
+      {/* Header with Timer */}
+      <motion.div className="text-center py-4 w-full" variants={itemVariants}>
+        <div className="flex items-center justify-between max-w-4xl mx-auto px-8">
+          <div className="flex-1" /> {/* Spacer */}
+          <div className="flex-1 text-center">
+            <h1 className="text-4xl font-bold mb-2">사진 선택</h1>
+            <p className="text-xl text-gray-600">인쇄할 사진을 선택해주세요</p>
+          </div>
+          <div className="flex-1 flex justify-end">
+            <div className={`text-3xl font-bold px-6 py-3 rounded-full ${
+              timeRemaining <= 10 ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-700'
+            }`}>
+              {timeRemaining}초
+            </div>
+          </div>
+        </div>
       </motion.div>
 
-      {/* Image Grid */}
+      {/* Image Grid - Much Bigger */}
       <motion.div
-        className="flex-1 flex items-center justify-center w-full max-w-7xl"
+        className="flex-1 flex items-center justify-center w-full px-8"
         variants={itemVariants}
       >
-        {capturedImages.length > 0 ? (
-          <div className="grid grid-cols-3 gap-8 w-full">
+        {loadingImages ? (
+          <div className="text-center">
+            <p className="text-3xl text-gray-500">사진 불러오는 중...</p>
+          </div>
+        ) : capturedImages.length > 0 ? (
+          <div className="grid grid-cols-3 gap-6 w-full h-full">
             {capturedImages.map((imagePath, index) => (
               <motion.div
                 key={imagePath}
@@ -107,43 +238,52 @@ export function ImageSelectionScreen() {
                 <Card
                   className={`relative overflow-hidden cursor-pointer transition-all ${
                     localSelection === imagePath
-                      ? 'border-8 border-black ring-8 ring-black'
-                      : 'border-4 border-gray-300 hover:border-gray-500'
+                      ? 'border-4 border-black ring-4 ring-black'
+                      : 'border-2 border-gray-300 hover:border-gray-500'
                   }`}
                   onClick={() => handleImageSelect(imagePath)}
                 >
-                  {/* Image */}
-                  <div className="aspect-[3/4] bg-gray-100 flex items-center justify-center relative">
-                    {imagePath ? (
+                  {/* Image - Natural aspect ratio preserved */}
+                  <div className="bg-gray-100 flex items-center justify-center relative w-full">
+                    {imageDataUrls[imagePath] ? (
                       <img
-                        src={`file://${imagePath}`}
-                        alt={`Captured ${index + 1}`}
-                        className="w-full h-full object-cover"
+                        src={imageDataUrls[imagePath]}
+                        alt={`Photo from ${index === 0 ? '5' : index === 1 ? '10' : '15'} seconds`}
+                        className="w-full h-auto object-contain"
+                        onError={(e) => {
+                          console.error(`[ImageSelectionScreen] Failed to display image ${index + 1}`);
+                          e.currentTarget.style.display = 'none';
+                        }}
                       />
                     ) : (
-                      <div className="text-gray-400 text-2xl">Photo {index + 1}</div>
+                      <div className="text-center p-4">
+                        <div className="text-gray-400 text-2xl mb-2">Photo {index + 1}</div>
+                        <div className="text-gray-400 text-lg">Loading...</div>
+                      </div>
                     )}
 
-                    {/* Selection Indicator */}
+                    {/* Selection Indicator - Smaller */}
                     <AnimatePresence>
                       {localSelection === imagePath && (
                         <motion.div
                           initial={{ opacity: 0, scale: 0.5 }}
                           animate={{ opacity: 1, scale: 1 }}
                           exit={{ opacity: 0, scale: 0.5 }}
-                          className="absolute inset-0 bg-black bg-opacity-40 flex items-center justify-center"
+                          className="absolute inset-0 bg-black bg-opacity-30 flex items-center justify-center"
                         >
-                          <div className="bg-white rounded-full p-6">
-                            <Check className="w-20 h-20 text-black" strokeWidth={3} />
+                          <div className="bg-white rounded-full p-3">
+                            <Check className="w-12 h-12 text-black" strokeWidth={3} />
                           </div>
                         </motion.div>
                       )}
                     </AnimatePresence>
                   </div>
 
-                  {/* Image Number */}
-                  <div className="absolute top-4 left-4 bg-white bg-opacity-90 rounded-full w-16 h-16 flex items-center justify-center">
-                    <span className="text-3xl font-bold">{index + 1}</span>
+                  {/* Image Timestamp Label - Smaller */}
+                  <div className="absolute top-3 left-3 bg-white bg-opacity-90 rounded-full px-4 py-2 flex items-center justify-center">
+                    <span className="text-lg font-bold">
+                      {index === 0 ? '5s' : index === 1 ? '10s' : '15s'}
+                    </span>
                   </div>
                 </Card>
               </motion.div>
@@ -156,32 +296,22 @@ export function ImageSelectionScreen() {
         )}
       </motion.div>
 
-      {/* Action Buttons */}
-      <motion.div className="flex gap-8 w-full max-w-3xl" variants={itemVariants}>
-        <Button
-          size="lg"
-          variant="outline"
-          onClick={handleBack}
-          className="flex-1 border-4 border-black text-black hover:bg-black hover:text-white px-12 py-12 text-3xl font-bold touch-target transition-colors"
-        >
-          <ArrowLeft className="w-10 h-10 mr-3" strokeWidth={2.5} />
-          이전으로
-        </Button>
-
+      {/* Action Button - Confirm Only */}
+      <motion.div className="flex justify-center w-full max-w-2xl py-4" variants={itemVariants}>
         <Button
           size="lg"
           onClick={handleConfirm}
           disabled={!localSelection}
-          className="flex-1 bg-black text-white hover:bg-gray-800 px-12 py-12 text-3xl font-bold touch-target border-4 border-black disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full bg-black text-white hover:bg-gray-800 px-12 py-8 text-3xl font-bold touch-target border-3 border-black disabled:opacity-50 disabled:cursor-not-allowed"
         >
           결제하기
-          <ArrowRight className="w-10 h-10 ml-3" strokeWidth={2.5} />
+          <ArrowRight className="w-8 h-8 ml-3" strokeWidth={2.5} />
         </Button>
       </motion.div>
 
-      {/* Footer */}
-      <motion.div className="text-center" variants={itemVariants}>
-        <p className="text-2xl text-gray-500">
+      {/* Footer - Smaller */}
+      <motion.div className="text-center py-2" variants={itemVariants}>
+        <p className="text-xl text-gray-500">
           인쇄 비용: <span className="font-bold text-black">5,000원</span>
         </p>
       </motion.div>
