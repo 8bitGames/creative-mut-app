@@ -27,6 +27,12 @@ let hologramState: {
 };
 
 const isDevelopment = process.env.NODE_ENV !== 'production';
+const isSplitScreenMode = process.env.SPLIT_SCREEN_MODE === 'true';
+
+// Helper function to get the target window for hologram updates
+function getHologramTargetWindow() {
+  return isSplitScreenMode ? mainWindow : hologramWindow;
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -45,7 +51,8 @@ function createWindow() {
   });
 
   if (isDevelopment) {
-    // Load split view in development (now always shows split view)
+    // In dev mode, load from Vite server
+    // The App component will check VITE_SPLIT_SCREEN_MODE to decide what to render
     mainWindow.loadURL('http://localhost:5173/');
     mainWindow.webContents.openDevTools();
   } else {
@@ -164,13 +171,21 @@ app.whenReady().then(async () => {
   console.log('✅ All systems initialized\n');
 
   createWindow();
-  // Disabled: Using split-screen view for testing instead of separate hologram window
-  // createHologramWindow();
+
+  // Only create hologram window if NOT in split-screen mode
+  if (!isSplitScreenMode) {
+    console.log('📺 Creating separate hologram window (dual-monitor mode)');
+    createHologramWindow();
+  } else {
+    console.log('🔀 Using split-screen mode (single window)');
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
-      // createHologramWindow();
+      if (!isSplitScreenMode) {
+        createHologramWindow();
+      }
     }
   });
 });
@@ -627,12 +642,13 @@ ipcMain.handle('hologram:set-mode', async (_event, mode, data) => {
   };
   console.log('💾 Hologram state stored:', hologramState);
 
-  if (!mainWindow) {
-    return { success: false, error: 'Main window not initialized' };
+  const targetWindow = getHologramTargetWindow();
+  if (!targetWindow) {
+    return { success: false, error: 'Target window not initialized' };
   }
 
-  // Send mode change to main window (split-screen mode)
-  mainWindow.webContents.send('hologram:update', hologramState);
+  // Send mode change to appropriate window
+  targetWindow.webContents.send('hologram:update', hologramState);
 
   return { success: true };
 });
@@ -650,23 +666,26 @@ ipcMain.handle('hologram:show-qr', async (_event, qrCodePath, videoPath) => {
   };
   console.log('💾 [IPC] Hologram state updated:', JSON.stringify(hologramState));
 
-  if (!mainWindow) {
-    console.error('❌ [IPC] Main window is NULL - cannot send message!');
-    return { success: false, error: 'Main window not initialized' };
+  const targetWindow = getHologramTargetWindow();
+  const windowName = isSplitScreenMode ? 'main window' : 'hologram window';
+
+  if (!targetWindow) {
+    console.error(`❌ [IPC] ${windowName} is NULL - cannot send message!`);
+    return { success: false, error: `${windowName} not initialized` };
   }
 
-  if (mainWindow.isDestroyed()) {
-    console.error('❌ [IPC] Main window is DESTROYED - cannot send message!');
-    return { success: false, error: 'Main window destroyed' };
+  if (targetWindow.isDestroyed()) {
+    console.error(`❌ [IPC] ${windowName} is DESTROYED - cannot send message!`);
+    return { success: false, error: `${windowName} destroyed` };
   }
 
-  console.log('✅ [IPC] Main window exists and is not destroyed');
-  console.log('   isLoading:', mainWindow.webContents.isLoading());
-  console.log('   URL:', mainWindow.webContents.getURL());
+  console.log(`✅ [IPC] ${windowName} exists and is not destroyed`);
+  console.log('   isLoading:', targetWindow.webContents.isLoading());
+  console.log('   URL:', targetWindow.webContents.getURL());
 
-  // Send IPC message to main window (split-screen mode)
-  console.log('📤 [IPC] Sending hologram:update to main window...');
-  mainWindow.webContents.send('hologram:update', hologramState);
+  // Send IPC message to appropriate window
+  console.log(`📤 [IPC] Sending hologram:update to ${windowName}...`);
+  targetWindow.webContents.send('hologram:update', hologramState);
   console.log('✅ [IPC] Message sent successfully');
 
   return { success: true };
@@ -681,11 +700,12 @@ ipcMain.handle('hologram:show-logo', async () => {
   };
   console.log('💾 Hologram state stored:', hologramState);
 
-  if (!mainWindow) {
-    return { success: false, error: 'Main window not initialized' };
+  const targetWindow = getHologramTargetWindow();
+  if (!targetWindow) {
+    return { success: false, error: 'Target window not initialized' };
   }
 
-  mainWindow.webContents.send('hologram:update', hologramState);
+  targetWindow.webContents.send('hologram:update', hologramState);
 
   return { success: true };
 });

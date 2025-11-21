@@ -174,6 +174,7 @@ export function HologramWindow({ mode, qrCodePath, videoPath }: HologramWindowPr
                 src="/logo.jpg"
                 alt="MUT Logo"
                 className="w-96 h-96 object-contain"
+                style={{ transform: 'scaleX(-1)' }} // Mirror the logo
                 onLoad={() => console.log('✅ [HologramWindow] Logo loaded successfully')}
                 onError={(e) => console.error('❌ [HologramWindow] Logo failed to load', e)}
               />

@@ -1,7 +1,7 @@
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, screen } from "electron";
 import * as path from "path";
 import path__default from "path";
 import * as fs$1 from "fs/promises";
@@ -1087,6 +1087,7 @@ class CardReaderController extends EventEmitter {
 const __filename$1 = fileURLToPath(import.meta.url);
 const __dirname$1 = path.dirname(__filename$1);
 let mainWindow = null;
+let hologramWindow = null;
 let pythonBridge = null;
 let cameraController = null;
 let printerController = null;
@@ -1095,6 +1096,7 @@ let hologramState = {
   mode: "logo"
 };
 const isDevelopment = process.env.NODE_ENV !== "production";
+const isSplitScreenMode = process.env.SPLIT_SCREEN_MODE === "true";
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: isDevelopment ? 2200 : 1080,
@@ -1125,6 +1127,45 @@ function createWindow() {
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+}
+function createHologramWindow() {
+  const displays = screen.getAllDisplays();
+  const secondDisplay = displays.length > 1 ? displays[1] : displays[0];
+  const { x, y } = secondDisplay.bounds;
+  const hologramWidth = 1080;
+  const hologramHeight = 1920;
+  hologramWindow = new BrowserWindow({
+    x: x + 100,
+    // Offset slightly from edge
+    y,
+    width: hologramWidth,
+    height: hologramHeight,
+    fullscreen: false,
+    // Don't use fullscreen, maintain 9:16 aspect ratio
+    frame: !isDevelopment,
+    // Show frame in development for easier debugging
+    show: true,
+    webPreferences: {
+      preload: path.join(__dirname$1, "preload.js"),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: false
+      // Disable CORS for S3 video loading
+    }
+  });
+  if (isDevelopment) {
+    hologramWindow.loadURL("http://localhost:5173/#/hologram");
+  } else {
+    hologramWindow.loadFile(path.join(__dirname$1, "../dist/index.html"), {
+      hash: "/hologram"
+    });
+  }
+  hologramWindow.on("closed", () => {
+    hologramWindow = null;
+  });
+  console.log(`✅ Hologram window created on display ${displays.length > 1 ? 2 : 1}`);
+  console.log(`   Position: (${x + 100}, ${y}), Size: ${hologramWidth}x${hologramHeight} (9:16)`);
 }
 app.whenReady().then(async () => {
   console.log("🚀 Initializing MUT Hologram Studio...");
@@ -1169,9 +1210,18 @@ app.whenReady().then(async () => {
   }
   console.log("✅ All systems initialized\n");
   createWindow();
+  if (!isSplitScreenMode) {
+    console.log("📺 Creating separate hologram window (dual-monitor mode)");
+    createHologramWindow();
+  } else {
+    console.log("🔀 Using split-screen mode (single window)");
+  }
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
+      if (!isSplitScreenMode) {
+        createHologramWindow();
+      }
     }
   });
 });
