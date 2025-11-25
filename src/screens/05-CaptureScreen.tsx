@@ -96,7 +96,7 @@ export function CaptureScreen() {
     startCamera();
 
     // Load shutter sound
-    shutterSoundRef.current = new Audio('/sounds/camera-shutter.mp3');
+    shutterSoundRef.current = new Audio('./sounds/camera-shutter.mp3');
 
     // Cleanup: Stop camera when component unmounts
     return () => {

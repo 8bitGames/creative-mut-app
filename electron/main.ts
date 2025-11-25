@@ -1,14 +1,33 @@
-import { app, BrowserWindow, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, screen, Menu } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs/promises';
-import { fileURLToPath } from 'url';
-import { PythonBridge } from './python/bridge.js';
-import { CameraController } from './hardware/camera.js';
-import { PrinterController } from './hardware/printer.js';
-import { CardReaderController } from './hardware/card-reader.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Try to load .env file (may not exist in production packaged app)
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+try {
+  require('dotenv').config({
+    path: path.join(__dirname, '../.env'),
+    override: true
+  });
+} catch (e) {
+  // .env file not found in production - this is expected
+}
+
+import { PythonBridge } from './python/bridge';
+import { CameraController } from './hardware/camera';
+import { PrinterController } from './hardware/printer';
+import { CardReaderController } from './hardware/card-reader';
+import {
+  initDatabase,
+  closeDatabase,
+  recordSessionStart,
+  recordSessionEnd,
+  updateSessionFrame,
+  updateSessionImages,
+  recordPayment,
+  recordPrint,
+  getDashboardStats,
+} from './database/analytics';
 
 let mainWindow: BrowserWindow | null = null;
 let hologramWindow: BrowserWindow | null = null;
@@ -26,8 +45,17 @@ let hologramState: {
   mode: 'logo',
 };
 
-const isDevelopment = process.env.NODE_ENV !== 'production';
+// Detect development mode - app.isPackaged is the reliable way for Electron
+// In development: app.isPackaged = false, loads from Vite dev server
+// In production (installed app): app.isPackaged = true, loads from built files
+const isDevelopment = !app.isPackaged;
 const isSplitScreenMode = process.env.SPLIT_SCREEN_MODE === 'true';
+
+// Screen resolution settings (default 9:16 ratio)
+const MAIN_WIDTH = parseInt(process.env.MAIN_WIDTH || '1080', 10);
+const MAIN_HEIGHT = parseInt(process.env.MAIN_HEIGHT || '1920', 10);
+const HOLOGRAM_WIDTH = parseInt(process.env.HOLOGRAM_WIDTH || '1080', 10);
+const HOLOGRAM_HEIGHT = parseInt(process.env.HOLOGRAM_HEIGHT || '1920', 10);
 
 // Helper function to get the target window for hologram updates
 function getHologramTargetWindow() {
@@ -35,20 +63,29 @@ function getHologramTargetWindow() {
 }
 
 function createWindow() {
+  const displays = screen.getAllDisplays();
+  const primaryDisplay = displays[0];
+  const { x, y } = primaryDisplay.bounds;
+
   mainWindow = new BrowserWindow({
-    width: isDevelopment ? 2200 : 1080, // Wider in dev for split view
-    height: isDevelopment ? 1100 : 1920, // Shorter in dev for better fit
-    fullscreen: !isDevelopment, // Only fullscreen in production
-    kiosk: !isDevelopment, // Only kiosk in production
-    resizable: isDevelopment, // Allow resizing in development
+    x: x,
+    y: y,
+    width: isDevelopment ? 2200 : MAIN_WIDTH,
+    height: isDevelopment ? 1100 : MAIN_HEIGHT,
+    fullscreen: false,
+    frame: isDevelopment, // No frame in production
+    resizable: isDevelopment,
+    alwaysOnTop: !isDevelopment && !isSplitScreenMode, // Stay on top in production
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
-      webSecurity: false, // Disable CORS for S3 video loading in split-screen
+      webSecurity: false,
     },
   });
+
+  console.log(`📺 Main window: ${MAIN_WIDTH}x${MAIN_HEIGHT} at (${x}, ${y})`);
 
   if (isDevelopment) {
     // In dev mode, load from Vite server
@@ -70,26 +107,23 @@ function createHologramWindow() {
 
   // Find second display, or use primary if only one exists
   const secondDisplay = displays.length > 1 ? displays[1] : displays[0];
-  const { x, y } = secondDisplay.bounds;
-
-  // Use 9:16 aspect ratio (1080x1920) for both monitors
-  const hologramWidth = 1080;
-  const hologramHeight = 1920;
+  const { x, y, width, height } = secondDisplay.bounds;
 
   hologramWindow = new BrowserWindow({
-    x: x + 100, // Offset slightly from edge
+    x: x,
     y: y,
-    width: hologramWidth,
-    height: hologramHeight,
-    fullscreen: false, // Don't use fullscreen, maintain 9:16 aspect ratio
-    frame: !isDevelopment, // Show frame in development for easier debugging
+    width: isDevelopment ? width : HOLOGRAM_WIDTH,
+    height: isDevelopment ? height : HOLOGRAM_HEIGHT,
+    fullscreen: false,
+    frame: isDevelopment, // No frame in production
     show: true,
+    alwaysOnTop: !isDevelopment, // Stay on top in production
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
-      webSecurity: false, // Disable CORS for S3 video loading
+      webSecurity: false,
     },
   });
 
@@ -108,12 +142,24 @@ function createHologramWindow() {
     hologramWindow = null;
   });
 
-  console.log(`✅ Hologram window created on display ${displays.length > 1 ? 2 : 1}`);
-  console.log(`   Position: (${x + 100}, ${y}), Size: ${hologramWidth}x${hologramHeight} (9:16)`);
+  console.log(`📺 Hologram window: ${HOLOGRAM_WIDTH}x${HOLOGRAM_HEIGHT} at (${x}, ${y}) on display ${displays.length > 1 ? 2 : 1}`);
 }
 
 app.whenReady().then(async () => {
   console.log('🚀 Initializing MUT Hologram Studio...');
+
+  // Initialize analytics database (with error handling for native module issues)
+  try {
+    initDatabase();
+  } catch (error) {
+    console.error('⚠️ Failed to initialize analytics database:', error);
+    // Continue without analytics - app should still work
+  }
+
+  // Remove menu bar in production
+  if (!isDevelopment) {
+    Menu.setApplicationMenu(null);
+  }
 
   // Initialize Python bridge
   pythonBridge = new PythonBridge();
@@ -145,8 +191,8 @@ app.whenReady().then(async () => {
     console.error('⚠️  Camera initialization failed:', cameraResult.error);
   }
 
-  // Initialize printer controller (mock mode by default)
-  printerController = new PrinterController({ mockMode: true });
+  // Initialize printer controller (use actual printer)
+  printerController = new PrinterController({ mockMode: false });
   const printerResult = await printerController.connect();
   if (printerResult.success) {
     console.log('✅ Printer controller initialized');
@@ -258,9 +304,19 @@ ipcMain.handle('printer:get-status', async () => {
 
   try {
     const status = await printerController.getStatus();
+    // Map internal status to IPC status
+    const statusMap: Record<string, string> = {
+      'idle': 'ready',
+      'printing': 'busy',
+      'error': 'error',
+      'offline': 'offline',
+    };
     return {
       success: status.available,
-      ...status,
+      status: statusMap[status.status] || status.status,
+      paperLevel: status.paperLevel,
+      inkLevel: status.inkLevel,
+      error: status.error,
     };
   } catch (error) {
     return {
@@ -784,4 +840,45 @@ ipcMain.handle('file:delete', async (_event, filePath: string) => {
     console.error(`❌ [IPC] Failed to delete file: ${filePath}`, error);
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
+});
+
+// Analytics IPC Handlers
+ipcMain.handle('analytics:session-start', async (_event, sessionId: string, startTime: number) => {
+  recordSessionStart(sessionId, startTime);
+  return { success: true };
+});
+
+ipcMain.handle('analytics:session-end', async (_event, sessionId: string, endTime: number) => {
+  recordSessionEnd(sessionId, endTime);
+  return { success: true };
+});
+
+ipcMain.handle('analytics:update-frame', async (_event, sessionId: string, frameName: string) => {
+  updateSessionFrame(sessionId, frameName);
+  return { success: true };
+});
+
+ipcMain.handle('analytics:update-images', async (_event, sessionId: string, imageCount: number) => {
+  updateSessionImages(sessionId, imageCount);
+  return { success: true };
+});
+
+ipcMain.handle('analytics:record-payment', async (_event, sessionId: string, amount: number, status: string, errorMessage?: string) => {
+  recordPayment(sessionId, amount, status as any, errorMessage);
+  return { success: true };
+});
+
+ipcMain.handle('analytics:record-print', async (_event, sessionId: string, imagePath: string, success: boolean, errorMessage?: string) => {
+  recordPrint(sessionId, imagePath, success, errorMessage);
+  return { success: true };
+});
+
+ipcMain.handle('analytics:get-dashboard-stats', async () => {
+  const stats = getDashboardStats();
+  return { success: true, stats };
+});
+
+// Close database on app quit
+app.on('before-quit', () => {
+  closeDatabase();
 });

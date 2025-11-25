@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
 import { IdleScreen } from '@/screens/01-IdleScreen';
@@ -12,15 +13,38 @@ import { PaymentScreen } from '@/screens/09-PaymentScreen';
 import { PrintingScreen } from '@/screens/10-PrintingScreen';
 import { HologramPage } from '@/pages/HologramPage';
 import { DevDualMonitor } from '@/pages/DevDualMonitor';
+import { AdminDashboard } from '@/pages/AdminDashboard';
 
 function App() {
   const currentScreen = useAppStore((state) => state.currentScreen);
+  const setScreen = useAppStore((state) => state.setScreen);
 
   // Check display mode from environment variable
   const isSplitScreenMode = import.meta.env.VITE_SPLIT_SCREEN_MODE === 'true';
 
   // Check if this is the hologram window (Monitor 2)
   const isHologramWindow = window.location.hash === '#/hologram';
+
+  // F12 shortcut for admin dashboard
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F12') {
+        e.preventDefault();
+        if (currentScreen === 'admin-dashboard') {
+          setScreen('idle');
+        } else {
+          setScreen('admin-dashboard');
+        }
+      }
+      // ESC to return to idle from dashboard
+      if (e.key === 'Escape' && currentScreen === 'admin-dashboard') {
+        setScreen('idle');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentScreen, setScreen]);
 
   console.log('🚀 [App] Rendering App component');
   console.log(`   Split-screen mode: ${isSplitScreenMode}`);
@@ -55,6 +79,7 @@ function App() {
         {currentScreen === 'image-selection' && <ImageSelectionScreen key="image-selection" />}
         {currentScreen === 'payment' && <PaymentScreen key="payment" />}
         {currentScreen === 'printing' && <PrintingScreen key="printing" />}
+        {currentScreen === 'admin-dashboard' && <AdminDashboard key="admin-dashboard" />}
       </AnimatePresence>
     </div>
   );

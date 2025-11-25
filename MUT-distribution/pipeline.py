@@ -125,7 +125,6 @@ def composite_video(input_video, frame_image, output_path):
         '-c:v', encoder.value,      # Codec
         '-b:v', '5M',               # Bitrate
         '-pix_fmt', 'yuv420p',      # Pixel format
-        '-allow_sw', '1',           # Allow software fallback if GPU fails
         '-shortest',                # Stop when shortest input ends
         output_path
     ]

@@ -17,7 +17,8 @@ export type Screen =
   | 'result'            // Screen 6
   | 'image-selection'   // Screen 7
   | 'payment'           // Screen 8
-  | 'printing';         // Screen 9
+  | 'printing'          // Screen 9
+  | 'admin-dashboard';  // Admin Dashboard
 
 // ============================================
 // Frame Types

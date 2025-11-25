@@ -55,7 +55,8 @@ export class PythonBridge extends EventEmitter {
       this.pipelineWorkingDir = path.join(process.resourcesPath, 'python');
     } else {
       // Development: Use system Python and MUT-distribution pipeline
-      this.pythonPath = 'python3';
+      // Windows uses 'python', Unix uses 'python3'
+      this.pythonPath = process.platform === 'win32' ? 'python' : 'python3';
       this.pipelineScriptPath = path.join(app.getAppPath(), 'MUT-distribution', 'pipeline.py');
       this.stitcherScriptPath = path.join(app.getAppPath(), 'python', 'stitch_images.py');
       this.stitcherWorkingDir = path.join(app.getAppPath(), 'python');
@@ -96,6 +97,11 @@ export class PythonBridge extends EventEmitter {
 
       const pythonProcess: ChildProcess = spawn(this.pythonPath, args, {
         cwd: this.pipelineWorkingDir,
+        env: {
+          ...process.env,
+          PYTHONIOENCODING: 'utf-8',
+          PYTHONUTF8: '1',
+        },
       });
 
       let stdoutData = '';
@@ -266,6 +272,11 @@ export class PythonBridge extends EventEmitter {
 
       const stitchProcess: ChildProcess = spawn(this.pythonPath, args, {
         cwd: this.stitcherWorkingDir,
+        env: {
+          ...process.env,
+          PYTHONIOENCODING: 'utf-8',
+          PYTHONUTF8: '1',
+        },
       });
 
       let stdoutData = '';

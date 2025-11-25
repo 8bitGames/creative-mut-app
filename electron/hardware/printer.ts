@@ -7,8 +7,9 @@
  */
 
 import { EventEmitter } from 'events';
-import { spawn } from 'child_process';
+import { spawn, exec } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 
 export interface PrinterConfig {
   mockMode?: boolean;
@@ -46,6 +47,7 @@ export class PrinterController extends EventEmitter {
   private printerName: string;
   private currentJob: string | null = null;
   private mockPaperLevel: number = 100;
+  private isWindows: boolean;
   private mockInkLevels = {
     cyan: 85,
     magenta: 90,
@@ -56,7 +58,8 @@ export class PrinterController extends EventEmitter {
   constructor(config: PrinterConfig = {}) {
     super();
     this.mockMode = config.mockMode ?? process.env.MOCK_PRINTER === 'true';
-    this.printerName = config.printerName ?? 'Default';
+    this.printerName = config.printerName ?? '';
+    this.isWindows = os.platform() === 'win32';
   }
 
   /**
@@ -103,15 +106,28 @@ export class PrinterController extends EventEmitter {
     }
 
     try {
-      const status = await this.executePrinterCommand(['lpstat', '-p', this.printerName]);
+      let isPrinting = false;
+      let hasError = false;
 
-      const isPrinting = status.includes('printing');
-      const hasError = status.includes('error');
+      if (this.isWindows) {
+        // Windows: Check printer status using PowerShell
+        const printerName = this.printerName || (await this.getDefaultPrinter());
+        if (printerName) {
+          const psCommand = `Get-Printer -Name "${printerName}" | Select-Object -ExpandProperty PrinterStatus`;
+          const status = await this.executeWindowsCommand(psCommand);
+          isPrinting = status.toLowerCase().includes('printing');
+          hasError = status.toLowerCase().includes('error');
+        }
+      } else {
+        const status = await this.executePrinterCommand(['lpstat', '-p', this.printerName || 'Default']);
+        isPrinting = status.includes('printing');
+        hasError = status.includes('error');
+      }
 
       return {
         available: true,
         status: hasError ? 'error' : isPrinting ? 'printing' : 'idle',
-        paperLevel: 100, // Real implementation would query actual level
+        paperLevel: 100,
         inkLevel: {
           cyan: 85,
           magenta: 90,
@@ -136,6 +152,21 @@ export class PrinterController extends EventEmitter {
   }
 
   /**
+   * Get default printer name (Windows)
+   */
+  private async getDefaultPrinter(): Promise<string> {
+    if (!this.isWindows) return '';
+
+    try {
+      const psCommand = `Get-CimInstance -ClassName Win32_Printer | Where-Object {$_.Default -eq $true} | Select-Object -ExpandProperty Name`;
+      const output = await this.executeWindowsCommand(psCommand);
+      return output.trim();
+    } catch {
+      return '';
+    }
+  }
+
+  /**
    * Print a photo
    */
   async print(options: PrintOptions): Promise<PrintResult> {
@@ -155,16 +186,72 @@ export class PrinterController extends EventEmitter {
       console.log('🖨️  Starting print job:', jobId);
       this.emit('printing', { jobId, options });
 
-      // Execute print command (lp for Unix/macOS)
-      const args = [
-        '-d', this.printerName,
-        '-n', String(options.copies || 1),
-        '-o', 'media=4x6',
-        '-o', 'fit-to-page',
-        options.imagePath,
-      ];
+      let result: string;
 
-      const result = await this.executePrinterCommand(['lp', ...args]);
+      if (this.isWindows) {
+        // Windows printing using PowerShell with System.Drawing
+        const imagePath = options.imagePath.replace(/\//g, '\\');
+        const copies = options.copies || 1;
+
+        // Get default printer name
+        const printerName = this.printerName || (await this.getDefaultPrinter());
+
+        // Use System.Drawing.Printing for reliable printing
+        const psCommand = `
+          Add-Type -AssemblyName System.Drawing
+          $imagePath = "${imagePath}"
+          $printerName = "${printerName}"
+          $copies = ${copies}
+
+          for ($i = 0; $i -lt $copies; $i++) {
+            $img = [System.Drawing.Image]::FromFile($imagePath)
+            $printDoc = New-Object System.Drawing.Printing.PrintDocument
+
+            if ($printerName) {
+              $printDoc.PrinterSettings.PrinterName = $printerName
+            }
+
+            $printDoc.add_PrintPage({
+              param($sender, $e)
+              $bounds = $e.MarginBounds
+              $imgRatio = $img.Width / $img.Height
+              $boundsRatio = $bounds.Width / $bounds.Height
+
+              if ($imgRatio -gt $boundsRatio) {
+                $newWidth = $bounds.Width
+                $newHeight = $bounds.Width / $imgRatio
+              } else {
+                $newHeight = $bounds.Height
+                $newWidth = $bounds.Height * $imgRatio
+              }
+
+              $x = $bounds.X + ($bounds.Width - $newWidth) / 2
+              $y = $bounds.Y + ($bounds.Height - $newHeight) / 2
+
+              $e.Graphics.DrawImage($img, $x, $y, $newWidth, $newHeight)
+              $e.HasMorePages = $false
+            })
+
+            $printDoc.Print()
+            $img.Dispose()
+          }
+
+          Write-Output "Print job submitted to $printerName"
+        `;
+
+        result = await this.executeWindowsCommand(psCommand);
+      } else {
+        // Execute print command (lp for Unix/macOS)
+        const args = [
+          '-d', this.printerName || 'Default',
+          '-n', String(options.copies || 1),
+          '-o', 'media=4x6',
+          '-o', 'fit-to-page',
+          options.imagePath,
+        ];
+
+        result = await this.executePrinterCommand(['lp', ...args]);
+      }
 
       // Extract job ID from output
       const jobIdMatch = result.match(/request id is (.+)/);
@@ -193,6 +280,27 @@ export class PrinterController extends EventEmitter {
   }
 
   /**
+   * Execute Windows PowerShell command
+   */
+  private async executeWindowsCommand(psCommand: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      // Use -EncodedCommand for reliable execution with special characters
+      const encodedCommand = Buffer.from(psCommand, 'utf16le').toString('base64');
+      exec(`powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encodedCommand}`, (error, stdout, stderr) => {
+        if (error) {
+          console.error('PowerShell error:', stderr || error.message);
+          reject(new Error(stderr || error.message));
+        } else {
+          if (stderr) {
+            console.warn('PowerShell warning:', stderr);
+          }
+          resolve(stdout);
+        }
+      });
+    });
+  }
+
+  /**
    * Cancel current print job
    */
   async cancelPrint(jobId: string): Promise<{ success: boolean }> {
@@ -217,19 +325,31 @@ export class PrinterController extends EventEmitter {
    * List available printers
    */
   private async listPrinters(): Promise<string[]> {
-    const output = await this.executePrinterCommand(['lpstat', '-p']);
+    if (this.isWindows) {
+      // Windows: Use PowerShell to get printers
+      const psCommand = `Get-Printer | Select-Object -ExpandProperty Name`;
+      const output = await this.executeWindowsCommand(psCommand);
 
-    const printers: string[] = [];
-    const lines = output.split('\n');
+      return output
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0);
+    } else {
+      // Unix/macOS: Use lpstat
+      const output = await this.executePrinterCommand(['lpstat', '-p']);
 
-    for (const line of lines) {
-      const match = line.match(/printer (.+) is/);
-      if (match) {
-        printers.push(match[1]);
+      const printers: string[] = [];
+      const lines = output.split('\n');
+
+      for (const line of lines) {
+        const match = line.match(/printer (.+) is/);
+        if (match) {
+          printers.push(match[1]);
+        }
       }
-    }
 
-    return printers;
+      return printers;
+    }
   }
 
   /**

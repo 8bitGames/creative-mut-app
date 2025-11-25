@@ -1,35 +1,78 @@
+"use strict";
+var __create = Object.create;
 var __defProp = Object.defineProperty;
-var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-import { app, BrowserWindow, ipcMain, screen } from "electron";
-import * as path from "path";
-import path__default from "path";
-import * as fs$1 from "fs/promises";
-import { fileURLToPath } from "url";
-import { spawn } from "child_process";
-import { EventEmitter } from "events";
-import * as fs from "fs";
-class PythonBridge extends EventEmitter {
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+const electron = require("electron");
+const path = require("path");
+const fs$1 = require("fs/promises");
+const child_process = require("child_process");
+const events = require("events");
+const fs = require("fs");
+const os = require("os");
+const Database = require("better-sqlite3");
+const _interopDefault = (e) => e && e.__esModule ? e : { default: e };
+function _interopNamespace(e) {
+  if (e && e.__esModule) return e;
+  const n = Object.create(null, { [Symbol.toStringTag]: { value: "Module" } });
+  if (e) {
+    for (const k in e) {
+      if (k !== "default") {
+        const d = Object.getOwnPropertyDescriptor(e, k);
+        Object.defineProperty(n, k, d.get ? d : {
+          enumerable: true,
+          get: () => e[k]
+        });
+      }
+    }
+  }
+  n.default = e;
+  return Object.freeze(n);
+}
+const path__namespace = /* @__PURE__ */ _interopNamespace(path);
+const fs__namespace$1 = /* @__PURE__ */ _interopNamespace(fs$1);
+const fs__namespace = /* @__PURE__ */ _interopNamespace(fs);
+const os__namespace = /* @__PURE__ */ _interopNamespace(os);
+const Database__default = /* @__PURE__ */ _interopDefault(Database);
+class PythonBridge extends events.EventEmitter {
+  pythonPath;
+  pipelineScriptPath;
+  stitcherScriptPath;
+  stitcherWorkingDir;
+  pipelineWorkingDir;
   constructor() {
     super();
-    __publicField(this, "pythonPath");
-    __publicField(this, "pipelineScriptPath");
-    __publicField(this, "stitcherScriptPath");
-    __publicField(this, "stitcherWorkingDir");
-    __publicField(this, "pipelineWorkingDir");
-    const isProd = app.isPackaged;
+    const isProd = electron.app.isPackaged;
     if (isProd) {
-      this.pythonPath = path__default.join(process.resourcesPath, "python", "python.exe");
-      this.pipelineScriptPath = path__default.join(process.resourcesPath, "python", "pipeline.py");
-      this.stitcherScriptPath = path__default.join(process.resourcesPath, "python", "stitch_images.py");
-      this.stitcherWorkingDir = path__default.join(process.resourcesPath, "python");
-      this.pipelineWorkingDir = path__default.join(process.resourcesPath, "python");
+      this.pythonPath = path__namespace.default.join(process.resourcesPath, "python", "python.exe");
+      this.pipelineScriptPath = path__namespace.default.join(process.resourcesPath, "python", "pipeline.py");
+      this.stitcherScriptPath = path__namespace.default.join(process.resourcesPath, "python", "stitch_images.py");
+      this.stitcherWorkingDir = path__namespace.default.join(process.resourcesPath, "python");
+      this.pipelineWorkingDir = path__namespace.default.join(process.resourcesPath, "python");
     } else {
-      this.pythonPath = "python3";
-      this.pipelineScriptPath = path__default.join(app.getAppPath(), "MUT-distribution", "pipeline.py");
-      this.stitcherScriptPath = path__default.join(app.getAppPath(), "python", "stitch_images.py");
-      this.stitcherWorkingDir = path__default.join(app.getAppPath(), "python");
-      this.pipelineWorkingDir = path__default.join(app.getAppPath(), "MUT-distribution");
+      this.pythonPath = process.platform === "win32" ? "python" : "python3";
+      this.pipelineScriptPath = path__namespace.default.join(electron.app.getAppPath(), "MUT-distribution", "pipeline.py");
+      this.stitcherScriptPath = path__namespace.default.join(electron.app.getAppPath(), "python", "stitch_images.py");
+      this.stitcherWorkingDir = path__namespace.default.join(electron.app.getAppPath(), "python");
+      this.pipelineWorkingDir = path__namespace.default.join(electron.app.getAppPath(), "MUT-distribution");
     }
     console.log("🐍 [PythonBridge] Initialized");
     console.log(`   Python: ${this.pythonPath}`);
@@ -43,7 +86,6 @@ class PythonBridge extends EventEmitter {
    */
   async processVideo(options) {
     return new Promise((resolve, reject) => {
-      var _a, _b;
       const args = [
         this.pipelineScriptPath,
         "--input",
@@ -59,18 +101,23 @@ class PythonBridge extends EventEmitter {
       }
       args.push("--json");
       console.log("Starting Python pipeline:", args.join(" "));
-      const pythonProcess = spawn(this.pythonPath, args, {
-        cwd: this.pipelineWorkingDir
+      const pythonProcess = child_process.spawn(this.pythonPath, args, {
+        cwd: this.pipelineWorkingDir,
+        env: {
+          ...process.env,
+          PYTHONIOENCODING: "utf-8",
+          PYTHONUTF8: "1"
+        }
       });
       let stdoutData = "";
       let stderrData = "";
-      (_a = pythonProcess.stdout) == null ? void 0 : _a.on("data", (data) => {
+      pythonProcess.stdout?.on("data", (data) => {
         const output = data.toString();
         stdoutData += output;
         console.log("[Python]", output);
         this.parseProgress(output);
       });
-      (_b = pythonProcess.stderr) == null ? void 0 : _b.on("data", (data) => {
+      pythonProcess.stderr?.on("data", (data) => {
         stderrData += data.toString();
         console.error("[Python Error]", data.toString());
       });
@@ -136,7 +183,7 @@ ${"=".repeat(70)}`);
     let frameFilesystemPath = options.frameTemplatePath;
     if (options.frameTemplatePath.startsWith("/")) {
       const relativePath = options.frameTemplatePath.substring(1);
-      frameFilesystemPath = path__default.join(app.getAppPath(), "public", relativePath);
+      frameFilesystemPath = path__namespace.default.join(electron.app.getAppPath(), "public", relativePath);
       console.log(`   Frame template (filesystem): ${frameFilesystemPath}`);
     }
     this.emit("progress", {
@@ -189,11 +236,10 @@ ${"=".repeat(70)}`);
    */
   async stitchImagesToVideo(imagePaths) {
     return new Promise((resolve, reject) => {
-      var _a, _b;
       console.log(`
 🎬 [PythonBridge] Stitching images...`);
       const timestamp = Date.now();
-      const outputPath = path__default.join(this.stitcherWorkingDir, "output", `stitched_${timestamp}.mp4`);
+      const outputPath = path__namespace.default.join(this.stitcherWorkingDir, "output", `stitched_${timestamp}.mp4`);
       const args = [
         this.stitcherScriptPath,
         "--images",
@@ -204,17 +250,22 @@ ${"=".repeat(70)}`);
         "3.0"
       ];
       console.log(`   Command: ${this.pythonPath} ${args.join(" ")}`);
-      const stitchProcess = spawn(this.pythonPath, args, {
-        cwd: this.stitcherWorkingDir
+      const stitchProcess = child_process.spawn(this.pythonPath, args, {
+        cwd: this.stitcherWorkingDir,
+        env: {
+          ...process.env,
+          PYTHONIOENCODING: "utf-8",
+          PYTHONUTF8: "1"
+        }
       });
       let stdoutData = "";
       let stderrData = "";
-      (_a = stitchProcess.stdout) == null ? void 0 : _a.on("data", (data) => {
+      stitchProcess.stdout?.on("data", (data) => {
         const output = data.toString();
         stdoutData += output;
         console.log("[Stitcher]", output);
       });
-      (_b = stitchProcess.stderr) == null ? void 0 : _b.on("data", (data) => {
+      stitchProcess.stderr?.on("data", (data) => {
         stderrData += data.toString();
         console.error("[Stitcher Error]", data.toString());
       });
@@ -257,13 +308,13 @@ ${"=".repeat(70)}`);
       try {
         const fs2 = await import("fs/promises");
         const timestamp = Date.now();
-        const outputDir = path__default.join(this.pipelineWorkingDir, "output", `frames_${timestamp}`);
+        const outputDir = path__namespace.default.join(this.pipelineWorkingDir, "output", `frames_${timestamp}`);
         await fs2.mkdir(outputDir, { recursive: true });
         console.log(`   Output directory: ${outputDir}`);
         const extractedFrames = [];
         for (let i = 0; i < timestamps.length; i++) {
           const time = timestamps[i];
-          const framePath = path__default.join(outputDir, `frame_${time}s.jpg`);
+          const framePath = path__namespace.default.join(outputDir, `frame_${time}s.jpg`);
           console.log(`
    Extracting frame ${i + 1}/${timestamps.length} at ${time}s...`);
           const args = [
@@ -280,10 +331,9 @@ ${"=".repeat(70)}`);
             framePath
           ];
           await new Promise((resolveFrame, rejectFrame) => {
-            var _a;
-            const ffmpegProcess = spawn("ffmpeg", args);
+            const ffmpegProcess = child_process.spawn("ffmpeg", args);
             let stderr = "";
-            (_a = ffmpegProcess.stderr) == null ? void 0 : _a.on("data", (data) => {
+            ffmpegProcess.stderr?.on("data", (data) => {
               stderr += data.toString();
             });
             ffmpegProcess.on("close", (code) => {
@@ -321,10 +371,9 @@ ${"=".repeat(70)}`);
    */
   async checkDependencies() {
     return new Promise((resolve) => {
-      var _a;
-      const checkProcess = spawn(this.pythonPath, ["--version"]);
+      const checkProcess = child_process.spawn(this.pythonPath, ["--version"]);
       let versionOutput = "";
-      (_a = checkProcess.stdout) == null ? void 0 : _a.on("data", (data) => {
+      checkProcess.stdout?.on("data", (data) => {
         versionOutput += data.toString();
       });
       checkProcess.on("close", (code) => {
@@ -347,27 +396,26 @@ ${"=".repeat(70)}`);
     });
   }
 }
-class CameraController extends EventEmitter {
+class CameraController extends events.EventEmitter {
+  mockMode;
+  useWebcam;
+  captureDir;
+  cameraProcess = null;
+  isConnected = false;
+  cameraInfo = null;
   constructor(config = {}) {
     super();
-    __publicField(this, "mockMode");
-    __publicField(this, "useWebcam");
-    __publicField(this, "captureDir");
-    __publicField(this, "cameraProcess", null);
-    __publicField(this, "isConnected", false);
-    __publicField(this, "cameraInfo", null);
     this.mockMode = config.mockMode ?? process.env.MOCK_CAMERA === "true";
     this.useWebcam = config.useWebcam ?? process.env.USE_WEBCAM === "true";
-    this.captureDir = config.captureDir ?? path.join(process.cwd(), "captures");
-    if (!fs.existsSync(this.captureDir)) {
-      fs.mkdirSync(this.captureDir, { recursive: true });
+    this.captureDir = config.captureDir ?? path__namespace.join(process.cwd(), "captures");
+    if (!fs__namespace.existsSync(this.captureDir)) {
+      fs__namespace.mkdirSync(this.captureDir, { recursive: true });
     }
   }
   /**
    * Initialize camera connection
    */
   async connect() {
-    var _a;
     if (this.mockMode) {
       return this.mockConnect();
     }
@@ -386,7 +434,7 @@ class CameraController extends EventEmitter {
       this.cameraInfo = this.parseCameraInfo(summaryResult);
       this.isConnected = true;
       this.emit("connected", this.cameraInfo);
-      console.log("✅ Camera connected:", (_a = this.cameraInfo) == null ? void 0 : _a.model);
+      console.log("✅ Camera connected:", this.cameraInfo?.model);
       return { success: true };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -428,7 +476,7 @@ class CameraController extends EventEmitter {
     try {
       const timestamp = Date.now();
       const filename = `capture_${timestamp}.jpg`;
-      const outputPath = path.join(this.captureDir, filename);
+      const outputPath = path__namespace.join(this.captureDir, filename);
       console.log("📷 Capturing photo...");
       this.emit("capturing");
       await this.executeGPhoto2Command([
@@ -436,7 +484,7 @@ class CameraController extends EventEmitter {
         "--filename",
         outputPath
       ]);
-      if (!fs.existsSync(outputPath)) {
+      if (!fs__namespace.existsSync(outputPath)) {
         throw new Error("Capture file not created");
       }
       this.emit("captured", outputPath);
@@ -468,14 +516,13 @@ class CameraController extends EventEmitter {
    */
   async executeGPhoto2Command(args) {
     return new Promise((resolve, reject) => {
-      var _a, _b;
-      const process2 = spawn("gphoto2", args);
+      const process2 = child_process.spawn("gphoto2", args);
       let stdout = "";
       let stderr = "";
-      (_a = process2.stdout) == null ? void 0 : _a.on("data", (data) => {
+      process2.stdout?.on("data", (data) => {
         stdout += data.toString();
       });
-      (_b = process2.stderr) == null ? void 0 : _b.on("data", (data) => {
+      process2.stderr?.on("data", (data) => {
         stderr += data.toString();
       });
       process2.on("close", (code) => {
@@ -525,8 +572,8 @@ class CameraController extends EventEmitter {
     await new Promise((resolve) => setTimeout(resolve, 1e3));
     const timestamp = Date.now();
     const filename = `mock_capture_${timestamp}.txt`;
-    const outputPath = path.join(this.captureDir, filename);
-    fs.writeFileSync(outputPath, `Mock photo captured at ${(/* @__PURE__ */ new Date()).toISOString()}
+    const outputPath = path__namespace.join(this.captureDir, filename);
+    fs__namespace.writeFileSync(outputPath, `Mock photo captured at ${(/* @__PURE__ */ new Date()).toISOString()}
 Resolution: 5760x3840
 ISO: 400
 Shutter: 1/125
@@ -573,12 +620,12 @@ Aperture: f/2.8`);
     try {
       const timestamp = Date.now();
       const filename = `webcam_capture_${timestamp}.jpg`;
-      const outputPath = path.join(this.captureDir, filename);
+      const outputPath = path__namespace.join(this.captureDir, filename);
       console.log("📷 Capturing from webcam...");
       this.emit("capturing");
       try {
         await this.executeCommand("imagesnap", ["-q", outputPath]);
-        if (!fs.existsSync(outputPath)) {
+        if (!fs__namespace.existsSync(outputPath)) {
           throw new Error("Webcam capture file not created");
         }
         this.emit("captured", outputPath);
@@ -596,7 +643,7 @@ brew install imagesnap
 
 Resolution: 1280x720
 Webcam: Built-in`;
-        fs.writeFileSync(outputPath + ".txt", placeholderText);
+        fs__namespace.writeFileSync(outputPath + ".txt", placeholderText);
         this.emit("captured", outputPath + ".txt");
         console.log("✅ Webcam placeholder created:", outputPath + ".txt");
         return {
@@ -618,14 +665,13 @@ Webcam: Built-in`;
    */
   async executeCommand(command, args) {
     return new Promise((resolve, reject) => {
-      var _a, _b;
-      const process2 = spawn(command, args);
+      const process2 = child_process.spawn(command, args);
       let stdout = "";
       let stderr = "";
-      (_a = process2.stdout) == null ? void 0 : _a.on("data", (data) => {
+      process2.stdout?.on("data", (data) => {
         stdout += data.toString();
       });
-      (_b = process2.stderr) == null ? void 0 : _b.on("data", (data) => {
+      process2.stderr?.on("data", (data) => {
         stderr += data.toString();
       });
       process2.on("close", (code) => {
@@ -641,21 +687,23 @@ Webcam: Built-in`;
     });
   }
 }
-class PrinterController extends EventEmitter {
+class PrinterController extends events.EventEmitter {
+  mockMode;
+  printerName;
+  currentJob = null;
+  mockPaperLevel = 100;
+  isWindows;
+  mockInkLevels = {
+    cyan: 85,
+    magenta: 90,
+    yellow: 75,
+    black: 88
+  };
   constructor(config = {}) {
     super();
-    __publicField(this, "mockMode");
-    __publicField(this, "printerName");
-    __publicField(this, "currentJob", null);
-    __publicField(this, "mockPaperLevel", 100);
-    __publicField(this, "mockInkLevels", {
-      cyan: 85,
-      magenta: 90,
-      yellow: 75,
-      black: 88
-    });
     this.mockMode = config.mockMode ?? process.env.MOCK_PRINTER === "true";
-    this.printerName = config.printerName ?? "Default";
+    this.printerName = config.printerName ?? "";
+    this.isWindows = os__namespace.platform() === "win32";
   }
   /**
    * Initialize printer connection
@@ -692,14 +740,25 @@ class PrinterController extends EventEmitter {
       return this.mockGetStatus();
     }
     try {
-      const status = await this.executePrinterCommand(["lpstat", "-p", this.printerName]);
-      const isPrinting = status.includes("printing");
-      const hasError = status.includes("error");
+      let isPrinting = false;
+      let hasError = false;
+      if (this.isWindows) {
+        const printerName = this.printerName || await this.getDefaultPrinter();
+        if (printerName) {
+          const psCommand = `Get-Printer -Name "${printerName}" | Select-Object -ExpandProperty PrinterStatus`;
+          const status = await this.executeWindowsCommand(psCommand);
+          isPrinting = status.toLowerCase().includes("printing");
+          hasError = status.toLowerCase().includes("error");
+        }
+      } else {
+        const status = await this.executePrinterCommand(["lpstat", "-p", this.printerName || "Default"]);
+        isPrinting = status.includes("printing");
+        hasError = status.includes("error");
+      }
       return {
         available: true,
         status: hasError ? "error" : isPrinting ? "printing" : "idle",
         paperLevel: 100,
-        // Real implementation would query actual level
         inkLevel: {
           cyan: 85,
           magenta: 90,
@@ -723,6 +782,19 @@ class PrinterController extends EventEmitter {
     }
   }
   /**
+   * Get default printer name (Windows)
+   */
+  async getDefaultPrinter() {
+    if (!this.isWindows) return "";
+    try {
+      const psCommand = `Get-CimInstance -ClassName Win32_Printer | Where-Object {$_.Default -eq $true} | Select-Object -ExpandProperty Name`;
+      const output = await this.executeWindowsCommand(psCommand);
+      return output.trim();
+    } catch {
+      return "";
+    }
+  }
+  /**
    * Print a photo
    */
   async print(options) {
@@ -730,25 +802,74 @@ class PrinterController extends EventEmitter {
       return this.mockPrint(options);
     }
     try {
-      if (!fs.existsSync(options.imagePath)) {
+      if (!fs__namespace.existsSync(options.imagePath)) {
         throw new Error(`Image file not found: ${options.imagePath}`);
       }
       const jobId = `job_${Date.now()}`;
       this.currentJob = jobId;
       console.log("🖨️  Starting print job:", jobId);
       this.emit("printing", { jobId, options });
-      const args = [
-        "-d",
-        this.printerName,
-        "-n",
-        String(options.copies || 1),
-        "-o",
-        "media=4x6",
-        "-o",
-        "fit-to-page",
-        options.imagePath
-      ];
-      const result = await this.executePrinterCommand(["lp", ...args]);
+      let result;
+      if (this.isWindows) {
+        const imagePath = options.imagePath.replace(/\//g, "\\");
+        const copies = options.copies || 1;
+        const printerName = this.printerName || await this.getDefaultPrinter();
+        const psCommand = `
+          Add-Type -AssemblyName System.Drawing
+          $imagePath = "${imagePath}"
+          $printerName = "${printerName}"
+          $copies = ${copies}
+
+          for ($i = 0; $i -lt $copies; $i++) {
+            $img = [System.Drawing.Image]::FromFile($imagePath)
+            $printDoc = New-Object System.Drawing.Printing.PrintDocument
+
+            if ($printerName) {
+              $printDoc.PrinterSettings.PrinterName = $printerName
+            }
+
+            $printDoc.add_PrintPage({
+              param($sender, $e)
+              $bounds = $e.MarginBounds
+              $imgRatio = $img.Width / $img.Height
+              $boundsRatio = $bounds.Width / $bounds.Height
+
+              if ($imgRatio -gt $boundsRatio) {
+                $newWidth = $bounds.Width
+                $newHeight = $bounds.Width / $imgRatio
+              } else {
+                $newHeight = $bounds.Height
+                $newWidth = $bounds.Height * $imgRatio
+              }
+
+              $x = $bounds.X + ($bounds.Width - $newWidth) / 2
+              $y = $bounds.Y + ($bounds.Height - $newHeight) / 2
+
+              $e.Graphics.DrawImage($img, $x, $y, $newWidth, $newHeight)
+              $e.HasMorePages = $false
+            })
+
+            $printDoc.Print()
+            $img.Dispose()
+          }
+
+          Write-Output "Print job submitted to $printerName"
+        `;
+        result = await this.executeWindowsCommand(psCommand);
+      } else {
+        const args = [
+          "-d",
+          this.printerName || "Default",
+          "-n",
+          String(options.copies || 1),
+          "-o",
+          "media=4x6",
+          "-o",
+          "fit-to-page",
+          options.imagePath
+        ];
+        result = await this.executePrinterCommand(["lp", ...args]);
+      }
       const jobIdMatch = result.match(/request id is (.+)/);
       const actualJobId = jobIdMatch ? jobIdMatch[1] : jobId;
       this.emit("printed", { jobId: actualJobId });
@@ -767,6 +888,25 @@ class PrinterController extends EventEmitter {
         error: errorMessage
       };
     }
+  }
+  /**
+   * Execute Windows PowerShell command
+   */
+  async executeWindowsCommand(psCommand) {
+    return new Promise((resolve, reject) => {
+      const encodedCommand = Buffer.from(psCommand, "utf16le").toString("base64");
+      child_process.exec(`powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encodedCommand}`, (error, stdout, stderr) => {
+        if (error) {
+          console.error("PowerShell error:", stderr || error.message);
+          reject(new Error(stderr || error.message));
+        } else {
+          if (stderr) {
+            console.warn("PowerShell warning:", stderr);
+          }
+          resolve(stdout);
+        }
+      });
+    });
   }
   /**
    * Cancel current print job
@@ -789,31 +929,36 @@ class PrinterController extends EventEmitter {
    * List available printers
    */
   async listPrinters() {
-    const output = await this.executePrinterCommand(["lpstat", "-p"]);
-    const printers = [];
-    const lines = output.split("\n");
-    for (const line of lines) {
-      const match = line.match(/printer (.+) is/);
-      if (match) {
-        printers.push(match[1]);
+    if (this.isWindows) {
+      const psCommand = `Get-Printer | Select-Object -ExpandProperty Name`;
+      const output = await this.executeWindowsCommand(psCommand);
+      return output.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+    } else {
+      const output = await this.executePrinterCommand(["lpstat", "-p"]);
+      const printers = [];
+      const lines = output.split("\n");
+      for (const line of lines) {
+        const match = line.match(/printer (.+) is/);
+        if (match) {
+          printers.push(match[1]);
+        }
       }
+      return printers;
     }
-    return printers;
   }
   /**
    * Execute printer command
    */
   async executePrinterCommand(args) {
     return new Promise((resolve, reject) => {
-      var _a, _b;
       const [command, ...cmdArgs] = args;
-      const process2 = spawn(command, cmdArgs);
+      const process2 = child_process.spawn(command, cmdArgs);
       let stdout = "";
       let stderr = "";
-      (_a = process2.stdout) == null ? void 0 : _a.on("data", (data) => {
+      process2.stdout?.on("data", (data) => {
         stdout += data.toString();
       });
-      (_b = process2.stderr) == null ? void 0 : _b.on("data", (data) => {
+      process2.stderr?.on("data", (data) => {
         stderr += data.toString();
       });
       process2.on("close", (code) => {
@@ -882,15 +1027,15 @@ class PrinterController extends EventEmitter {
     return { success: true };
   }
 }
-class CardReaderController extends EventEmitter {
+class CardReaderController extends events.EventEmitter {
+  mockMode;
+  mockApprovalRate;
+  readerPort;
+  isConnected = false;
+  currentTransaction = null;
+  timeoutTimer = null;
   constructor(config = {}) {
     super();
-    __publicField(this, "mockMode");
-    __publicField(this, "mockApprovalRate");
-    __publicField(this, "readerPort");
-    __publicField(this, "isConnected", false);
-    __publicField(this, "currentTransaction", null);
-    __publicField(this, "timeoutTimer", null);
     this.mockMode = config.mockMode ?? process.env.MOCK_CARD_READER !== "false";
     this.mockApprovalRate = config.mockApprovalRate ?? 0.8;
     this.readerPort = config.readerPort ?? "COM1";
@@ -1084,8 +1229,217 @@ class CardReaderController extends EventEmitter {
     }
   }
 }
-const __filename$1 = fileURLToPath(import.meta.url);
-const __dirname$1 = path.dirname(__filename$1);
+let db = null;
+function initDatabase() {
+  const dbPath = path__namespace.join(electron.app.getPath("userData"), "analytics.db");
+  console.log(`📊 [Analytics] Initializing database at: ${dbPath}`);
+  db = new Database__default.default(dbPath);
+  db.pragma("journal_mode = WAL");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT UNIQUE NOT NULL,
+      start_time INTEGER NOT NULL,
+      end_time INTEGER,
+      duration_seconds INTEGER,
+      frame_selected TEXT,
+      images_captured INTEGER DEFAULT 0,
+      completed INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      payment_time INTEGER NOT NULL,
+      error_message TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS prints (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      image_path TEXT,
+      print_time INTEGER NOT NULL,
+      success INTEGER DEFAULT 1,
+      error_message TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON sessions(start_time);
+    CREATE INDEX IF NOT EXISTS idx_payments_session_id ON payments(session_id);
+    CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
+  `);
+  console.log("✅ [Analytics] Database initialized");
+}
+function recordSessionStart(sessionId, startTime) {
+  if (!db) return;
+  const stmt = db.prepare(`
+    INSERT OR REPLACE INTO sessions (session_id, start_time, images_captured, completed)
+    VALUES (?, ?, 0, 0)
+  `);
+  stmt.run(sessionId, startTime);
+  console.log(`📊 [Analytics] Session started: ${sessionId}`);
+}
+function updateSessionImages(sessionId, imageCount) {
+  if (!db) return;
+  const stmt = db.prepare(`
+    UPDATE sessions SET images_captured = ? WHERE session_id = ?
+  `);
+  stmt.run(imageCount, sessionId);
+}
+function updateSessionFrame(sessionId, frameName) {
+  if (!db) return;
+  const stmt = db.prepare(`
+    UPDATE sessions SET frame_selected = ? WHERE session_id = ?
+  `);
+  stmt.run(frameName, sessionId);
+}
+function recordSessionEnd(sessionId, endTime) {
+  if (!db) return;
+  const stmt = db.prepare(`
+    UPDATE sessions
+    SET end_time = ?,
+        duration_seconds = (? - start_time) / 1000,
+        completed = 1
+    WHERE session_id = ?
+  `);
+  stmt.run(endTime, endTime, sessionId);
+  console.log(`📊 [Analytics] Session completed: ${sessionId}`);
+}
+function recordPayment(sessionId, amount, status, errorMessage) {
+  if (!db) return;
+  const stmt = db.prepare(`
+    INSERT INTO payments (session_id, amount, status, payment_time, error_message)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  stmt.run(sessionId, amount, status, Date.now(), errorMessage || null);
+  console.log(`📊 [Analytics] Payment recorded: ${sessionId} - ${status} - ${amount}원`);
+}
+function recordPrint(sessionId, imagePath, success, errorMessage) {
+  if (!db) return;
+  const stmt = db.prepare(`
+    INSERT INTO prints (session_id, image_path, print_time, success, error_message)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  stmt.run(sessionId, imagePath, Date.now(), success ? 1 : 0, errorMessage || null);
+  console.log(`📊 [Analytics] Print recorded: ${sessionId} - ${success ? "success" : "failed"}`);
+}
+function getDashboardStats() {
+  if (!db) {
+    return {
+      todaySessions: 0,
+      todayRevenue: 0,
+      todaySuccessRate: 0,
+      totalSessions: 0,
+      totalRevenue: 0,
+      totalSuccessRate: 0,
+      popularFrames: [],
+      recentSessions: [],
+      hourlyDistribution: [],
+      dailyRevenue: []
+    };
+  }
+  const todayStart = /* @__PURE__ */ new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayTimestamp = todayStart.getTime();
+  const todaySessions = db.prepare(`
+    SELECT COUNT(*) as count FROM sessions WHERE start_time >= ?
+  `).get(todayTimestamp);
+  const todayRevenue = db.prepare(`
+    SELECT COALESCE(SUM(amount), 0) as total FROM payments
+    WHERE status = 'approved' AND payment_time >= ?
+  `).get(todayTimestamp);
+  const todayPayments = db.prepare(`
+    SELECT
+      COUNT(*) as total,
+      SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved
+    FROM payments WHERE payment_time >= ?
+  `).get(todayTimestamp);
+  const totalSessions = db.prepare(`
+    SELECT COUNT(*) as count FROM sessions
+  `).get();
+  const totalRevenue = db.prepare(`
+    SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE status = 'approved'
+  `).get();
+  const totalPayments = db.prepare(`
+    SELECT
+      COUNT(*) as total,
+      SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved
+    FROM payments
+  `).get();
+  const popularFrames = db.prepare(`
+    SELECT frame_selected as frame, COUNT(*) as count
+    FROM sessions
+    WHERE frame_selected IS NOT NULL
+    GROUP BY frame_selected
+    ORDER BY count DESC
+    LIMIT 5
+  `).all();
+  const recentSessions = db.prepare(`
+    SELECT
+      s.session_id,
+      s.start_time,
+      COALESCE(s.duration_seconds, 0) as duration_seconds,
+      COALESCE(s.frame_selected, 'N/A') as frame_selected,
+      COALESCE(p.status, 'N/A') as payment_status,
+      COALESCE(p.amount, 0) as amount
+    FROM sessions s
+    LEFT JOIN payments p ON s.session_id = p.session_id
+    ORDER BY s.start_time DESC
+    LIMIT 20
+  `).all();
+  const hourlyDistribution = db.prepare(`
+    SELECT
+      CAST(strftime('%H', datetime(start_time/1000, 'unixepoch', 'localtime')) AS INTEGER) as hour,
+      COUNT(*) as count
+    FROM sessions
+    WHERE start_time >= ?
+    GROUP BY hour
+    ORDER BY hour
+  `).all(todayTimestamp);
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1e3;
+  const dailyRevenue = db.prepare(`
+    SELECT
+      date(payment_time/1000, 'unixepoch', 'localtime') as date,
+      SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END) as revenue,
+      COUNT(DISTINCT session_id) as sessions
+    FROM payments
+    WHERE payment_time >= ?
+    GROUP BY date
+    ORDER BY date DESC
+  `).all(sevenDaysAgo);
+  return {
+    todaySessions: todaySessions.count,
+    todayRevenue: todayRevenue.total,
+    todaySuccessRate: todayPayments.total > 0 ? Math.round(todayPayments.approved / todayPayments.total * 100) : 0,
+    totalSessions: totalSessions.count,
+    totalRevenue: totalRevenue.total,
+    totalSuccessRate: totalPayments.total > 0 ? Math.round(totalPayments.approved / totalPayments.total * 100) : 0,
+    popularFrames,
+    recentSessions,
+    hourlyDistribution,
+    dailyRevenue
+  };
+}
+function closeDatabase() {
+  if (db) {
+    db.close();
+    db = null;
+    console.log("📊 [Analytics] Database closed");
+  }
+}
+try {
+  require("dotenv").config({
+    path: path__namespace.join(__dirname, "../.env"),
+    override: true
+  });
+} catch (e) {
+}
 let mainWindow = null;
 let hologramWindow = null;
 let pythonBridge = null;
@@ -1095,80 +1449,94 @@ let cardReader = null;
 let hologramState = {
   mode: "logo"
 };
-const isDevelopment = process.env.NODE_ENV !== "production";
+const isDevelopment = !electron.app.isPackaged;
 const isSplitScreenMode = process.env.SPLIT_SCREEN_MODE === "true";
+const MAIN_WIDTH = parseInt(process.env.MAIN_WIDTH || "1080", 10);
+const MAIN_HEIGHT = parseInt(process.env.MAIN_HEIGHT || "1920", 10);
+const HOLOGRAM_WIDTH = parseInt(process.env.HOLOGRAM_WIDTH || "1080", 10);
+const HOLOGRAM_HEIGHT = parseInt(process.env.HOLOGRAM_HEIGHT || "1920", 10);
+function getHologramTargetWindow() {
+  return isSplitScreenMode ? mainWindow : hologramWindow;
+}
 function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: isDevelopment ? 2200 : 1080,
-    // Wider in dev for split view
-    height: isDevelopment ? 1100 : 1920,
-    // Shorter in dev for better fit
-    fullscreen: !isDevelopment,
-    // Only fullscreen in production
-    kiosk: !isDevelopment,
-    // Only kiosk in production
+  const displays = electron.screen.getAllDisplays();
+  const primaryDisplay = displays[0];
+  const { x, y } = primaryDisplay.bounds;
+  mainWindow = new electron.BrowserWindow({
+    x,
+    y,
+    width: isDevelopment ? 2200 : MAIN_WIDTH,
+    height: isDevelopment ? 1100 : MAIN_HEIGHT,
+    fullscreen: false,
+    frame: isDevelopment,
+    // No frame in production
     resizable: isDevelopment,
-    // Allow resizing in development
+    alwaysOnTop: !isDevelopment && !isSplitScreenMode,
+    // Stay on top in production
     webPreferences: {
-      preload: path.join(__dirname$1, "preload.js"),
+      preload: path__namespace.join(__dirname, "preload.js"),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
       webSecurity: false
-      // Disable CORS for S3 video loading in split-screen
     }
   });
+  console.log(`📺 Main window: ${MAIN_WIDTH}x${MAIN_HEIGHT} at (${x}, ${y})`);
   if (isDevelopment) {
     mainWindow.loadURL("http://localhost:5173/");
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(path.join(__dirname$1, "../dist/index.html"));
+    mainWindow.loadFile(path__namespace.join(__dirname, "../dist/index.html"));
   }
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
 }
 function createHologramWindow() {
-  const displays = screen.getAllDisplays();
+  const displays = electron.screen.getAllDisplays();
   const secondDisplay = displays.length > 1 ? displays[1] : displays[0];
-  const { x, y } = secondDisplay.bounds;
-  const hologramWidth = 1080;
-  const hologramHeight = 1920;
-  hologramWindow = new BrowserWindow({
-    x: x + 100,
-    // Offset slightly from edge
+  const { x, y, width, height } = secondDisplay.bounds;
+  hologramWindow = new electron.BrowserWindow({
+    x,
     y,
-    width: hologramWidth,
-    height: hologramHeight,
+    width: isDevelopment ? width : HOLOGRAM_WIDTH,
+    height: isDevelopment ? height : HOLOGRAM_HEIGHT,
     fullscreen: false,
-    // Don't use fullscreen, maintain 9:16 aspect ratio
-    frame: !isDevelopment,
-    // Show frame in development for easier debugging
+    frame: isDevelopment,
+    // No frame in production
     show: true,
+    alwaysOnTop: !isDevelopment,
+    // Stay on top in production
     webPreferences: {
-      preload: path.join(__dirname$1, "preload.js"),
+      preload: path__namespace.join(__dirname, "preload.js"),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
       webSecurity: false
-      // Disable CORS for S3 video loading
     }
   });
   if (isDevelopment) {
     hologramWindow.loadURL("http://localhost:5173/#/hologram");
   } else {
-    hologramWindow.loadFile(path.join(__dirname$1, "../dist/index.html"), {
+    hologramWindow.loadFile(path__namespace.join(__dirname, "../dist/index.html"), {
       hash: "/hologram"
     });
   }
   hologramWindow.on("closed", () => {
     hologramWindow = null;
   });
-  console.log(`✅ Hologram window created on display ${displays.length > 1 ? 2 : 1}`);
-  console.log(`   Position: (${x + 100}, ${y}), Size: ${hologramWidth}x${hologramHeight} (9:16)`);
+  console.log(`📺 Hologram window: ${HOLOGRAM_WIDTH}x${HOLOGRAM_HEIGHT} at (${x}, ${y}) on display ${displays.length > 1 ? 2 : 1}`);
 }
-app.whenReady().then(async () => {
+electron.app.whenReady().then(async () => {
   console.log("🚀 Initializing MUT Hologram Studio...");
+  try {
+    initDatabase();
+  } catch (error) {
+    console.error("⚠️ Failed to initialize analytics database:", error);
+  }
+  if (!isDevelopment) {
+    electron.Menu.setApplicationMenu(null);
+  }
   pythonBridge = new PythonBridge();
   const pythonCheck = await pythonBridge.checkDependencies();
   if (!pythonCheck.available) {
@@ -1177,7 +1545,7 @@ app.whenReady().then(async () => {
     console.log("✅ Python bridge initialized");
   }
   pythonBridge.on("progress", (progress) => {
-    mainWindow == null ? void 0 : mainWindow.webContents.send("video:progress", progress);
+    mainWindow?.webContents.send("video:progress", progress);
   });
   const useMock = process.env.MOCK_CAMERA !== "false";
   const useWebcam = process.env.USE_WEBCAM === "true";
@@ -1191,7 +1559,7 @@ app.whenReady().then(async () => {
   } else {
     console.error("⚠️  Camera initialization failed:", cameraResult.error);
   }
-  printerController = new PrinterController({ mockMode: true });
+  printerController = new PrinterController({ mockMode: false });
   const printerResult = await printerController.connect();
   if (printerResult.success) {
     console.log("✅ Printer controller initialized");
@@ -1203,7 +1571,7 @@ app.whenReady().then(async () => {
   if (cardReaderResult.success) {
     console.log("✅ Card reader initialized (mock mode)");
     cardReader.on("status", (statusUpdate) => {
-      mainWindow == null ? void 0 : mainWindow.webContents.send("payment:status", statusUpdate);
+      mainWindow?.webContents.send("payment:status", statusUpdate);
     });
   } else {
     console.error("⚠️  Card reader initialization failed:", cardReaderResult.error);
@@ -1216,8 +1584,8 @@ app.whenReady().then(async () => {
   } else {
     console.log("🔀 Using split-screen mode (single window)");
   }
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+  electron.app.on("activate", () => {
+    if (electron.BrowserWindow.getAllWindows().length === 0) {
       createWindow();
       if (!isSplitScreenMode) {
         createHologramWindow();
@@ -1225,12 +1593,12 @@ app.whenReady().then(async () => {
     }
   });
 });
-app.on("window-all-closed", () => {
+electron.app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
-    app.quit();
+    electron.app.quit();
   }
 });
-ipcMain.handle("camera:start-preview", async () => {
+electron.ipcMain.handle("camera:start-preview", async () => {
   console.log("📷 Camera preview requested");
   if (!cameraController) {
     return { success: false, error: "Camera not initialized" };
@@ -1241,11 +1609,11 @@ ipcMain.handle("camera:start-preview", async () => {
     error: status.connected ? void 0 : "Camera not connected"
   };
 });
-ipcMain.handle("camera:stop-preview", async () => {
+electron.ipcMain.handle("camera:stop-preview", async () => {
   console.log("📷 Camera preview stopped");
   return { success: true };
 });
-ipcMain.handle("camera:capture", async () => {
+electron.ipcMain.handle("camera:capture", async () => {
   console.log("📷 Camera capture requested");
   if (!cameraController) {
     return {
@@ -1264,7 +1632,7 @@ ipcMain.handle("camera:capture", async () => {
     };
   }
 });
-ipcMain.handle("printer:get-status", async () => {
+electron.ipcMain.handle("printer:get-status", async () => {
   console.log("🖨️  Printer status requested");
   if (!printerController) {
     return {
@@ -1276,9 +1644,18 @@ ipcMain.handle("printer:get-status", async () => {
   }
   try {
     const status = await printerController.getStatus();
+    const statusMap = {
+      "idle": "ready",
+      "printing": "busy",
+      "error": "error",
+      "offline": "offline"
+    };
     return {
       success: status.available,
-      ...status
+      status: statusMap[status.status] || status.status,
+      paperLevel: status.paperLevel,
+      inkLevel: status.inkLevel,
+      error: status.error
     };
   } catch (error) {
     return {
@@ -1289,7 +1666,7 @@ ipcMain.handle("printer:get-status", async () => {
     };
   }
 });
-ipcMain.handle("printer:print", async (_event, options) => {
+electron.ipcMain.handle("printer:print", async (_event, options) => {
   console.log("🖨️  Print requested:", options);
   if (!printerController) {
     return {
@@ -1300,7 +1677,7 @@ ipcMain.handle("printer:print", async (_event, options) => {
   try {
     const result = await printerController.print(options);
     printerController.on("progress", (progressData) => {
-      mainWindow == null ? void 0 : mainWindow.webContents.send("printer:progress", progressData);
+      mainWindow?.webContents.send("printer:progress", progressData);
     });
     return result;
   } catch (error) {
@@ -1310,7 +1687,7 @@ ipcMain.handle("printer:print", async (_event, options) => {
     };
   }
 });
-ipcMain.handle("video:process", async (_event, params) => {
+electron.ipcMain.handle("video:process", async (_event, params) => {
   console.log("Video processing requested:", params);
   if (!pythonBridge) {
     return {
@@ -1322,7 +1699,7 @@ ipcMain.handle("video:process", async (_event, params) => {
     let frameOverlayPath = params.chromaVideo;
     if (params.chromaVideo && params.chromaVideo.startsWith("/")) {
       const relativePath = params.chromaVideo.substring(1);
-      frameOverlayPath = path.join(app.getAppPath(), "public", relativePath);
+      frameOverlayPath = path__namespace.join(electron.app.getAppPath(), "public", relativePath);
       console.log(`   Frame overlay converted: ${params.chromaVideo} -> ${frameOverlayPath}`);
     }
     const result = await pythonBridge.processVideo({
@@ -1331,7 +1708,7 @@ ipcMain.handle("video:process", async (_event, params) => {
       subtitleText: params.subtitleText,
       s3Folder: params.s3Folder || "mut-hologram"
     });
-    mainWindow == null ? void 0 : mainWindow.webContents.send("video:complete", {
+    mainWindow?.webContents.send("video:complete", {
       success: true,
       result
     });
@@ -1342,7 +1719,7 @@ ipcMain.handle("video:process", async (_event, params) => {
   } catch (error) {
     console.error("Video processing error:", error);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    mainWindow == null ? void 0 : mainWindow.webContents.send("video:complete", {
+    mainWindow?.webContents.send("video:complete", {
       success: false,
       error: errorMessage
     });
@@ -1352,11 +1729,11 @@ ipcMain.handle("video:process", async (_event, params) => {
     };
   }
 });
-ipcMain.handle("video:cancel", async (_event, taskId) => {
+electron.ipcMain.handle("video:cancel", async (_event, taskId) => {
   console.log("Video processing cancelled:", taskId);
   return { success: true };
 });
-ipcMain.handle("video:process-from-images", async (_event, params) => {
+electron.ipcMain.handle("video:process-from-images", async (_event, params) => {
   console.log(`
 ${"=".repeat(70)}`);
   console.log(`🎬 [IPC] VIDEO PROCESSING FROM IMAGES`);
@@ -1377,7 +1754,7 @@ ${"=".repeat(70)}`);
   try {
     const progressListener = (progress) => {
       console.log(`📊 [IPC] Progress: ${progress.step} - ${progress.progress}% - ${progress.message}`);
-      mainWindow == null ? void 0 : mainWindow.webContents.send("video:progress", progress);
+      mainWindow?.webContents.send("video:progress", progress);
     };
     pythonBridge.on("progress", progressListener);
     const result = await pythonBridge.processFromImages({
@@ -1394,7 +1771,7 @@ ${"=".repeat(70)}`);
     console.log(`   QR Code: ${result.qrCodePath}`);
     console.log(`${"=".repeat(70)}
 `);
-    mainWindow == null ? void 0 : mainWindow.webContents.send("video:complete", {
+    mainWindow?.webContents.send("video:complete", {
       success: true,
       result
     });
@@ -1407,7 +1784,7 @@ ${"=".repeat(70)}`);
     console.log(`${"=".repeat(70)}
 `);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    mainWindow == null ? void 0 : mainWindow.webContents.send("video:complete", {
+    mainWindow?.webContents.send("video:complete", {
       success: false,
       error: errorMessage
     });
@@ -1417,7 +1794,7 @@ ${"=".repeat(70)}`);
     };
   }
 });
-ipcMain.handle("image:save-blob", async (_event, blobData, filename) => {
+electron.ipcMain.handle("image:save-blob", async (_event, blobData, filename) => {
   console.log(`
 ${"=".repeat(70)}`);
   console.log(`💾 [IPC] SAVING BLOB TO FILE`);
@@ -1425,8 +1802,8 @@ ${"=".repeat(70)}`);
   console.log(`   Filename: ${filename}`);
   console.log(`   Blob data length: ${blobData.length} chars`);
   try {
-    const tempDir = path.join(app.getPath("temp"), "mut-captures");
-    await fs$1.mkdir(tempDir, { recursive: true });
+    const tempDir = path__namespace.join(electron.app.getPath("temp"), "mut-captures");
+    await fs__namespace$1.mkdir(tempDir, { recursive: true });
     console.log(`   ✓ Temp directory: ${tempDir}`);
     const dataUrlPrefix = blobData.substring(0, 50);
     console.log(`   Data URL prefix: ${dataUrlPrefix}...`);
@@ -1436,8 +1813,8 @@ ${"=".repeat(70)}`);
     console.log(`   ✓ Buffer size: ${(buffer.length / 1024).toFixed(2)} KB`);
     const hexHeader = buffer.slice(0, 16).toString("hex").toUpperCase();
     console.log(`   File header (hex): ${hexHeader}`);
-    const filePath = path.join(tempDir, filename);
-    await fs$1.writeFile(filePath, buffer);
+    const filePath = path__namespace.join(tempDir, filename);
+    await fs__namespace$1.writeFile(filePath, buffer);
     console.log(`   ✓ File saved: ${filePath}`);
     console.log(`✅ BLOB SAVED SUCCESSFULLY`);
     console.log(`${"=".repeat(70)}
@@ -1456,7 +1833,7 @@ ${"=".repeat(70)}`);
     };
   }
 });
-ipcMain.handle("video:extract-frames", async (_event, videoPath, timestamps) => {
+electron.ipcMain.handle("video:extract-frames", async (_event, videoPath, timestamps) => {
   console.log(`📸 Frame extraction requested: ${videoPath} at [${timestamps.join(", ")}]s`);
   if (!pythonBridge) {
     return {
@@ -1480,7 +1857,7 @@ ipcMain.handle("video:extract-frames", async (_event, videoPath, timestamps) => 
     };
   }
 });
-ipcMain.handle("video:save-buffer", async (_event, byteArray, filename) => {
+electron.ipcMain.handle("video:save-buffer", async (_event, byteArray, filename) => {
   console.log(`
 ${"=".repeat(70)}`);
   console.log(`💾 [IPC] SAVING VIDEO BUFFER TO FILE`);
@@ -1488,15 +1865,15 @@ ${"=".repeat(70)}`);
   console.log(`   Filename: ${filename}`);
   console.log(`   Buffer size: ${(byteArray.length / 1024).toFixed(2)} KB`);
   try {
-    const tempDir = path.join(app.getPath("temp"), "mut-captures");
-    await fs$1.mkdir(tempDir, { recursive: true });
+    const tempDir = path__namespace.join(electron.app.getPath("temp"), "mut-captures");
+    await fs__namespace$1.mkdir(tempDir, { recursive: true });
     console.log(`   ✓ Temp directory: ${tempDir}`);
     const buffer = Buffer.from(byteArray);
     console.log(`   ✓ Buffer created: ${(buffer.length / 1024).toFixed(2)} KB`);
     const hexHeader = buffer.slice(0, 16).toString("hex").toUpperCase();
     console.log(`   File header (hex): ${hexHeader}`);
-    const filePath = path.join(tempDir, filename);
-    await fs$1.writeFile(filePath, buffer);
+    const filePath = path__namespace.join(tempDir, filename);
+    await fs__namespace$1.writeFile(filePath, buffer);
     console.log(`   ✓ File saved: ${filePath}`);
     console.log(`✅ VIDEO BUFFER SAVED SUCCESSFULLY`);
     console.log(`${"=".repeat(70)}
@@ -1515,7 +1892,7 @@ ${"=".repeat(70)}`);
     };
   }
 });
-ipcMain.handle("payment:process", async (_event, params) => {
+electron.ipcMain.handle("payment:process", async (_event, params) => {
   console.log("💳 Payment processing requested:", params);
   if (!cardReader) {
     return {
@@ -1529,11 +1906,11 @@ ipcMain.handle("payment:process", async (_event, params) => {
       currency: params.currency || "KRW",
       description: params.description || "Photo print"
     });
-    mainWindow == null ? void 0 : mainWindow.webContents.send("payment:complete", result);
+    mainWindow?.webContents.send("payment:complete", result);
     return result;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    mainWindow == null ? void 0 : mainWindow.webContents.send("payment:complete", {
+    mainWindow?.webContents.send("payment:complete", {
       success: false,
       status: "error",
       error: errorMessage
@@ -1544,7 +1921,7 @@ ipcMain.handle("payment:process", async (_event, params) => {
     };
   }
 });
-ipcMain.handle("payment:cancel", async () => {
+electron.ipcMain.handle("payment:cancel", async () => {
   console.log("💳 Payment cancellation requested");
   if (!cardReader) {
     return { success: false };
@@ -1556,7 +1933,7 @@ ipcMain.handle("payment:cancel", async () => {
     return { success: false };
   }
 });
-ipcMain.handle("payment:get-status", async () => {
+electron.ipcMain.handle("payment:get-status", async () => {
   console.log("💳 Payment status requested");
   if (!cardReader) {
     return {
@@ -1571,21 +1948,22 @@ ipcMain.handle("payment:get-status", async () => {
     status: status.connected ? "idle" : "offline"
   };
 });
-ipcMain.handle("hologram:set-mode", async (_event, mode, data) => {
+electron.ipcMain.handle("hologram:set-mode", async (_event, mode, data) => {
   console.log("🎭 Hologram mode change requested:", mode);
   hologramState = {
     mode,
-    qrCodePath: data == null ? void 0 : data.qrCodePath,
-    videoPath: data == null ? void 0 : data.videoPath
+    qrCodePath: data?.qrCodePath,
+    videoPath: data?.videoPath
   };
   console.log("💾 Hologram state stored:", hologramState);
-  if (!mainWindow) {
-    return { success: false, error: "Main window not initialized" };
+  const targetWindow = getHologramTargetWindow();
+  if (!targetWindow) {
+    return { success: false, error: "Target window not initialized" };
   }
-  mainWindow.webContents.send("hologram:update", hologramState);
+  targetWindow.webContents.send("hologram:update", hologramState);
   return { success: true };
 });
-ipcMain.handle("hologram:show-qr", async (_event, qrCodePath, videoPath) => {
+electron.ipcMain.handle("hologram:show-qr", async (_event, qrCodePath, videoPath) => {
   console.log("🎭 [IPC] hologram:show-qr called");
   console.log("   QR Code:", qrCodePath);
   console.log("   Video path:", videoPath);
@@ -1595,49 +1973,52 @@ ipcMain.handle("hologram:show-qr", async (_event, qrCodePath, videoPath) => {
     videoPath
   };
   console.log("💾 [IPC] Hologram state updated:", JSON.stringify(hologramState));
-  if (!mainWindow) {
-    console.error("❌ [IPC] Main window is NULL - cannot send message!");
-    return { success: false, error: "Main window not initialized" };
+  const targetWindow = getHologramTargetWindow();
+  const windowName = isSplitScreenMode ? "main window" : "hologram window";
+  if (!targetWindow) {
+    console.error(`❌ [IPC] ${windowName} is NULL - cannot send message!`);
+    return { success: false, error: `${windowName} not initialized` };
   }
-  if (mainWindow.isDestroyed()) {
-    console.error("❌ [IPC] Main window is DESTROYED - cannot send message!");
-    return { success: false, error: "Main window destroyed" };
+  if (targetWindow.isDestroyed()) {
+    console.error(`❌ [IPC] ${windowName} is DESTROYED - cannot send message!`);
+    return { success: false, error: `${windowName} destroyed` };
   }
-  console.log("✅ [IPC] Main window exists and is not destroyed");
-  console.log("   isLoading:", mainWindow.webContents.isLoading());
-  console.log("   URL:", mainWindow.webContents.getURL());
-  console.log("📤 [IPC] Sending hologram:update to main window...");
-  mainWindow.webContents.send("hologram:update", hologramState);
+  console.log(`✅ [IPC] ${windowName} exists and is not destroyed`);
+  console.log("   isLoading:", targetWindow.webContents.isLoading());
+  console.log("   URL:", targetWindow.webContents.getURL());
+  console.log(`📤 [IPC] Sending hologram:update to ${windowName}...`);
+  targetWindow.webContents.send("hologram:update", hologramState);
   console.log("✅ [IPC] Message sent successfully");
   return { success: true };
 });
-ipcMain.handle("hologram:show-logo", async () => {
+electron.ipcMain.handle("hologram:show-logo", async () => {
   console.log("🎭 Hologram showing logo");
   hologramState = {
     mode: "logo"
   };
   console.log("💾 Hologram state stored:", hologramState);
-  if (!mainWindow) {
-    return { success: false, error: "Main window not initialized" };
+  const targetWindow = getHologramTargetWindow();
+  if (!targetWindow) {
+    return { success: false, error: "Target window not initialized" };
   }
-  mainWindow.webContents.send("hologram:update", hologramState);
+  targetWindow.webContents.send("hologram:update", hologramState);
   return { success: true };
 });
-ipcMain.handle("hologram:get-state", async () => {
+electron.ipcMain.handle("hologram:get-state", async () => {
   console.log("🎭 Hologram state requested:", hologramState);
   return { success: true, state: hologramState };
 });
-ipcMain.handle("file:read-as-data-url", async (_event, filePath) => {
+electron.ipcMain.handle("file:read-as-data-url", async (_event, filePath) => {
   try {
     console.log(`📂 [IPC] Reading file as data URL: ${filePath}`);
     let absolutePath = filePath;
-    if (!path.isAbsolute(filePath)) {
-      absolutePath = path.join(app.getAppPath(), "MUT-distribution", filePath);
+    if (!path__namespace.isAbsolute(filePath)) {
+      absolutePath = path__namespace.join(electron.app.getAppPath(), "MUT-distribution", filePath);
       console.log(`   Resolved to absolute path: ${absolutePath}`);
     }
-    const fileBuffer = await fs$1.readFile(absolutePath);
+    const fileBuffer = await fs__namespace$1.readFile(absolutePath);
     const base64 = fileBuffer.toString("base64");
-    const ext = path.extname(filePath).toLowerCase();
+    const ext = path__namespace.extname(filePath).toLowerCase();
     const mimeTypes = {
       ".png": "image/png",
       ".jpg": "image/jpeg",
@@ -1655,25 +2036,56 @@ ipcMain.handle("file:read-as-data-url", async (_event, filePath) => {
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
   }
 });
-ipcMain.handle("file:delete", async (_event, filePath) => {
+electron.ipcMain.handle("file:delete", async (_event, filePath) => {
   try {
     console.log(`🗑️ [IPC] Deleting file: ${filePath}`);
     let absolutePath = filePath;
-    if (!path.isAbsolute(filePath)) {
-      absolutePath = path.join(app.getAppPath(), "MUT-distribution", filePath);
+    if (!path__namespace.isAbsolute(filePath)) {
+      absolutePath = path__namespace.join(electron.app.getAppPath(), "MUT-distribution", filePath);
       console.log(`   Resolved to absolute path: ${absolutePath}`);
     }
     try {
-      await fs$1.access(absolutePath);
+      await fs__namespace$1.access(absolutePath);
     } catch {
       console.warn(`⚠️ [IPC] File does not exist, skipping: ${absolutePath}`);
       return { success: true, skipped: true };
     }
-    await fs$1.unlink(absolutePath);
+    await fs__namespace$1.unlink(absolutePath);
     console.log(`✅ [IPC] File deleted successfully: ${absolutePath}`);
     return { success: true };
   } catch (error) {
     console.error(`❌ [IPC] Failed to delete file: ${filePath}`, error);
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
   }
+});
+electron.ipcMain.handle("analytics:session-start", async (_event, sessionId, startTime) => {
+  recordSessionStart(sessionId, startTime);
+  return { success: true };
+});
+electron.ipcMain.handle("analytics:session-end", async (_event, sessionId, endTime) => {
+  recordSessionEnd(sessionId, endTime);
+  return { success: true };
+});
+electron.ipcMain.handle("analytics:update-frame", async (_event, sessionId, frameName) => {
+  updateSessionFrame(sessionId, frameName);
+  return { success: true };
+});
+electron.ipcMain.handle("analytics:update-images", async (_event, sessionId, imageCount) => {
+  updateSessionImages(sessionId, imageCount);
+  return { success: true };
+});
+electron.ipcMain.handle("analytics:record-payment", async (_event, sessionId, amount, status, errorMessage) => {
+  recordPayment(sessionId, amount, status, errorMessage);
+  return { success: true };
+});
+electron.ipcMain.handle("analytics:record-print", async (_event, sessionId, imagePath, success, errorMessage) => {
+  recordPrint(sessionId, imagePath, success, errorMessage);
+  return { success: true };
+});
+electron.ipcMain.handle("analytics:get-dashboard-stats", async () => {
+  const stats = getDashboardStats();
+  return { success: true, stats };
+});
+electron.app.on("before-quit", () => {
+  closeDatabase();
 });

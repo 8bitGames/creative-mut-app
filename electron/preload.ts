@@ -131,6 +131,23 @@ const fileAPI = {
   delete: (filePath: string) => ipcRenderer.invoke('file:delete', filePath),
 };
 
+// Analytics API
+const analyticsAPI = {
+  sessionStart: (sessionId: string, startTime: number) =>
+    ipcRenderer.invoke('analytics:session-start', sessionId, startTime),
+  sessionEnd: (sessionId: string, endTime: number) =>
+    ipcRenderer.invoke('analytics:session-end', sessionId, endTime),
+  updateFrame: (sessionId: string, frameName: string) =>
+    ipcRenderer.invoke('analytics:update-frame', sessionId, frameName),
+  updateImages: (sessionId: string, imageCount: number) =>
+    ipcRenderer.invoke('analytics:update-images', sessionId, imageCount),
+  recordPayment: (sessionId: string, amount: number, status: string, errorMessage?: string) =>
+    ipcRenderer.invoke('analytics:record-payment', sessionId, amount, status, errorMessage),
+  recordPrint: (sessionId: string, imagePath: string, success: boolean, errorMessage?: string) =>
+    ipcRenderer.invoke('analytics:record-print', sessionId, imagePath, success, errorMessage),
+  getDashboardStats: () => ipcRenderer.invoke('analytics:get-dashboard-stats'),
+};
+
 // Hologram API
 const hologramAPI = {
   setMode: (mode: 'logo' | 'result', data?: { qrCodePath?: string; videoPath?: string }) =>
@@ -162,6 +179,7 @@ contextBridge.exposeInMainWorld('electron', {
   video: videoAPI,
   payment: paymentAPI,
   file: fileAPI,
+  analytics: analyticsAPI,
   hologram: hologramAPI,
   ipcRenderer: ipcRendererAPI,
 });

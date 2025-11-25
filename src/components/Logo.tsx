@@ -7,7 +7,7 @@ export function Logo({ className = '', color = 'white' }: LogoProps) {
   return (
     <div className={`flex items-center justify-center ${className}`}>
       <img
-        src="/logo.jpg"
+        src="./logo.jpg"
         alt="MUT Logo"
         className="w-full h-full"
         style={{

@@ -171,7 +171,7 @@ export function HologramWindow({ mode, qrCodePath, videoPath }: HologramWindowPr
               className="flex items-center justify-center"
             >
               <img
-                src="/logo.jpg"
+                src="./logo.jpg"
                 alt="MUT Logo"
                 className="w-96 h-96 object-contain"
                 style={{ transform: 'scaleX(-1)' }} // Mirror the logo
