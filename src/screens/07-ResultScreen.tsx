@@ -56,8 +56,6 @@ export function ResultScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
   const processedResult = useSessionStore((state) => state.processedResult);
   const [timeRemaining, setTimeRemaining] = useState(60);
-  // const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
-  // const [videoDataUrl, setVideoDataUrl] = useState<string | null>(null);
 
   // Auto-redirect to idle if no result
   useEffect(() => {
@@ -67,44 +65,6 @@ export function ResultScreen() {
     }
   }, [processedResult, setScreen]);
 
-  // Load QR code and video as data URLs via IPC
-  // useEffect(() => {
-  //   if (!processedResult) return;
-  //
-  //   const loadFiles = async () => {
-  //     // Load QR code
-  //     if (processedResult.qrCodePath) {
-  //       try {
-  //         // @ts-ignore
-  //         const result = await window.electron.file.readAsDataUrl(processedResult.qrCodePath);
-  //         if (result.success) {
-  //           setQrCodeDataUrl(result.dataUrl);
-  //         } else {
-  //           console.error('Failed to load QR code:', result.error);
-  //         }
-  //       } catch (error) {
-  //         console.error('Error loading QR code:', error);
-  //       }
-  //     }
-  //
-  //     // Load video
-  //     if (processedResult.videoPath) {
-  //       try {
-  //         // @ts-ignore
-  //         const result = await window.electron.file.readAsDataUrl(processedResult.videoPath);
-  //         if (result.success) {
-  //           setVideoDataUrl(result.dataUrl);
-  //         } else {
-  //           console.error('Failed to load video:', result.error);
-  //         }
-  //       } catch (error) {
-  //         console.error('Error loading video:', error);
-  //       }
-  //     }
-  //   };
-  //
-  //   loadFiles();
-  // }, [processedResult]);
 
   // Update hologram window to show QR code with video background
   useEffect(() => {

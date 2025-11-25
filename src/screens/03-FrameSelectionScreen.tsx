@@ -77,6 +77,9 @@ export function FrameSelectionScreen() {
     }
   }, [selectedFrame, setSelectedFrame]);
 
+  // Camera is already warmed up from StartScreen - no need to initialize here
+  // ShootingGuideScreen will start the camera feed when needed
+
   const handleFrameSelect = (frame: Frame) => {
     setSelectedFrame(frame);
     setScreen('recording-guide');

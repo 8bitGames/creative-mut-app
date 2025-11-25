@@ -356,11 +356,33 @@ class CameraController extends EventEmitter {
     __publicField(this, "cameraProcess", null);
     __publicField(this, "isConnected", false);
     __publicField(this, "cameraInfo", null);
+    __publicField(this, "liveViewActive", false);
+    __publicField(this, "liveViewInterval", null);
+    __publicField(this, "previewPath");
     this.mockMode = config.mockMode ?? process.env.MOCK_CAMERA === "true";
     this.useWebcam = config.useWebcam ?? process.env.USE_WEBCAM === "true";
     this.captureDir = config.captureDir ?? path.join(process.cwd(), "captures");
+    this.previewPath = path.join(this.captureDir, "live_preview.jpg");
     if (!fs.existsSync(this.captureDir)) {
       fs.mkdirSync(this.captureDir, { recursive: true });
+    }
+  }
+  /**
+   * Kill MacOS PTPCamera service that blocks gphoto2
+   */
+  async killPTPCameraService() {
+    try {
+      for (let i = 0; i < 3; i++) {
+        try {
+          await this.executeCommand("killall", ["-9", "PTPCamera"]);
+        } catch {
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      console.log("🔧 Killed PTPCamera service to allow gphoto2 access");
+      await new Promise((resolve) => setTimeout(resolve, 1e3));
+    } catch (error) {
+      console.log("ℹ️ PTPCamera service not running or already killed");
     }
   }
   /**
@@ -375,6 +397,7 @@ class CameraController extends EventEmitter {
       return this.webcamConnect();
     }
     try {
+      await this.killPTPCameraService();
       const detectResult = await this.executeGPhoto2Command(["--auto-detect"]);
       if (detectResult.includes("No camera found")) {
         return {
@@ -426,6 +449,7 @@ class CameraController extends EventEmitter {
       return this.webcamCapture();
     }
     try {
+      await this.killPTPCameraService();
       const timestamp = Date.now();
       const filename = `capture_${timestamp}.jpg`;
       const outputPath = path.join(this.captureDir, filename);
@@ -462,6 +486,93 @@ class CameraController extends EventEmitter {
       connected: this.isConnected,
       info: this.cameraInfo
     };
+  }
+  /**
+   * Start live view streaming (webcam-like)
+   * Continuously captures preview frames for real-time display
+   */
+  async startLiveView(fps = 10) {
+    if (!this.isConnected && !this.mockMode && !this.useWebcam) {
+      return {
+        success: false,
+        error: "Camera not connected"
+      };
+    }
+    if (this.liveViewActive) {
+      return {
+        success: false,
+        error: "Live view already active"
+      };
+    }
+    if (this.mockMode) {
+      return this.mockStartLiveView(fps);
+    }
+    if (this.useWebcam) {
+      return this.webcamStartLiveView();
+    }
+    try {
+      await this.killPTPCameraService();
+      this.liveViewActive = true;
+      const intervalMs = 1e3 / fps;
+      await this.captureLiveViewFrame();
+      this.liveViewInterval = setInterval(async () => {
+        try {
+          await this.captureLiveViewFrame();
+        } catch (error) {
+          console.error("Live view frame capture error:", error);
+        }
+      }, intervalMs);
+      this.emit("liveview-started");
+      console.log(`📹 Live view started at ${fps} fps`);
+      return { success: true };
+    } catch (error) {
+      this.liveViewActive = false;
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      console.error("❌ Live view start failed:", errorMessage);
+      return {
+        success: false,
+        error: errorMessage
+      };
+    }
+  }
+  /**
+   * Stop live view streaming
+   */
+  async stopLiveView() {
+    if (this.liveViewInterval) {
+      clearInterval(this.liveViewInterval);
+      this.liveViewInterval = null;
+    }
+    this.liveViewActive = false;
+    this.emit("liveview-stopped");
+    console.log("📹 Live view stopped");
+  }
+  /**
+   * Get current live view frame path
+   */
+  getLiveViewFramePath() {
+    return this.previewPath;
+  }
+  /**
+   * Check if live view is active
+   */
+  isLiveViewActive() {
+    return this.liveViewActive;
+  }
+  /**
+   * Capture a single live view frame
+   */
+  async captureLiveViewFrame() {
+    await this.executeGPhoto2Command([
+      "--capture-preview",
+      "--filename",
+      this.previewPath,
+      "--force-overwrite"
+    ]);
+    this.emit("liveview-frame", {
+      path: this.previewPath,
+      timestamp: Date.now()
+    });
   }
   /**
    * Execute gphoto2 command
@@ -539,6 +650,24 @@ Aperture: f/2.8`);
     };
   }
   /**
+   * Mock mode: Start live view
+   */
+  async mockStartLiveView(fps) {
+    this.liveViewActive = true;
+    const intervalMs = 1e3 / fps;
+    this.liveViewInterval = setInterval(() => {
+      const mockFrame = `Mock live view frame at ${(/* @__PURE__ */ new Date()).toISOString()}`;
+      fs.writeFileSync(this.previewPath, mockFrame);
+      this.emit("liveview-frame", {
+        path: this.previewPath,
+        timestamp: Date.now()
+      });
+    }, intervalMs);
+    this.emit("liveview-started");
+    console.log(`✅ Mock live view started at ${fps} fps`);
+    return { success: true };
+  }
+  /**
    * Webcam mode: Connect to built-in webcam
    */
   async webcamConnect() {
@@ -610,6 +739,38 @@ Webcam: Built-in`;
       return {
         success: false,
         error: errorMessage
+      };
+    }
+  }
+  /**
+   * Webcam mode: Start live view
+   */
+  async webcamStartLiveView() {
+    try {
+      await this.executeCommand("which", ["imagesnap"]);
+      this.liveViewActive = true;
+      this.liveViewInterval = setInterval(async () => {
+        try {
+          await this.executeCommand("imagesnap", ["-q", this.previewPath]);
+          this.emit("liveview-frame", {
+            path: this.previewPath,
+            timestamp: Date.now()
+          });
+        } catch (error) {
+          console.error("Webcam live view frame error:", error);
+        }
+      }, 100);
+      this.emit("liveview-started");
+      console.log("📹 Webcam live view started");
+      return { success: true };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      console.error("❌ Webcam live view start failed:", errorMessage);
+      return {
+        success: false,
+        error: `${errorMessage}
+
+Install imagesnap: brew install imagesnap`
       };
     }
   }
@@ -1097,6 +1258,9 @@ let hologramState = {
 };
 const isDevelopment = process.env.NODE_ENV !== "production";
 const isSplitScreenMode = process.env.SPLIT_SCREEN_MODE === "true";
+function getHologramTargetWindow() {
+  return isSplitScreenMode ? mainWindow : hologramWindow;
+}
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: isDevelopment ? 2200 : 1080,
@@ -1142,9 +1306,11 @@ function createHologramWindow() {
     height: hologramHeight,
     fullscreen: false,
     // Don't use fullscreen, maintain 9:16 aspect ratio
-    frame: !isDevelopment,
-    // Show frame in development for easier debugging
+    frame: true,
+    // Always show frame so we can see the window and prevent accidental closing
     show: true,
+    closable: !isDevelopment,
+    // In development, prevent closing the hologram window
     webPreferences: {
       preload: path.join(__dirname$1, "preload.js"),
       nodeIntegration: false,
@@ -1161,8 +1327,23 @@ function createHologramWindow() {
       hash: "/hologram"
     });
   }
+  hologramWindow.on("close", (event) => {
+    console.warn("⚠️ [Main] Hologram window close event triggered!");
+    console.warn("   Preventing close to maintain dual-monitor setup");
+    event.preventDefault();
+    console.log("   Window minimized instead of closed");
+    hologramWindow == null ? void 0 : hologramWindow.minimize();
+  });
   hologramWindow.on("closed", () => {
+    console.error("❌ [Main] Hologram window was forcefully closed!");
     hologramWindow = null;
+    console.log("🔄 [Main] Will attempt to recreate hologram window in 1 second...");
+    setTimeout(() => {
+      if (!hologramWindow) {
+        console.log("🔄 [Main] Recreating hologram window...");
+        createHologramWindow();
+      }
+    }, 1e3);
   });
   console.log(`✅ Hologram window created on display ${displays.length > 1 ? 2 : 1}`);
   console.log(`   Position: (${x + 100}, ${y}), Size: ${hologramWidth}x${hologramHeight} (9:16)`);
@@ -1179,10 +1360,10 @@ app.whenReady().then(async () => {
   pythonBridge.on("progress", (progress) => {
     mainWindow == null ? void 0 : mainWindow.webContents.send("video:progress", progress);
   });
-  const useMock = process.env.MOCK_CAMERA !== "false";
   const useWebcam = process.env.USE_WEBCAM === "true";
   cameraController = new CameraController({
-    mockMode: useMock && !useWebcam,
+    mockMode: false,
+    // No mock mode
     useWebcam
   });
   const cameraResult = await cameraController.connect();
@@ -1231,19 +1412,58 @@ app.on("window-all-closed", () => {
   }
 });
 ipcMain.handle("camera:start-preview", async () => {
-  console.log("📷 Camera preview requested");
+  console.log("📷 Camera live view requested");
   if (!cameraController) {
     return { success: false, error: "Camera not initialized" };
   }
-  const status = cameraController.getStatus();
-  return {
-    success: status.connected,
-    error: status.connected ? void 0 : "Camera not connected"
-  };
+  try {
+    const result = await cameraController.startLiveView(3);
+    cameraController.on("liveview-frame", (data) => {
+      mainWindow == null ? void 0 : mainWindow.webContents.send("camera:preview-frame", {
+        framePath: data.path,
+        timestamp: data.timestamp
+      });
+    });
+    return result;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    return {
+      success: false,
+      error: errorMessage
+    };
+  }
 });
 ipcMain.handle("camera:stop-preview", async () => {
-  console.log("📷 Camera preview stopped");
-  return { success: true };
+  console.log("📷 Camera live view stopped");
+  if (!cameraController) {
+    return { success: false, error: "Camera not initialized" };
+  }
+  try {
+    await cameraController.stopLiveView();
+    return { success: true };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    };
+  }
+});
+ipcMain.handle("camera:get-preview-frame", async () => {
+  if (!cameraController) {
+    return { success: false, error: "Camera not initialized" };
+  }
+  if (!cameraController.isLiveViewActive()) {
+    return { success: false, error: "Live view not active" };
+  }
+  try {
+    const framePath = cameraController.getLiveViewFramePath();
+    return { success: true, framePath };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    };
+  }
 });
 ipcMain.handle("camera:capture", async () => {
   console.log("📷 Camera capture requested");
@@ -1579,10 +1799,11 @@ ipcMain.handle("hologram:set-mode", async (_event, mode, data) => {
     videoPath: data == null ? void 0 : data.videoPath
   };
   console.log("💾 Hologram state stored:", hologramState);
-  if (!mainWindow) {
-    return { success: false, error: "Main window not initialized" };
+  const targetWindow = getHologramTargetWindow();
+  if (!targetWindow) {
+    return { success: false, error: "Target window not initialized" };
   }
-  mainWindow.webContents.send("hologram:update", hologramState);
+  targetWindow.webContents.send("hologram:update", hologramState);
   return { success: true };
 });
 ipcMain.handle("hologram:show-qr", async (_event, qrCodePath, videoPath) => {
@@ -1595,19 +1816,21 @@ ipcMain.handle("hologram:show-qr", async (_event, qrCodePath, videoPath) => {
     videoPath
   };
   console.log("💾 [IPC] Hologram state updated:", JSON.stringify(hologramState));
-  if (!mainWindow) {
-    console.error("❌ [IPC] Main window is NULL - cannot send message!");
-    return { success: false, error: "Main window not initialized" };
+  const targetWindow = getHologramTargetWindow();
+  const windowName = isSplitScreenMode ? "main window" : "hologram window";
+  if (!targetWindow) {
+    console.error(`❌ [IPC] ${windowName} is NULL - cannot send message!`);
+    return { success: false, error: `${windowName} not initialized` };
   }
-  if (mainWindow.isDestroyed()) {
-    console.error("❌ [IPC] Main window is DESTROYED - cannot send message!");
-    return { success: false, error: "Main window destroyed" };
+  if (targetWindow.isDestroyed()) {
+    console.error(`❌ [IPC] ${windowName} is DESTROYED - cannot send message!`);
+    return { success: false, error: `${windowName} destroyed` };
   }
-  console.log("✅ [IPC] Main window exists and is not destroyed");
-  console.log("   isLoading:", mainWindow.webContents.isLoading());
-  console.log("   URL:", mainWindow.webContents.getURL());
-  console.log("📤 [IPC] Sending hologram:update to main window...");
-  mainWindow.webContents.send("hologram:update", hologramState);
+  console.log(`✅ [IPC] ${windowName} exists and is not destroyed`);
+  console.log("   isLoading:", targetWindow.webContents.isLoading());
+  console.log("   URL:", targetWindow.webContents.getURL());
+  console.log(`📤 [IPC] Sending hologram:update to ${windowName}...`);
+  targetWindow.webContents.send("hologram:update", hologramState);
   console.log("✅ [IPC] Message sent successfully");
   return { success: true };
 });
@@ -1617,10 +1840,11 @@ ipcMain.handle("hologram:show-logo", async () => {
     mode: "logo"
   };
   console.log("💾 Hologram state stored:", hologramState);
-  if (!mainWindow) {
-    return { success: false, error: "Main window not initialized" };
+  const targetWindow = getHologramTargetWindow();
+  if (!targetWindow) {
+    return { success: false, error: "Target window not initialized" };
   }
-  mainWindow.webContents.send("hologram:update", hologramState);
+  targetWindow.webContents.send("hologram:update", hologramState);
   return { success: true };
 });
 ipcMain.handle("hologram:get-state", async () => {

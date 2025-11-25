@@ -36,16 +36,43 @@ export class CameraController extends EventEmitter {
   private cameraProcess: ChildProcess | null = null;
   private isConnected: boolean = false;
   private cameraInfo: CameraInfo | null = null;
+  private liveViewActive: boolean = false;
+  private liveViewInterval: NodeJS.Timeout | null = null;
+  private previewPath: string;
 
   constructor(config: CameraConfig = {}) {
     super();
     this.mockMode = config.mockMode ?? process.env.MOCK_CAMERA === 'true';
     this.useWebcam = config.useWebcam ?? process.env.USE_WEBCAM === 'true';
     this.captureDir = config.captureDir ?? path.join(process.cwd(), 'captures');
+    this.previewPath = path.join(this.captureDir, 'live_preview.jpg');
 
     // Ensure capture directory exists
     if (!fs.existsSync(this.captureDir)) {
       fs.mkdirSync(this.captureDir, { recursive: true });
+    }
+  }
+
+  /**
+   * Kill MacOS PTPCamera service that blocks gphoto2
+   */
+  private async killPTPCameraService(): Promise<void> {
+    try {
+      // Kill PTPCamera multiple times to ensure it's dead
+      for (let i = 0; i < 3; i++) {
+        try {
+          await this.executeCommand('killall', ['-9', 'PTPCamera']);
+        } catch {
+          // Ignore errors - process might already be dead
+        }
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+      console.log('🔧 Killed PTPCamera service to allow gphoto2 access');
+      // Wait longer for the process to fully terminate and prevent auto-restart
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    } catch (error) {
+      // Process might not be running, which is fine
+      console.log('ℹ️ PTPCamera service not running or already killed');
     }
   }
 
@@ -62,6 +89,9 @@ export class CameraController extends EventEmitter {
     }
 
     try {
+      // Kill MacOS PTPCamera service before attempting to use gphoto2
+      await this.killPTPCameraService();
+
       // Try to detect camera using gphoto2
       const detectResult = await this.executeGPhoto2Command(['--auto-detect']);
 
@@ -127,6 +157,9 @@ export class CameraController extends EventEmitter {
     }
 
     try {
+      // Kill MacOS PTPCamera service before capturing
+      await this.killPTPCameraService();
+
       const timestamp = Date.now();
       const filename = `capture_${timestamp}.jpg`;
       const outputPath = path.join(this.captureDir, filename);
@@ -171,6 +204,113 @@ export class CameraController extends EventEmitter {
       connected: this.isConnected,
       info: this.cameraInfo,
     };
+  }
+
+  /**
+   * Start live view streaming (webcam-like)
+   * Continuously captures preview frames for real-time display
+   */
+  async startLiveView(fps: number = 10): Promise<{ success: boolean; error?: string }> {
+    if (!this.isConnected && !this.mockMode && !this.useWebcam) {
+      return {
+        success: false,
+        error: 'Camera not connected',
+      };
+    }
+
+    if (this.liveViewActive) {
+      return {
+        success: false,
+        error: 'Live view already active',
+      };
+    }
+
+    if (this.mockMode) {
+      return this.mockStartLiveView(fps);
+    }
+
+    if (this.useWebcam) {
+      return this.webcamStartLiveView();
+    }
+
+    try {
+      // Kill MacOS PTPCamera service before starting live view
+      await this.killPTPCameraService();
+
+      this.liveViewActive = true;
+      const intervalMs = 1000 / fps;
+
+      // Capture first frame immediately
+      await this.captureLiveViewFrame();
+
+      // Set up continuous capture
+      this.liveViewInterval = setInterval(async () => {
+        try {
+          await this.captureLiveViewFrame();
+        } catch (error) {
+          console.error('Live view frame capture error:', error);
+        }
+      }, intervalMs);
+
+      this.emit('liveview-started');
+      console.log(`📹 Live view started at ${fps} fps`);
+
+      return { success: true };
+    } catch (error) {
+      this.liveViewActive = false;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('❌ Live view start failed:', errorMessage);
+
+      return {
+        success: false,
+        error: errorMessage,
+      };
+    }
+  }
+
+  /**
+   * Stop live view streaming
+   */
+  async stopLiveView(): Promise<void> {
+    if (this.liveViewInterval) {
+      clearInterval(this.liveViewInterval);
+      this.liveViewInterval = null;
+    }
+
+    this.liveViewActive = false;
+    this.emit('liveview-stopped');
+    console.log('📹 Live view stopped');
+  }
+
+  /**
+   * Get current live view frame path
+   */
+  getLiveViewFramePath(): string {
+    return this.previewPath;
+  }
+
+  /**
+   * Check if live view is active
+   */
+  isLiveViewActive(): boolean {
+    return this.liveViewActive;
+  }
+
+  /**
+   * Capture a single live view frame
+   */
+  private async captureLiveViewFrame(): Promise<void> {
+    await this.executeGPhoto2Command([
+      '--capture-preview',
+      '--filename', this.previewPath,
+      '--force-overwrite',
+    ]);
+
+    // Emit event with frame data
+    this.emit('liveview-frame', {
+      path: this.previewPath,
+      timestamp: Date.now(),
+    });
   }
 
   /**
@@ -264,6 +404,30 @@ export class CameraController extends EventEmitter {
   }
 
   /**
+   * Mock mode: Start live view
+   */
+  private async mockStartLiveView(fps: number): Promise<{ success: boolean }> {
+    this.liveViewActive = true;
+    const intervalMs = 1000 / fps;
+
+    // Simulate live view frames
+    this.liveViewInterval = setInterval(() => {
+      const mockFrame = `Mock live view frame at ${new Date().toISOString()}`;
+      fs.writeFileSync(this.previewPath, mockFrame);
+
+      this.emit('liveview-frame', {
+        path: this.previewPath,
+        timestamp: Date.now(),
+      });
+    }, intervalMs);
+
+    this.emit('liveview-started');
+    console.log(`✅ Mock live view started at ${fps} fps`);
+
+    return { success: true };
+  }
+
+  /**
    * Webcam mode: Connect to built-in webcam
    */
   private async webcamConnect(): Promise<{ success: boolean; error?: string }> {
@@ -350,6 +514,45 @@ export class CameraController extends EventEmitter {
       return {
         success: false,
         error: errorMessage,
+      };
+    }
+  }
+
+  /**
+   * Webcam mode: Start live view
+   */
+  private async webcamStartLiveView(): Promise<{ success: boolean; error?: string }> {
+    try {
+      // Check if imagesnap is available
+      await this.executeCommand('which', ['imagesnap']);
+
+      this.liveViewActive = true;
+
+      // Capture frames continuously using imagesnap
+      this.liveViewInterval = setInterval(async () => {
+        try {
+          await this.executeCommand('imagesnap', ['-q', this.previewPath]);
+
+          this.emit('liveview-frame', {
+            path: this.previewPath,
+            timestamp: Date.now(),
+          });
+        } catch (error) {
+          console.error('Webcam live view frame error:', error);
+        }
+      }, 100); // ~10 fps
+
+      this.emit('liveview-started');
+      console.log('📹 Webcam live view started');
+
+      return { success: true };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('❌ Webcam live view start failed:', errorMessage);
+
+      return {
+        success: false,
+        error: `${errorMessage}\n\nInstall imagesnap: brew install imagesnap`,
       };
     }
   }

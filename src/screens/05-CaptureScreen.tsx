@@ -64,32 +64,67 @@ export function CaptureScreen() {
   const recordedChunksRef = useRef<Blob[]>([]);
   const shutterSoundRef = useRef<HTMLAudioElement | null>(null);
 
-  // Initialize camera stream
+  // Initialize Canon webcam live view
   useEffect(() => {
-    console.log('📷 [CaptureScreen] Component mounted - Initializing camera...');
+    console.log('📷 [CaptureScreen] Component mounted - Initializing Canon webcam...');
 
     const startCamera = async () => {
       try {
-        console.log('🎥 [CaptureScreen] Requesting camera access (1080x1920, facingMode: user)...');
+        console.log('🎥 [CaptureScreen] Starting Canon webcam...');
+
+        // Enumerate all video devices to find Canon camera
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+        console.log('📹 Available cameras:');
+        videoDevices.forEach((device, index) => {
+          console.log(`  ${index + 1}. ${device.label || 'Unknown Camera'} (${device.deviceId})`);
+        });
+
+        // Find Canon EOS webcam (look for "Canon" in the label)
+        const canonCamera = videoDevices.find(device =>
+          device.label.toLowerCase().includes('canon') ||
+          device.label.toLowerCase().includes('eos')
+        );
+
+        let deviceId: string | undefined;
+        if (canonCamera) {
+          deviceId = canonCamera.deviceId;
+          console.log(`✅ Found Canon camera: ${canonCamera.label}`);
+        } else {
+          console.warn('⚠️ Canon camera not found, using default camera');
+          // Use the last camera in the list (often external cameras are listed last)
+          deviceId = videoDevices[videoDevices.length - 1]?.deviceId;
+        }
 
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            width: { ideal: 1080 },
-            height: { ideal: 1920 },
-            facingMode: 'user'
-          },
-          audio: false
+            deviceId: deviceId ? { exact: deviceId } : undefined,
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          }
         });
 
-        console.log('✅ [CaptureScreen] Camera access granted!');
+        console.log('✅ [CaptureScreen] Canon webcam started!');
+
+        // Store stream reference
         streamRef.current = stream;
 
+        // Set video element source
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          console.log('📺 [CaptureScreen] Stream assigned to video element');
+          // Wait for video to load before playing
+          videoRef.current.onloadedmetadata = () => {
+            videoRef.current?.play().catch(err => {
+              console.warn('Video play error (can be ignored):', err);
+            });
+          };
         }
+
+        return stream;
+
       } catch (error) {
-        console.error('❌ [CaptureScreen] Failed to access camera:', error);
+        console.error('❌ [CaptureScreen] Failed to access Canon webcam:', error);
       }
     };
 
@@ -98,9 +133,9 @@ export function CaptureScreen() {
     // Load shutter sound
     shutterSoundRef.current = new Audio('/sounds/camera-shutter.mp3');
 
-    // Cleanup: Stop camera when component unmounts
+    // Cleanup: Stop Canon webcam when component unmounts
     return () => {
-      console.log('🛑 [CaptureScreen] Component unmounting - Stopping camera...');
+      console.log('🛑 [CaptureScreen] Component unmounting - Stopping Canon webcam...');
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
@@ -314,9 +349,9 @@ export function CaptureScreen() {
         setCountdown(4); // 4 seconds until first photo
         setPhotoNumber(1);
         startVideoRecording();
-      } else if (elapsedTime > 1 && elapsedTime <= 15) {
-        // Recording phase (1-15s = 15 seconds of recording)
-        const recordingElapsed = elapsedTime; // Time since recording started: 1-15
+      } else if (elapsedTime > 1 && elapsedTime <= 16) {
+        // Recording phase (1-16s = 16 seconds of recording for 1s buffer after last frame)
+        const recordingElapsed = elapsedTime; // Time since recording started: 1-16
         setRecordingTime(recordingElapsed);
 
         // Calculate countdown for next photo
@@ -326,11 +361,14 @@ export function CaptureScreen() {
           nextPhotoTime = 5;
         } else if (recordingElapsed < 10) {
           nextPhotoTime = 10;
-        } else {
+        } else if (recordingElapsed < 15) {
           nextPhotoTime = 15;
+        } else {
+          // After last photo, no countdown
+          nextPhotoTime = recordingElapsed + 1;
         }
         const timeUntilNextPhoto = nextPhotoTime - recordingElapsed;
-        setCountdown(timeUntilNextPhoto);
+        setCountdown(timeUntilNextPhoto > 0 ? timeUntilNextPhoto : 0);
 
         // Play photo effects at exactly 5s, 10s, 15s of recording time
         if (recordingElapsed === 5 || recordingElapsed === 10 || recordingElapsed === 15) {
@@ -341,8 +379,8 @@ export function CaptureScreen() {
           if (recordingElapsed === 5) setPhotoNumber(2);
           if (recordingElapsed === 10) setPhotoNumber(3);
         }
-      } else if (elapsedTime === 16) {
-        // Stop recording and navigate (after 15s of recording + 1s buffer)
+      } else if (elapsedTime === 17) {
+        // Stop recording and navigate (after 16s of recording + 1s buffer)
         console.log('🏁 [CaptureScreen] Recording complete, stopping...');
         stopVideoRecording();
         clearInterval(mainTimer);
@@ -367,7 +405,7 @@ export function CaptureScreen() {
       animate="visible"
       exit="exit"
     >
-      {/* Live Camera Feed - Full Screen Background */}
+      {/* Canon Webcam Live Preview - Full Screen Background */}
       <video
         ref={videoRef}
         autoPlay

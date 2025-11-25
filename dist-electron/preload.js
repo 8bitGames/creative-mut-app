@@ -2,7 +2,12 @@ const { contextBridge, ipcRenderer } = require("electron");
 const cameraAPI = {
   startPreview: () => ipcRenderer.invoke("camera:start-preview"),
   stopPreview: () => ipcRenderer.invoke("camera:stop-preview"),
-  capture: () => ipcRenderer.invoke("camera:capture")
+  capture: () => ipcRenderer.invoke("camera:capture"),
+  onPreviewFrame: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on("camera:preview-frame", listener);
+    return () => ipcRenderer.removeListener("camera:preview-frame", listener);
+  }
 };
 const printerAPI = {
   getStatus: () => ipcRenderer.invoke("printer:get-status"),

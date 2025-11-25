@@ -82,8 +82,9 @@ function createHologramWindow() {
     width: hologramWidth,
     height: hologramHeight,
     fullscreen: false, // Don't use fullscreen, maintain 9:16 aspect ratio
-    frame: !isDevelopment, // Show frame in development for easier debugging
+    frame: true, // Always show frame so we can see the window and prevent accidental closing
     show: true,
+    closable: !isDevelopment, // In development, prevent closing the hologram window
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -104,8 +105,26 @@ function createHologramWindow() {
     });
   }
 
+  // Prevent accidental closing - warn user
+  hologramWindow.on('close', (event) => {
+    console.warn('⚠️ [Main] Hologram window close event triggered!');
+    console.warn('   Preventing close to maintain dual-monitor setup');
+    event.preventDefault(); // Prevent closing
+    console.log('   Window minimized instead of closed');
+    hologramWindow?.minimize();
+  });
+
   hologramWindow.on('closed', () => {
+    console.error('❌ [Main] Hologram window was forcefully closed!');
     hologramWindow = null;
+    // Auto-recreate after 1 second
+    console.log('🔄 [Main] Will attempt to recreate hologram window in 1 second...');
+    setTimeout(() => {
+      if (!hologramWindow) {
+        console.log('🔄 [Main] Recreating hologram window...');
+        createHologramWindow();
+      }
+    }, 1000);
   });
 
   console.log(`✅ Hologram window created on display ${displays.length > 1 ? 2 : 1}`);
@@ -130,12 +149,11 @@ app.whenReady().then(async () => {
   });
 
   // Initialize camera controller
-  // Modes: mockMode (default), useWebcam (for MacBook), or real DSLR
-  const useMock = process.env.MOCK_CAMERA !== 'false';
+  // Modes: DSLR (default) or MacBook webcam
   const useWebcam = process.env.USE_WEBCAM === 'true';
 
   cameraController = new CameraController({
-    mockMode: useMock && !useWebcam,
+    mockMode: false, // No mock mode
     useWebcam: useWebcam
   });
   const cameraResult = await cameraController.connect();
@@ -200,25 +218,70 @@ app.on('window-all-closed', () => {
 
 // Camera operations
 ipcMain.handle('camera:start-preview', async () => {
-  console.log('📷 Camera preview requested');
+  console.log('📷 Camera live view requested');
 
   if (!cameraController) {
     return { success: false, error: 'Camera not initialized' };
   }
 
-  // TODO: Implement live preview
-  // For now, just verify camera is connected
-  const status = cameraController.getStatus();
+  try {
+    // Start live view at 3 fps (good for preview, won't overwhelm camera)
+    const result = await cameraController.startLiveView(3);
 
-  return {
-    success: status.connected,
-    error: status.connected ? undefined : 'Camera not connected',
-  };
+    // Set up frame event forwarding
+    cameraController.on('liveview-frame', (data) => {
+      mainWindow?.webContents.send('camera:preview-frame', {
+        framePath: data.path,
+        timestamp: data.timestamp,
+      });
+    });
+
+    return result;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    return {
+      success: false,
+      error: errorMessage,
+    };
+  }
 });
 
 ipcMain.handle('camera:stop-preview', async () => {
-  console.log('📷 Camera preview stopped');
-  return { success: true };
+  console.log('📷 Camera live view stopped');
+
+  if (!cameraController) {
+    return { success: false, error: 'Camera not initialized' };
+  }
+
+  try {
+    await cameraController.stopLiveView();
+    return { success: true };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    };
+  }
+});
+
+ipcMain.handle('camera:get-preview-frame', async () => {
+  if (!cameraController) {
+    return { success: false, error: 'Camera not initialized' };
+  }
+
+  if (!cameraController.isLiveViewActive()) {
+    return { success: false, error: 'Live view not active' };
+  }
+
+  try {
+    const framePath = cameraController.getLiveViewFramePath();
+    return { success: true, framePath };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    };
+  }
 });
 
 ipcMain.handle('camera:capture', async () => {

@@ -6,6 +6,11 @@ const cameraAPI = {
   startPreview: () => ipcRenderer.invoke('camera:start-preview'),
   stopPreview: () => ipcRenderer.invoke('camera:stop-preview'),
   capture: () => ipcRenderer.invoke('camera:capture'),
+  onPreviewFrame: (callback: (data: { framePath: string; timestamp: number }) => void) => {
+    const listener = (_event: IpcRendererEvent, data: { framePath: string; timestamp: number }) => callback(data);
+    ipcRenderer.on('camera:preview-frame', listener);
+    return () => ipcRenderer.removeListener('camera:preview-frame', listener);
+  },
 };
 
 // Printer API

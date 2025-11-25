@@ -53,9 +53,8 @@ export function ShootingGuideScreen() {
   const selectedFrame = useSessionStore((state) => state.selectedFrame);
   const [countdown, setCountdown] = useState<number | null>(10);
   const [showInstructions, setShowInstructions] = useState(true);
-  const [videoReady, setVideoReady] = useState(false); // Track when video is ready
+  const [videoReady, setVideoReady] = useState(false); // Track when webcam preview is ready
   const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
 
   // Monitor 2 stays on logo - ensure it's set to logo mode
   useEffect(() => {
@@ -76,41 +75,77 @@ export function ShootingGuideScreen() {
     };
   }, []);
 
-  // Initialize camera for Monitor 1
+  // Initialize Canon webcam for Monitor 1
   useEffect(() => {
-    console.log('📷 [ShootingGuideScreen] Initializing camera for Monitor 1...');
+    console.log('📷 [ShootingGuideScreen] Initializing Canon webcam for Monitor 1...');
 
     const startCamera = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: 1080 },
-            height: { ideal: 1920 },
-            facingMode: 'user'
-          },
-          audio: false
+        // Enumerate all video devices to find Canon camera
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+        console.log('📹 Available cameras:');
+        videoDevices.forEach((device, index) => {
+          console.log(`  ${index + 1}. ${device.label || 'Unknown Camera'} (${device.deviceId})`);
         });
 
-        console.log('✅ [ShootingGuideScreen] Camera access granted!');
-        streamRef.current = stream;
+        // Find Canon EOS webcam (look for "Canon" in the label)
+        const canonCamera = videoDevices.find(device =>
+          device.label.toLowerCase().includes('canon') ||
+          device.label.toLowerCase().includes('eos')
+        );
 
+        let deviceId: string | undefined;
+        if (canonCamera) {
+          deviceId = canonCamera.deviceId;
+          console.log(`✅ Found Canon camera: ${canonCamera.label}`);
+        } else {
+          console.warn('⚠️ Canon camera not found, using default camera');
+          // Use the last camera in the list (often external cameras are listed last)
+          deviceId = videoDevices[videoDevices.length - 1]?.deviceId;
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            deviceId: deviceId ? { exact: deviceId } : undefined,
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          }
+        });
+
+        console.log('✅ [ShootingGuideScreen] Canon webcam started!');
+
+        // Store stream reference for cleanup
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          console.log('📺 [ShootingGuideScreen] Camera stream assigned to video element');
+          // Wait for video to load before playing
+          videoRef.current.onloadedmetadata = () => {
+            videoRef.current?.play().catch(err => {
+              console.warn('Video play error (can be ignored):', err);
+            });
+          };
         }
+
+        setVideoReady(true);
+        return stream;
+
       } catch (error) {
-        console.error('❌ [ShootingGuideScreen] Failed to access camera:', error);
+        console.error('❌ [ShootingGuideScreen] Failed to access Canon webcam:', error);
         // Still show UI even if camera fails (for testing)
         setVideoReady(true);
       }
     };
 
-    startCamera();
+    let cameraStream: MediaStream | undefined;
+    startCamera().then((stream) => {
+      if (stream) cameraStream = stream;
+    });
 
     return () => {
-      console.log('🛑 [ShootingGuideScreen] Stopping camera...');
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
+      console.log('🛑 [ShootingGuideScreen] Stopping Canon webcam...');
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
       }
     };
   }, []);
@@ -158,14 +193,12 @@ export function ShootingGuideScreen() {
       animate="visible"
       exit="exit"
     >
-      {/* Live Camera Feed - Full Screen Background */}
+      {/* Canon Webcam Live Preview - Full Screen Background */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted
-        onLoadedData={handleVideoReady}
-        onCanPlay={handleVideoReady}
         className="absolute inset-0 w-full h-full object-cover"
         style={{
           transform: 'scaleX(-1)', // Mirror the video
