@@ -51,6 +51,8 @@ const countdownVariants = {
 export function ShootingGuideScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
   const selectedFrame = useSessionStore((state) => state.selectedFrame);
+  const cameraStream = useAppStore((state) => state.cameraStream); // Get global camera stream
+  const setCameraStream = useAppStore((state) => state.setCameraStream);
   const [countdown, setCountdown] = useState<number | null>(10);
   const [showInstructions, setShowInstructions] = useState(true);
   const [videoReady, setVideoReady] = useState(false); // Track when webcam preview is ready
@@ -75,11 +77,32 @@ export function ShootingGuideScreen() {
     };
   }, []);
 
-  // Initialize Canon webcam for Monitor 1
+  // Use existing global camera stream OR start a new one (fallback)
   useEffect(() => {
-    console.log('📷 [ShootingGuideScreen] Initializing Canon webcam for Monitor 1...');
+    const initializeCamera = async () => {
+      // Check if global camera stream already exists
+      if (cameraStream) {
+        console.log('⚡ [ShootingGuideScreen] Using EXISTING global camera stream (instant startup!)');
+        console.log('   ✓ Camera was already running in background from StartScreen');
 
-    const startCamera = async () => {
+        // Connect existing stream to video element
+        if (videoRef.current) {
+          videoRef.current.srcObject = cameraStream;
+          videoRef.current.onloadedmetadata = () => {
+            videoRef.current?.play().catch(err => {
+              console.warn('Video play error (can be ignored):', err);
+            });
+          };
+        }
+
+        setVideoReady(true);
+        console.log('✅ [ShootingGuideScreen] Camera feed connected INSTANTLY!');
+        return;
+      }
+
+      // Fallback: Start new camera stream if global one doesn't exist
+      console.log('📷 [ShootingGuideScreen] No global stream found, starting Canon webcam...');
+
       try {
         // Enumerate all video devices to find Canon camera
         const devices = await navigator.mediaDevices.enumerateDevices();
@@ -102,7 +125,6 @@ export function ShootingGuideScreen() {
           console.log(`✅ Found Canon camera: ${canonCamera.label}`);
         } else {
           console.warn('⚠️ Canon camera not found, using default camera');
-          // Use the last camera in the list (often external cameras are listed last)
           deviceId = videoDevices[videoDevices.length - 1]?.deviceId;
         }
 
@@ -116,10 +138,12 @@ export function ShootingGuideScreen() {
 
         console.log('✅ [ShootingGuideScreen] Canon webcam started!');
 
-        // Store stream reference for cleanup
+        // Store in global store for future use
+        setCameraStream(stream);
+
+        // Connect stream to video element
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          // Wait for video to load before playing
           videoRef.current.onloadedmetadata = () => {
             videoRef.current?.play().catch(err => {
               console.warn('Video play error (can be ignored):', err);
@@ -128,27 +152,17 @@ export function ShootingGuideScreen() {
         }
 
         setVideoReady(true);
-        return stream;
 
       } catch (error) {
         console.error('❌ [ShootingGuideScreen] Failed to access Canon webcam:', error);
-        // Still show UI even if camera fails (for testing)
         setVideoReady(true);
       }
     };
 
-    let cameraStream: MediaStream | undefined;
-    startCamera().then((stream) => {
-      if (stream) cameraStream = stream;
-    });
+    initializeCamera();
 
-    return () => {
-      console.log('🛑 [ShootingGuideScreen] Stopping Canon webcam...');
-      if (cameraStream) {
-        cameraStream.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, []);
+    // NO CLEANUP - stream persists in global store!
+  }, [cameraStream, setCameraStream]);
 
   // Handle video ready event
   const handleVideoReady = () => {

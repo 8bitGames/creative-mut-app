@@ -45,10 +45,17 @@ const buttonVariants = {
 
 export function StartScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
-  const backgroundStreamRef = useRef<MediaStream | null>(null);
+  const setCameraStream = useAppStore((state) => state.setCameraStream);
+  const cameraStream = useAppStore((state) => state.cameraStream);
 
-  // Start Canon webcam IMMEDIATELY when user clicks Start - keep it running in background
+  // Start Canon webcam IMMEDIATELY when user clicks Start - keep it running GLOBALLY across all screens
   useEffect(() => {
+    // Only start camera if not already running
+    if (cameraStream) {
+      console.log('📹 [StartScreen] Camera already running from previous session, skipping initialization');
+      return;
+    }
+
     console.log('📷 [StartScreen] Starting Canon webcam IMMEDIATELY in background...');
 
     const startBackgroundCamera = async () => {
@@ -84,12 +91,13 @@ export function StartScreen() {
           }
         });
 
-        // Store stream reference to keep it alive
-        backgroundStreamRef.current = stream;
+        // Store stream in GLOBAL store (persists across screens!)
+        setCameraStream(stream);
 
-        console.log('✅ [StartScreen] Camera is now RUNNING in background (invisible)');
-        console.log('   ✓ Stream will remain active for instant ShootingGuideScreen startup');
-        console.log('   ✓ No preview shown - camera warming up in background');
+        console.log('✅ [StartScreen] Camera is now RUNNING in GLOBAL background stream');
+        console.log('   ✓ Stream will persist across FrameSelectionScreen → ShootingGuideScreen');
+        console.log('   ✓ No preview shown - camera warming up continuously');
+        console.log('   ✓ Will only stop when app resets to idle');
 
       } catch (error) {
         console.warn('⚠️ [StartScreen] Camera background startup failed (non-critical):', error);
@@ -99,15 +107,8 @@ export function StartScreen() {
     // Start camera immediately (no delay)
     startBackgroundCamera();
 
-    // Cleanup: Stop the background stream when leaving this screen
-    return () => {
-      if (backgroundStreamRef.current) {
-        console.log('🛑 [StartScreen] Stopping background camera stream');
-        backgroundStreamRef.current.getTracks().forEach(track => track.stop());
-        backgroundStreamRef.current = null;
-      }
-    };
-  }, []);
+    // NO CLEANUP - stream persists in global store!
+  }, [cameraStream, setCameraStream]);
 
   return (
     <motion.div
