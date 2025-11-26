@@ -1,5 +1,5 @@
 // src/screens/01-StartScreen.tsx
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
 import { Button } from '@/components/ui/button';
@@ -44,16 +44,25 @@ const buttonVariants = {
 };
 
 export function StartScreen() {
+  console.log('🏁 [StartScreen] Component mounted/rendered');
+
   const setScreen = useAppStore((state) => state.setScreen);
   const setCameraStream = useAppStore((state) => state.setCameraStream);
   const cameraStream = useAppStore((state) => state.cameraStream);
 
   // Start Canon webcam IMMEDIATELY when user clicks Start - keep it running GLOBALLY across all screens
   useEffect(() => {
-    // Only start camera if not already running
+    console.log('🎬 [StartScreen] Camera initialization useEffect triggered');
+
+    // Only start camera if not already running AND active
     if (cameraStream) {
-      console.log('📹 [StartScreen] Camera already running from previous session, skipping initialization');
-      return;
+      if (cameraStream.active) {
+        console.log('📹 [StartScreen] Camera already running from previous session, skipping initialization');
+        console.log(`   Active tracks: ${cameraStream.getVideoTracks().length}`);
+        return;
+      } else {
+        console.warn('⚠️ [StartScreen] Camera stream exists but is inactive, will reinitialize');
+      }
     }
 
     console.log('📷 [StartScreen] Starting Canon webcam IMMEDIATELY in background...');
@@ -75,17 +84,24 @@ export function StartScreen() {
           device.label.toLowerCase().includes('eos')
         );
 
+        let deviceId: string | undefined;
         if (canonCamera) {
+          deviceId = canonCamera.deviceId;
           console.log(`✅ [StartScreen] Canon camera found: ${canonCamera.label}`);
           console.log('   Starting camera in background (no preview)...');
         } else {
-          console.warn('⚠️ [StartScreen] Canon camera not found, using default camera');
+          // Fallback to built-in MacBook camera (usually first device)
+          console.warn('⚠️ [StartScreen] Canon camera not found, using MacBook camera (first device)');
+          deviceId = videoDevices[0]?.deviceId; // Use first device (built-in camera)
+          if (videoDevices[0]) {
+            console.log(`   📱 Using: ${videoDevices[0].label || 'Built-in Camera'}`);
+          }
         }
 
         // Start camera stream and KEEP IT RUNNING in background
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            deviceId: canonCamera ? { exact: canonCamera.deviceId } : undefined,
+            deviceId: deviceId ? { exact: deviceId } : undefined,
             width: { ideal: 1920 },
             height: { ideal: 1080 }
           }

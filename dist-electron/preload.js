@@ -1,78 +1,65 @@
-const { contextBridge, ipcRenderer } = require("electron");
-const cameraAPI = {
-  startPreview: () => ipcRenderer.invoke("camera:start-preview"),
-  stopPreview: () => ipcRenderer.invoke("camera:stop-preview"),
-  capture: () => ipcRenderer.invoke("camera:capture"),
-  onPreviewFrame: (callback) => {
-    const listener = (_event, data) => callback(data);
-    ipcRenderer.on("camera:preview-frame", listener);
-    return () => ipcRenderer.removeListener("camera:preview-frame", listener);
+const { contextBridge: s, ipcRenderer: o } = require("electron"), a = {
+  startPreview: () => o.invoke("camera:start-preview"),
+  stopPreview: () => o.invoke("camera:stop-preview"),
+  capture: () => o.invoke("camera:capture"),
+  onPreviewFrame: (e) => {
+    const t = (n, r) => e(r);
+    return o.on("camera:preview-frame", t), () => o.removeListener("camera:preview-frame", t);
   }
-};
-const printerAPI = {
-  getStatus: () => ipcRenderer.invoke("printer:get-status"),
-  print: (options) => ipcRenderer.invoke("printer:print", options)
-};
-const imageAPI = {
-  saveBlob: (blobData, filename) => ipcRenderer.invoke("image:save-blob", blobData, filename)
-};
-const videoAPI = {
-  saveBuffer: (byteArray, filename) => ipcRenderer.invoke("video:save-buffer", byteArray, filename),
-  process: (params) => ipcRenderer.invoke("video:process", params),
-  processFromImages: (params) => ipcRenderer.invoke("video:process-from-images", params),
-  extractFrames: (videoPath, timestamps) => ipcRenderer.invoke("video:extract-frames", videoPath, timestamps),
-  cancel: (taskId) => ipcRenderer.invoke("video:cancel", taskId),
-  onProgress: (callback) => {
-    const listener = (_event, data) => callback(data);
-    ipcRenderer.on("video:progress", listener);
-    return () => ipcRenderer.removeListener("video:progress", listener);
+}, i = {
+  getStatus: () => o.invoke("printer:get-status"),
+  print: (e) => o.invoke("printer:print", e)
+}, v = {
+  saveBlob: (e, t) => o.invoke("image:save-blob", e, t)
+}, c = {
+  saveBuffer: (e, t) => o.invoke("video:save-buffer", e, t),
+  process: (e) => o.invoke("video:process", e),
+  processFromImages: (e) => o.invoke("video:process-from-images", e),
+  extractFrames: (e, t) => o.invoke("video:extract-frames", e, t),
+  cancel: (e) => o.invoke("video:cancel", e),
+  onProgress: (e) => {
+    const t = (n, r) => e(r);
+    return o.on("video:progress", t), () => o.removeListener("video:progress", t);
   },
-  onComplete: (callback) => {
-    const listener = (_event, data) => callback(data);
-    ipcRenderer.on("video:complete", listener);
-    return () => ipcRenderer.removeListener("video:complete", listener);
+  onComplete: (e) => {
+    const t = (n, r) => e(r);
+    return o.on("video:complete", t), () => o.removeListener("video:complete", t);
   }
-};
-const paymentAPI = {
-  process: (params) => ipcRenderer.invoke("payment:process", params),
-  cancel: (paymentId) => ipcRenderer.invoke("payment:cancel", paymentId),
-  getStatus: (paymentId) => ipcRenderer.invoke("payment:get-status", paymentId),
-  onStatus: (callback) => {
-    const listener = (_event, data) => callback(data);
-    ipcRenderer.on("payment:status", listener);
-    return () => ipcRenderer.removeListener("payment:status", listener);
+}, m = {
+  process: (e) => o.invoke("payment:process", e),
+  cancel: (e) => o.invoke("payment:cancel", e),
+  getStatus: (e) => o.invoke("payment:get-status", e),
+  onStatus: (e) => {
+    const t = (n, r) => e(r);
+    return o.on("payment:status", t), () => o.removeListener("payment:status", t);
   },
-  onComplete: (callback) => {
-    const listener = (_event, data) => callback(data);
-    ipcRenderer.on("payment:complete", listener);
-    return () => ipcRenderer.removeListener("payment:complete", listener);
+  onComplete: (e) => {
+    const t = (n, r) => e(r);
+    return o.on("payment:complete", t), () => o.removeListener("payment:complete", t);
   }
-};
-const fileAPI = {
-  readAsDataUrl: (filePath) => ipcRenderer.invoke("file:read-as-data-url", filePath),
-  delete: (filePath) => ipcRenderer.invoke("file:delete", filePath)
-};
-const hologramAPI = {
-  setMode: (mode, data) => ipcRenderer.invoke("hologram:set-mode", mode, data),
-  showQR: (qrCodePath, videoPath) => ipcRenderer.invoke("hologram:show-qr", qrCodePath, videoPath),
-  showLogo: () => ipcRenderer.invoke("hologram:show-logo"),
-  getState: () => ipcRenderer.invoke("hologram:get-state")
-};
-const ipcRendererAPI = {
-  on: (channel, callback) => {
-    ipcRenderer.on(channel, (_event, ...args) => callback(...args));
+}, p = {
+  readAsDataUrl: (e) => o.invoke("file:read-as-data-url", e),
+  delete: (e) => o.invoke("file:delete", e)
+}, l = {
+  setMode: (e, t) => o.invoke("hologram:set-mode", e, t),
+  showQR: (e, t) => o.invoke("hologram:show-qr", e, t),
+  showLogo: () => o.invoke("hologram:show-logo"),
+  getState: () => o.invoke("hologram:get-state")
+}, d = {
+  on: (e, t) => {
+    o.on(e, (n, ...r) => t(...r));
   },
-  removeListener: (channel, callback) => {
-    ipcRenderer.removeListener(channel, callback);
+  removeListener: (e, t) => {
+    o.removeListener(e, t);
   }
 };
-contextBridge.exposeInMainWorld("electron", {
-  camera: cameraAPI,
-  printer: printerAPI,
-  image: imageAPI,
-  video: videoAPI,
-  payment: paymentAPI,
-  file: fileAPI,
-  hologram: hologramAPI,
-  ipcRenderer: ipcRendererAPI
+s.exposeInMainWorld("electron", {
+  camera: a,
+  printer: i,
+  image: v,
+  video: c,
+  payment: m,
+  file: p,
+  hologram: l,
+  ipcRenderer: d
 });

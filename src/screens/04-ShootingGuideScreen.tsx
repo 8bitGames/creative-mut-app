@@ -80,8 +80,8 @@ export function ShootingGuideScreen() {
   // Use existing global camera stream OR start a new one (fallback)
   useEffect(() => {
     const initializeCamera = async () => {
-      // Check if global camera stream already exists
-      if (cameraStream) {
+      // Check if global camera stream already exists AND is active
+      if (cameraStream && cameraStream.active) {
         console.log('⚡ [ShootingGuideScreen] Using EXISTING global camera stream (instant startup!)');
         console.log('   ✓ Camera was already running in background from StartScreen');
 
@@ -98,6 +98,12 @@ export function ShootingGuideScreen() {
         setVideoReady(true);
         console.log('✅ [ShootingGuideScreen] Camera feed connected INSTANTLY!');
         return;
+      }
+
+      // Stream exists but is inactive - clear it and start fresh
+      if (cameraStream && !cameraStream.active) {
+        console.warn('⚠️ [ShootingGuideScreen] Existing stream is inactive, clearing and starting fresh');
+        setCameraStream(null);
       }
 
       // Fallback: Start new camera stream if global one doesn't exist
@@ -124,8 +130,12 @@ export function ShootingGuideScreen() {
           deviceId = canonCamera.deviceId;
           console.log(`✅ Found Canon camera: ${canonCamera.label}`);
         } else {
-          console.warn('⚠️ Canon camera not found, using default camera');
-          deviceId = videoDevices[videoDevices.length - 1]?.deviceId;
+          // Fallback to built-in MacBook camera (usually first device)
+          console.warn('⚠️ Canon camera not found, using MacBook camera (first device)');
+          deviceId = videoDevices[0]?.deviceId; // Use first device (built-in camera)
+          if (videoDevices[0]) {
+            console.log(`   📱 Using: ${videoDevices[0].label || 'Built-in Camera'}`);
+          }
         }
 
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -163,12 +173,6 @@ export function ShootingGuideScreen() {
 
     // NO CLEANUP - stream persists in global store!
   }, [cameraStream, setCameraStream]);
-
-  // Handle video ready event
-  const handleVideoReady = () => {
-    console.log('✅ [ShootingGuideScreen] Video is ready to play');
-    setVideoReady(true);
-  };
 
   useEffect(() => {
     // Auto-start 10-second countdown

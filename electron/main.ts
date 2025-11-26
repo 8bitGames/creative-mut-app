@@ -2,10 +2,15 @@ import { app, BrowserWindow, ipcMain, screen } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { fileURLToPath } from 'url';
+// @ts-ignore - dotenv type resolution issue with package.json exports
+import { config as loadEnv } from 'dotenv';
 import { PythonBridge } from './python/bridge.js';
 import { CameraController } from './hardware/camera.js';
 import { PrinterController } from './hardware/printer.js';
 import { CardReaderController } from './hardware/card-reader.js';
+
+// Load environment variables from .env file
+loadEnv();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -151,6 +156,8 @@ app.whenReady().then(async () => {
   // Initialize camera controller
   // Modes: DSLR (default) or MacBook webcam
   const useWebcam = process.env.USE_WEBCAM === 'true';
+  console.log(`📷 Camera mode: ${useWebcam ? 'WEBCAM (MacBook/Canon EOS Webcam Utility)' : 'DSLR (gphoto2)'}`);
+  console.log(`   USE_WEBCAM env var: ${process.env.USE_WEBCAM}`);
 
   cameraController = new CameraController({
     mockMode: false, // No mock mode
