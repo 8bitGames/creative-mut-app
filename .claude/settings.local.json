@@ -55,7 +55,8 @@
       "Bash(npx electron-rebuild -f -w better-sqlite3)",
       "Bash(npx electron-rebuild)",
       "Bash(set \"ELECTRON_RUN_AS_NODE=\")",
-      "Bash(powershell -Command \"Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue; cd 'e:/Github/creative-mut-app'; npm run dev\":*)"
+      "Bash(powershell -Command \"Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue; cd 'e:/Github/creative-mut-app'; npm run dev\":*)",
+      "Bash(npm uninstall:*)"
     ]
   },
   "enabledMcpjsonServers": [

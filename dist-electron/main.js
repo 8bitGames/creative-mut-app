@@ -51,31 +51,41 @@ const fs__namespace$1 = /* @__PURE__ */ _interopNamespaceDefault(fs$1);
 const fs__namespace = /* @__PURE__ */ _interopNamespaceDefault(fs);
 const os__namespace = /* @__PURE__ */ _interopNamespaceDefault(os);
 class PythonBridge extends events.EventEmitter {
+  isProd;
   pythonPath;
+  pipelineExePath;
   pipelineScriptPath;
+  stitcherExePath;
   stitcherScriptPath;
   stitcherWorkingDir;
   pipelineWorkingDir;
   constructor() {
     super();
-    const isProd = electron.app.isPackaged;
-    if (isProd) {
-      this.pythonPath = path.join(process.resourcesPath, "python", "python.exe");
-      this.pipelineScriptPath = path.join(process.resourcesPath, "python", "pipeline.py");
-      this.stitcherScriptPath = path.join(process.resourcesPath, "python", "stitch_images.py");
+    this.isProd = electron.app.isPackaged;
+    if (this.isProd) {
+      this.pythonPath = "";
+      this.pipelineExePath = path.join(process.resourcesPath, "python", "pipeline.exe");
+      this.pipelineScriptPath = "";
+      this.stitcherExePath = path.join(process.resourcesPath, "python", "stitch_images.exe");
+      this.stitcherScriptPath = "";
       this.stitcherWorkingDir = path.join(process.resourcesPath, "python");
       this.pipelineWorkingDir = path.join(process.resourcesPath, "python");
+      console.log("🎬 [PythonBridge] Initialized (Production - Bundled EXE)");
+      console.log(`   Pipeline EXE: ${this.pipelineExePath}`);
+      console.log(`   Stitcher EXE: ${this.stitcherExePath}`);
     } else {
       this.pythonPath = process.platform === "win32" ? "python" : "python3";
+      this.pipelineExePath = "";
       this.pipelineScriptPath = path.join(electron.app.getAppPath(), "MUT-distribution", "pipeline.py");
+      this.stitcherExePath = "";
       this.stitcherScriptPath = path.join(electron.app.getAppPath(), "python", "stitch_images.py");
       this.stitcherWorkingDir = path.join(electron.app.getAppPath(), "python");
       this.pipelineWorkingDir = path.join(electron.app.getAppPath(), "MUT-distribution");
+      console.log("🐍 [PythonBridge] Initialized (Development - Python Scripts)");
+      console.log(`   Python: ${this.pythonPath}`);
+      console.log(`   Pipeline: ${this.pipelineScriptPath}`);
+      console.log(`   Stitcher: ${this.stitcherScriptPath}`);
     }
-    console.log("🐍 [PythonBridge] Initialized");
-    console.log(`   Python: ${this.pythonPath}`);
-    console.log(`   Pipeline: ${this.pipelineScriptPath}`);
-    console.log(`   Stitcher: ${this.stitcherScriptPath}`);
     console.log(`   Stitcher working dir: ${this.stitcherWorkingDir}`);
     console.log(`   Pipeline working dir: ${this.pipelineWorkingDir}`);
   }
@@ -84,13 +94,26 @@ class PythonBridge extends events.EventEmitter {
    */
   async processVideo(options) {
     return new Promise((resolve, reject) => {
-      const args = [
-        this.pipelineScriptPath,
-        "--input",
-        options.inputVideo,
-        "--frame",
-        options.frameOverlay
-      ];
+      let executable;
+      let args;
+      if (this.isProd) {
+        executable = this.pipelineExePath;
+        args = [
+          "--input",
+          options.inputVideo,
+          "--frame",
+          options.frameOverlay
+        ];
+      } else {
+        executable = this.pythonPath;
+        args = [
+          this.pipelineScriptPath,
+          "--input",
+          options.inputVideo,
+          "--frame",
+          options.frameOverlay
+        ];
+      }
       if (options.subtitleText) {
         args.push("--subtitle", options.subtitleText);
       }
@@ -98,8 +121,8 @@ class PythonBridge extends events.EventEmitter {
         args.push("--s3-folder", options.s3Folder);
       }
       args.push("--json");
-      console.log("Starting Python pipeline:", args.join(" "));
-      const pythonProcess = child_process.spawn(this.pythonPath, args, {
+      console.log(`Starting pipeline: ${executable} ${args.join(" ")}`);
+      const pipelineProcess = child_process.spawn(executable, args, {
         cwd: this.pipelineWorkingDir,
         env: {
           ...process.env,
@@ -109,19 +132,19 @@ class PythonBridge extends events.EventEmitter {
       });
       let stdoutData = "";
       let stderrData = "";
-      pythonProcess.stdout?.on("data", (data) => {
+      pipelineProcess.stdout?.on("data", (data) => {
         const output = data.toString();
         stdoutData += output;
-        console.log("[Python]", output);
+        console.log("[Pipeline]", output);
         this.parseProgress(output);
       });
-      pythonProcess.stderr?.on("data", (data) => {
+      pipelineProcess.stderr?.on("data", (data) => {
         stderrData += data.toString();
-        console.error("[Python Error]", data.toString());
+        console.error("[Pipeline Error]", data.toString());
       });
-      pythonProcess.on("close", (code) => {
+      pipelineProcess.on("close", (code) => {
         if (code !== 0) {
-          reject(new Error(`Python process exited with code ${code}
+          reject(new Error(`Pipeline process exited with code ${code}
 ${stderrData}`));
           return;
         }
@@ -131,12 +154,12 @@ ${stderrData}`));
           const result = JSON.parse(jsonLine);
           resolve(result);
         } catch (error) {
-          reject(new Error(`Failed to parse Python output: ${error}
+          reject(new Error(`Failed to parse pipeline output: ${error}
 ${stdoutData}`));
         }
       });
-      pythonProcess.on("error", (error) => {
-        reject(new Error(`Failed to start Python process: ${error}`));
+      pipelineProcess.on("error", (error) => {
+        reject(new Error(`Failed to start pipeline process: ${error}`));
       });
     });
   }
@@ -230,7 +253,7 @@ ${"=".repeat(70)}`);
     return result;
   }
   /**
-   * Stitch 3 images into a video using stitch_images.py
+   * Stitch 3 images into a video using stitch_images executable or script
    */
   async stitchImagesToVideo(imagePaths) {
     return new Promise((resolve, reject) => {
@@ -238,17 +261,32 @@ ${"=".repeat(70)}`);
 🎬 [PythonBridge] Stitching images...`);
       const timestamp = Date.now();
       const outputPath = path.join(this.stitcherWorkingDir, "output", `stitched_${timestamp}.mp4`);
-      const args = [
-        this.stitcherScriptPath,
-        "--images",
-        ...imagePaths,
-        "--output",
-        outputPath,
-        "--duration",
-        "3.0"
-      ];
-      console.log(`   Command: ${this.pythonPath} ${args.join(" ")}`);
-      const stitchProcess = child_process.spawn(this.pythonPath, args, {
+      let executable;
+      let args;
+      if (this.isProd) {
+        executable = this.stitcherExePath;
+        args = [
+          "--images",
+          ...imagePaths,
+          "--output",
+          outputPath,
+          "--duration",
+          "3.0"
+        ];
+      } else {
+        executable = this.pythonPath;
+        args = [
+          this.stitcherScriptPath,
+          "--images",
+          ...imagePaths,
+          "--output",
+          outputPath,
+          "--duration",
+          "3.0"
+        ];
+      }
+      console.log(`   Command: ${executable} ${args.join(" ")}`);
+      const stitchProcess = child_process.spawn(executable, args, {
         cwd: this.stitcherWorkingDir,
         env: {
           ...process.env,
@@ -365,33 +403,53 @@ ${"=".repeat(70)}`);
     });
   }
   /**
-   * Check if Python and dependencies are available
+   * Check if dependencies are available
    */
   async checkDependencies() {
-    return new Promise((resolve) => {
-      const checkProcess = child_process.spawn(this.pythonPath, ["--version"]);
-      let versionOutput = "";
-      checkProcess.stdout?.on("data", (data) => {
-        versionOutput += data.toString();
-      });
-      checkProcess.on("close", (code) => {
-        if (code === 0) {
-          console.log("Python version:", versionOutput.trim());
-          resolve({ available: true });
-        } else {
+    if (this.isProd) {
+      const fs2 = await import("fs");
+      const pipelineExists = fs2.existsSync(this.pipelineExePath);
+      const stitcherExists = fs2.existsSync(this.stitcherExePath);
+      if (pipelineExists && stitcherExists) {
+        console.log("Bundled executables found");
+        console.log(`   Pipeline: ${this.pipelineExePath}`);
+        console.log(`   Stitcher: ${this.stitcherExePath}`);
+        return { available: true };
+      } else {
+        const missing = [];
+        if (!pipelineExists) missing.push("pipeline.exe");
+        if (!stitcherExists) missing.push("stitch_images.exe");
+        return {
+          available: false,
+          error: `Missing bundled executables: ${missing.join(", ")}`
+        };
+      }
+    } else {
+      return new Promise((resolve) => {
+        const checkProcess = child_process.spawn(this.pythonPath, ["--version"]);
+        let versionOutput = "";
+        checkProcess.stdout?.on("data", (data) => {
+          versionOutput += data.toString();
+        });
+        checkProcess.on("close", (code) => {
+          if (code === 0) {
+            console.log("Python version:", versionOutput.trim());
+            resolve({ available: true });
+          } else {
+            resolve({
+              available: false,
+              error: "Python not found. Please install Python 3.8+"
+            });
+          }
+        });
+        checkProcess.on("error", () => {
           resolve({
             available: false,
             error: "Python not found. Please install Python 3.8+"
           });
-        }
-      });
-      checkProcess.on("error", () => {
-        resolve({
-          available: false,
-          error: "Python not found. Please install Python 3.8+"
         });
       });
-    });
+    }
   }
 }
 class CameraController extends events.EventEmitter {
@@ -3469,6 +3527,10 @@ electron.ipcMain.handle("video:process", async (_event, params) => {
     let frameOverlayPath = params.chromaVideo;
     if (params.chromaVideo && params.chromaVideo.startsWith("/")) {
       const relativePath = params.chromaVideo.substring(1);
+      frameOverlayPath = path__namespace.join(electron.app.getAppPath(), "public", relativePath);
+      console.log(`   Frame overlay converted: ${params.chromaVideo} -> ${frameOverlayPath}`);
+    } else if (params.chromaVideo && params.chromaVideo.startsWith("./")) {
+      const relativePath = params.chromaVideo.substring(2);
       frameOverlayPath = path__namespace.join(electron.app.getAppPath(), "public", relativePath);
       console.log(`   Frame overlay converted: ${params.chromaVideo} -> ${frameOverlayPath}`);
     }

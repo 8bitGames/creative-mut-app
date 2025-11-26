@@ -35,8 +35,11 @@ export interface ProcessingProgress {
 }
 
 export class PythonBridge extends EventEmitter {
+  private isProd: boolean;
   private pythonPath: string;
+  private pipelineExePath: string;
   private pipelineScriptPath: string;
+  private stitcherExePath: string;
   private stitcherScriptPath: string;
   private stitcherWorkingDir: string;
   private pipelineWorkingDir: string;
@@ -44,29 +47,37 @@ export class PythonBridge extends EventEmitter {
   constructor() {
     super();
 
-    const isProd = app.isPackaged;
+    this.isProd = app.isPackaged;
 
-    if (isProd) {
-      // Production: Use bundled Python
-      this.pythonPath = path.join(process.resourcesPath, 'python', 'python.exe');
-      this.pipelineScriptPath = path.join(process.resourcesPath, 'python', 'pipeline.py');
-      this.stitcherScriptPath = path.join(process.resourcesPath, 'python', 'stitch_images.py');
+    if (this.isProd) {
+      // Production: Use PyInstaller-built executables (no Python installation needed!)
+      this.pythonPath = ''; // Not used in production
+      this.pipelineExePath = path.join(process.resourcesPath, 'python', 'pipeline.exe');
+      this.pipelineScriptPath = ''; // Not used in production
+      this.stitcherExePath = path.join(process.resourcesPath, 'python', 'stitch_images.exe');
+      this.stitcherScriptPath = ''; // Not used in production
       this.stitcherWorkingDir = path.join(process.resourcesPath, 'python');
       this.pipelineWorkingDir = path.join(process.resourcesPath, 'python');
+
+      console.log('🎬 [PythonBridge] Initialized (Production - Bundled EXE)');
+      console.log(`   Pipeline EXE: ${this.pipelineExePath}`);
+      console.log(`   Stitcher EXE: ${this.stitcherExePath}`);
     } else {
-      // Development: Use system Python and MUT-distribution pipeline
+      // Development: Use system Python and script files
       // Windows uses 'python', Unix uses 'python3'
       this.pythonPath = process.platform === 'win32' ? 'python' : 'python3';
+      this.pipelineExePath = ''; // Not used in development
       this.pipelineScriptPath = path.join(app.getAppPath(), 'MUT-distribution', 'pipeline.py');
+      this.stitcherExePath = ''; // Not used in development
       this.stitcherScriptPath = path.join(app.getAppPath(), 'python', 'stitch_images.py');
       this.stitcherWorkingDir = path.join(app.getAppPath(), 'python');
       this.pipelineWorkingDir = path.join(app.getAppPath(), 'MUT-distribution');
-    }
 
-    console.log('🐍 [PythonBridge] Initialized');
-    console.log(`   Python: ${this.pythonPath}`);
-    console.log(`   Pipeline: ${this.pipelineScriptPath}`);
-    console.log(`   Stitcher: ${this.stitcherScriptPath}`);
+      console.log('🐍 [PythonBridge] Initialized (Development - Python Scripts)');
+      console.log(`   Python: ${this.pythonPath}`);
+      console.log(`   Pipeline: ${this.pipelineScriptPath}`);
+      console.log(`   Stitcher: ${this.stitcherScriptPath}`);
+    }
     console.log(`   Stitcher working dir: ${this.stitcherWorkingDir}`);
     console.log(`   Pipeline working dir: ${this.pipelineWorkingDir}`);
   }
@@ -76,11 +87,25 @@ export class PythonBridge extends EventEmitter {
    */
   async processVideo(options: VideoProcessingOptions): Promise<VideoProcessingResult> {
     return new Promise((resolve, reject) => {
-      const args = [
-        this.pipelineScriptPath,
-        '--input', options.inputVideo,
-        '--frame', options.frameOverlay,
-      ];
+      let executable: string;
+      let args: string[];
+
+      if (this.isProd) {
+        // Production: Use standalone exe (no Python needed)
+        executable = this.pipelineExePath;
+        args = [
+          '--input', options.inputVideo,
+          '--frame', options.frameOverlay,
+        ];
+      } else {
+        // Development: Use Python with script
+        executable = this.pythonPath;
+        args = [
+          this.pipelineScriptPath,
+          '--input', options.inputVideo,
+          '--frame', options.frameOverlay,
+        ];
+      }
 
       if (options.subtitleText) {
         args.push('--subtitle', options.subtitleText);
@@ -93,9 +118,9 @@ export class PythonBridge extends EventEmitter {
       // Add flag to output JSON results
       args.push('--json');
 
-      console.log('Starting Python pipeline:', args.join(' '));
+      console.log(`Starting pipeline: ${executable} ${args.join(' ')}`);
 
-      const pythonProcess: ChildProcess = spawn(this.pythonPath, args, {
+      const pipelineProcess: ChildProcess = spawn(executable, args, {
         cwd: this.pipelineWorkingDir,
         env: {
           ...process.env,
@@ -107,40 +132,40 @@ export class PythonBridge extends EventEmitter {
       let stdoutData = '';
       let stderrData = '';
 
-      pythonProcess.stdout?.on('data', (data) => {
+      pipelineProcess.stdout?.on('data', (data) => {
         const output = data.toString();
         stdoutData += output;
-        console.log('[Python]', output);
+        console.log('[Pipeline]', output);
 
         // Parse and emit progress updates
         this.parseProgress(output);
       });
 
-      pythonProcess.stderr?.on('data', (data) => {
+      pipelineProcess.stderr?.on('data', (data) => {
         stderrData += data.toString();
-        console.error('[Python Error]', data.toString());
+        console.error('[Pipeline Error]', data.toString());
       });
 
-      pythonProcess.on('close', (code) => {
+      pipelineProcess.on('close', (code) => {
         if (code !== 0) {
-          reject(new Error(`Python process exited with code ${code}\n${stderrData}`));
+          reject(new Error(`Pipeline process exited with code ${code}\n${stderrData}`));
           return;
         }
 
         try {
-          // Parse JSON output from Python (last line)
+          // Parse JSON output (last line)
           const lines = stdoutData.trim().split('\n');
           const jsonLine = lines[lines.length - 1];
           const result: VideoProcessingResult = JSON.parse(jsonLine);
 
           resolve(result);
         } catch (error) {
-          reject(new Error(`Failed to parse Python output: ${error}\n${stdoutData}`));
+          reject(new Error(`Failed to parse pipeline output: ${error}\n${stdoutData}`));
         }
       });
 
-      pythonProcess.on('error', (error) => {
-        reject(new Error(`Failed to start Python process: ${error}`));
+      pipelineProcess.on('error', (error) => {
+        reject(new Error(`Failed to start pipeline process: ${error}`));
       });
     });
   }
@@ -252,7 +277,7 @@ export class PythonBridge extends EventEmitter {
   }
 
   /**
-   * Stitch 3 images into a video using stitch_images.py
+   * Stitch 3 images into a video using stitch_images executable or script
    */
   private async stitchImagesToVideo(imagePaths: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -261,16 +286,31 @@ export class PythonBridge extends EventEmitter {
       const timestamp = Date.now();
       const outputPath = path.join(this.stitcherWorkingDir, 'output', `stitched_${timestamp}.mp4`);
 
-      const args = [
-        this.stitcherScriptPath,
-        '--images', ...imagePaths,
-        '--output', outputPath,
-        '--duration', '3.0',
-      ];
+      let executable: string;
+      let args: string[];
 
-      console.log(`   Command: ${this.pythonPath} ${args.join(' ')}`);
+      if (this.isProd) {
+        // Production: Use standalone exe
+        executable = this.stitcherExePath;
+        args = [
+          '--images', ...imagePaths,
+          '--output', outputPath,
+          '--duration', '3.0',
+        ];
+      } else {
+        // Development: Use Python with script
+        executable = this.pythonPath;
+        args = [
+          this.stitcherScriptPath,
+          '--images', ...imagePaths,
+          '--output', outputPath,
+          '--duration', '3.0',
+        ];
+      }
 
-      const stitchProcess: ChildProcess = spawn(this.pythonPath, args, {
+      console.log(`   Command: ${executable} ${args.join(' ')}`);
+
+      const stitchProcess: ChildProcess = spawn(executable, args, {
         cwd: this.stitcherWorkingDir,
         env: {
           ...process.env,
@@ -404,36 +444,59 @@ export class PythonBridge extends EventEmitter {
   }
 
   /**
-   * Check if Python and dependencies are available
+   * Check if dependencies are available
    */
   async checkDependencies(): Promise<{ available: boolean; error?: string }> {
-    return new Promise((resolve) => {
-      const checkProcess = spawn(this.pythonPath, ['--version']);
+    if (this.isProd) {
+      // Production: Check if exe files exist
+      const fs = await import('fs');
+      const pipelineExists = fs.existsSync(this.pipelineExePath);
+      const stitcherExists = fs.existsSync(this.stitcherExePath);
 
-      let versionOutput = '';
+      if (pipelineExists && stitcherExists) {
+        console.log('Bundled executables found');
+        console.log(`   Pipeline: ${this.pipelineExePath}`);
+        console.log(`   Stitcher: ${this.stitcherExePath}`);
+        return { available: true };
+      } else {
+        const missing = [];
+        if (!pipelineExists) missing.push('pipeline.exe');
+        if (!stitcherExists) missing.push('stitch_images.exe');
+        return {
+          available: false,
+          error: `Missing bundled executables: ${missing.join(', ')}`,
+        };
+      }
+    } else {
+      // Development: Check if Python is available
+      return new Promise((resolve) => {
+        const checkProcess = spawn(this.pythonPath, ['--version']);
 
-      checkProcess.stdout?.on('data', (data) => {
-        versionOutput += data.toString();
-      });
+        let versionOutput = '';
 
-      checkProcess.on('close', (code) => {
-        if (code === 0) {
-          console.log('Python version:', versionOutput.trim());
-          resolve({ available: true });
-        } else {
+        checkProcess.stdout?.on('data', (data) => {
+          versionOutput += data.toString();
+        });
+
+        checkProcess.on('close', (code) => {
+          if (code === 0) {
+            console.log('Python version:', versionOutput.trim());
+            resolve({ available: true });
+          } else {
+            resolve({
+              available: false,
+              error: 'Python not found. Please install Python 3.8+',
+            });
+          }
+        });
+
+        checkProcess.on('error', () => {
           resolve({
             available: false,
             error: 'Python not found. Please install Python 3.8+',
           });
-        }
-      });
-
-      checkProcess.on('error', () => {
-        resolve({
-          available: false,
-          error: 'Python not found. Please install Python 3.8+',
         });
       });
-    });
+    }
   }
 }

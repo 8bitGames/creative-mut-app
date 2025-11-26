@@ -5,11 +5,13 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node node_modules/vite/bin/vite.js build",
     "preview": "vite preview",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "build:python": "scripts\\build-python.bat",
     "dist": "npm run build && electron-builder --win",
+    "dist:full": "npm run build:python && npm run build && electron-builder --win",
     "dist:dir": "npm run build && electron-builder --win --dir"
   },
   "build": {
@@ -25,6 +27,13 @@
     "asar": true,
     "asarUnpack": [
       "node_modules/better-sqlite3/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/python",
+        "to": "python",
+        "filter": ["**/*"]
+      }
     ],
     "win": {
       "target": "nsis",

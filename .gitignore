@@ -35,3 +35,8 @@ npm-debug.log*
 # Build
 out/
 .next/
+
+# Python build output (PyInstaller)
+resources/python/
+scripts/python/venv/
+scripts/python/build/

@@ -1,0 +1,20 @@
+# MUT Python Pipeline Dependencies
+# For PyInstaller bundling
+
+# AWS S3 upload
+boto3>=1.26.0
+botocore>=1.29.0
+
+# QR code generation
+qrcode[pil]>=7.4.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Image processing (for face enhancement)
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# PyInstaller for bundling
+pyinstaller>=6.0.0
