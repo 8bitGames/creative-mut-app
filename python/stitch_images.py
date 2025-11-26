@@ -17,9 +17,31 @@ import sys
 import os
 import time
 from pathlib import Path
+from face_enhancement import FaceEnhancer
+
+# FFmpeg path - check common Windows locations
+def get_ffmpeg_path():
+    """Get the path to ffmpeg executable, checking common Windows locations"""
+    if sys.platform == 'win32':
+        ffmpeg_locations = [
+            r'C:\ffmpeg\ffmpeg-8.0.1-essentials_build\bin\ffmpeg.exe',
+            r'C:\ffmpeg\bin\ffmpeg.exe',
+            r'C:\Program Files\ffmpeg\bin\ffmpeg.exe',
+            r'C:\Program Files (x86)\ffmpeg\bin\ffmpeg.exe',
+        ]
+        for path in ffmpeg_locations:
+            if os.path.exists(path):
+                return path
+    # macOS homebrew or system PATH
+    elif sys.platform == 'darwin':
+        if os.path.exists('/opt/homebrew/bin/ffmpeg'):
+            return '/opt/homebrew/bin/ffmpeg'
+    return 'ffmpeg'
+
+FFMPEG_PATH = get_ffmpeg_path()
 
 
-def stitch_images_to_video(image_paths, output_path, duration_per_image=3.0):
+def stitch_images_to_video(image_paths, output_path, duration_per_image=3.0, enhance_faces=True):
     """
     Stitch 3 images into a single video using ffmpeg.
 
@@ -27,6 +49,7 @@ def stitch_images_to_video(image_paths, output_path, duration_per_image=3.0):
         image_paths: List of 3 image file paths
         output_path: Output video file path
         duration_per_image: Duration in seconds to show each image
+        enhance_faces: Whether to apply face enhancement before stitching
 
     Returns:
         str: Path to output video
@@ -47,6 +70,21 @@ def stitch_images_to_video(image_paths, output_path, duration_per_image=3.0):
 
     start_time = time.time()
 
+    # === FACE ENHANCEMENT STEP ===
+    if enhance_faces:
+        print("\n✨ Applying face enhancement to photos...")
+        enhancer = FaceEnhancer(enhancement_level='medium')
+
+        # Enhance each image in-place
+        enhanced_paths = []
+        for img_path in image_paths:
+            enhanced_path = enhancer.enhance_image(img_path, output_path=img_path)
+            enhanced_paths.append(enhanced_path)
+
+        # Use enhanced images for stitching
+        image_paths = enhanced_paths
+        print("✅ Face enhancement complete!\n")
+
     # Build ffmpeg command to create video from images
     # Each image will be shown for specified duration
     # Format: loop each image for N seconds, then concatenate
@@ -55,7 +93,7 @@ def stitch_images_to_video(image_paths, output_path, duration_per_image=3.0):
     # This ensures smooth transitions and exact timing
 
     ffmpeg_cmd = [
-        '/opt/homebrew/bin/ffmpeg', '-y',
+        FFMPEG_PATH, '-y',
         '-loop', '1', '-t', str(duration_per_image), '-i', image_paths[0],
         '-loop', '1', '-t', str(duration_per_image), '-i', image_paths[1],
         '-loop', '1', '-t', str(duration_per_image), '-i', image_paths[2],

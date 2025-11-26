@@ -31,6 +31,36 @@ ENV_PATH = os.path.join(SCRIPT_DIR, ".env")
 # Load AWS credentials
 load_dotenv(ENV_PATH)
 
+# FFmpeg path - check common locations for Windows and macOS
+def get_ffmpeg_path():
+    """Get the path to ffmpeg executable, checking common locations"""
+    if sys.platform == 'win32':
+        # Check common Windows FFmpeg locations
+        ffmpeg_locations = [
+            r'C:\ffmpeg\ffmpeg-8.0.1-essentials_build\bin\ffmpeg.exe',
+            r'C:\ffmpeg\bin\ffmpeg.exe',
+            r'C:\Program Files\ffmpeg\bin\ffmpeg.exe',
+            r'C:\Program Files (x86)\ffmpeg\bin\ffmpeg.exe',
+        ]
+        for path in ffmpeg_locations:
+            if os.path.exists(path):
+                print(f"   Found FFmpeg at: {path}")
+                return path
+    elif sys.platform == 'darwin':
+        # Check common macOS FFmpeg locations (homebrew)
+        macos_locations = [
+            '/opt/homebrew/bin/ffmpeg',
+            '/usr/local/bin/ffmpeg',
+        ]
+        for path in macos_locations:
+            if os.path.exists(path):
+                print(f"   Found FFmpeg at: {path}")
+                return path
+    # Fallback to system PATH
+    return 'ffmpeg'
+
+FFMPEG_PATH = get_ffmpeg_path()
+
 # ============================================================================
 # VIDEO COMPOSITOR
 # ============================================================================
@@ -61,7 +91,7 @@ def normalize_to_mp4(input_video):
     normalized_path = input_video.rsplit('.', 1)[0] + '_normalized.mp4'
 
     cmd = [
-        'ffmpeg', '-y',
+        FFMPEG_PATH, '-y',
         '-i', input_video,
         '-c:v', 'libx264',       # Re-encode to H.264
         '-preset', 'ultrafast',  # Fast encoding
@@ -79,9 +109,88 @@ def normalize_to_mp4(input_video):
         print(f"   ⚠️  Normalization failed, using original: {e.stderr.decode() if e.stderr else 'Unknown error'}")
         return input_video
 
-def composite_video(input_video, frame_image, output_path):
+def enhance_video(input_video, enhancement_level='medium'):
+    """
+    Apply face enhancement to video before frame overlay.
+    Uses FFmpeg filters for brightness, contrast, saturation, and sharpening.
+
+    Args:
+        input_video: Path to input video
+        enhancement_level: 'light', 'medium', or 'strong'
+
+    Returns:
+        Path to enhanced video
+    """
+    print(f"\n✨ Applying face enhancement to video...")
+    print(f"   Level: {enhancement_level}")
+
+    # Create enhanced video path
+    enhanced_path = input_video.rsplit('.', 1)[0] + '_enhanced.mp4'
+
+    # Enhancement parameters
+    params = {
+        'light': {
+            'brightness': 0.03,
+            'contrast': 1.08,
+            'saturation': 1.05,
+            'unsharp': '5:5:0.8:5:5:0.0'
+        },
+        'medium': {
+            'brightness': 0.05,
+            'contrast': 1.12,
+            'saturation': 1.1,
+            'unsharp': '5:5:1.0:5:5:0.0'
+        },
+        'strong': {
+            'brightness': 0.08,
+            'contrast': 1.18,
+            'saturation': 1.15,
+            'unsharp': '5:5:1.2:5:5:0.0'
+        }
+    }
+
+    current_params = params.get(enhancement_level, params['medium'])
+
+    # Build FFmpeg filter chain for face/skin enhancement
+    filter_chain = (
+        f"eq=brightness={current_params['brightness']}:"
+        f"contrast={current_params['contrast']}:"
+        f"saturation={current_params['saturation']},"
+        f"unsharp={current_params['unsharp']}"
+    )
+
+    cmd = [
+        FFMPEG_PATH, '-y',
+        '-i', input_video,
+        '-vf', filter_chain,
+        '-c:v', 'libx264',
+        '-preset', 'medium',
+        '-crf', '18',
+        '-pix_fmt', 'yuv420p',
+        enhanced_path
+    ]
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=60)
+        file_size = os.path.getsize(enhanced_path) / (1024 * 1024)
+        print(f"   ✓ Video enhanced: {file_size:.1f} MB")
+        return enhanced_path
+    except subprocess.CalledProcessError as e:
+        print(f"   ⚠️  Enhancement failed, using original: {e.stderr.decode() if e.stderr else 'Unknown error'}")
+        return input_video
+
+def composite_video(input_video, frame_image, output_path, enhance_faces=True):
     """
     Composites video + frame overlay only.
+
+    Args:
+        input_video: Path to input video
+        frame_image: Path to frame overlay image
+        output_path: Path to output composed video
+        enhance_faces: Whether to apply face enhancement before frame overlay
+
+    Returns:
+        Duration of composition in seconds
     """
     start_time = time.time()
 
@@ -97,6 +206,10 @@ def composite_video(input_video, frame_image, output_path):
 
     # CRITICAL: Normalize input to MP4 first (fixes WebM issues)
     input_video = normalize_to_mp4(input_video)
+
+    # === FACE ENHANCEMENT STEP (BEFORE frame overlay) ===
+    if enhance_faces:
+        input_video = enhance_video(input_video, enhancement_level='medium')
 
     # Determine Encoder
     encoder = get_best_encoder()
@@ -116,7 +229,7 @@ def composite_video(input_video, frame_image, output_path):
 
     # Build Command
     cmd = [
-        'ffmpeg',                   # Use system ffmpeg
+        FFMPEG_PATH,                # Use FFmpeg
         '-y',                       # Overwrite output
         '-i', input_video,          # Input 0
         '-i', frame_image,          # Input 1
@@ -125,9 +238,16 @@ def composite_video(input_video, frame_image, output_path):
         '-c:v', encoder.value,      # Codec
         '-b:v', '5M',               # Bitrate
         '-pix_fmt', 'yuv420p',      # Pixel format
+    ]
+
+    # Add macOS-specific options
+    if sys.platform == 'darwin':
+        cmd.extend(['-allow_sw', '1'])  # Allow software fallback if GPU fails (macOS only)
+
+    cmd.extend([
         '-shortest',                # Stop when shortest input ends
         output_path
-    ]
+    ])
 
     try:
         # Run FFmpeg
@@ -191,6 +311,24 @@ def generate_qr(data, output_path):
     img.save(output_path)
     return output_path
 
+def get_video_duration(video_path):
+    """Get video duration in seconds using ffprobe."""
+    try:
+        cmd = [
+            FFMPEG_PATH.replace('ffmpeg', 'ffprobe'),
+            '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            video_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        duration = float(result.stdout.strip())
+        return duration
+    except Exception as e:
+        print(f"⚠️  Could not get video duration: {e}")
+        return None
+
+
 def extract_frames(video_path, timestamps, output_dir):
     """
     Extract frames from video at specific timestamps.
@@ -208,6 +346,15 @@ def extract_frames(video_path, timestamps, output_dir):
     """
     print(f"\n📸 Extracting frames at {timestamps}s...")
 
+    # Check video duration first
+    duration = get_video_duration(video_path)
+    if duration:
+        print(f"   Video duration: {duration:.1f}s")
+        max_timestamp = max(timestamps)
+        if duration < max_timestamp:
+            print(f"⚠️  WARNING: Video duration ({duration:.1f}s) is less than max timestamp ({max_timestamp}s)")
+            print(f"   This may cause frame extraction to fail!")
+
     os.makedirs(output_dir, exist_ok=True)
     frame_paths = []
     failed_extractions = []
@@ -216,7 +363,7 @@ def extract_frames(video_path, timestamps, output_dir):
         frame_path = os.path.join(output_dir, f"frame_{timestamp}s.jpg")
 
         cmd = [
-            'ffmpeg',
+            FFMPEG_PATH,
             '-ss', str(timestamp),  # Seek to timestamp
             '-i', video_path,       # Input video
             '-frames:v', '1',       # Extract 1 frame
@@ -270,14 +417,99 @@ def extract_frames(video_path, timestamps, output_dir):
     return frame_paths
 
 # ============================================================================
+# CLEANUP UTILS
+# ============================================================================
+
+def is_session_in_use(session_dir):
+    """
+    Check if a session directory is currently being used by another pipeline process.
+    We check for a .lock file or if any files were modified in the last 60 seconds.
+    """
+    lock_file = os.path.join(session_dir, '.processing')
+    if os.path.exists(lock_file):
+        # Check if lock file is stale (older than 5 minutes)
+        try:
+            lock_age = time.time() - os.path.getmtime(lock_file)
+            if lock_age < 300:  # 5 minutes
+                return True
+        except:
+            pass
+    return False
+
+
+def create_session_lock(session_dir):
+    """Create a lock file to indicate this session is being processed."""
+    lock_file = os.path.join(session_dir, '.processing')
+    try:
+        with open(lock_file, 'w') as f:
+            f.write(str(os.getpid()))
+    except:
+        pass
+
+
+def remove_session_lock(session_dir):
+    """Remove the lock file when processing is complete."""
+    lock_file = os.path.join(session_dir, '.processing')
+    try:
+        if os.path.exists(lock_file):
+            os.remove(lock_file)
+    except:
+        pass
+
+
+def cleanup_output_directory(current_session_timestamp):
+    """
+    Clean up previous outputs to prevent disk space accumulation.
+    Called at the start of each new pipeline run.
+    Only removes directories that are older than the current session and not in use.
+
+    Args:
+        current_session_timestamp: The timestamp of the current session to preserve
+    """
+    import shutil
+
+    if os.path.exists(DEFAULT_OUTPUT_DIR):
+        print(f"\n🧹 Cleaning up previous outputs...")
+        try:
+            # Remove all subdirectories EXCEPT the current session and any in-use sessions
+            for item in os.listdir(DEFAULT_OUTPUT_DIR):
+                item_path = os.path.join(DEFAULT_OUTPUT_DIR, item)
+
+                # Skip current session directory
+                if item == current_session_timestamp:
+                    print(f"   → Skipping current session: {item}")
+                    continue
+
+                # Skip if it's a file (not a session directory)
+                if not os.path.isdir(item_path):
+                    continue
+
+                # Skip if session is currently in use (has lock file)
+                if is_session_in_use(item_path):
+                    print(f"   → Skipping in-use session: {item}")
+                    continue
+
+                try:
+                    shutil.rmtree(item_path)
+                    print(f"   ✓ Removed: {item}")
+                except Exception as e:
+                    print(f"   ⚠️  Could not remove {item}: {e}")
+
+            print(f"✅ Output directory cleaned")
+        except Exception as e:
+            print(f"⚠️  Cleanup warning: {e}")
+    else:
+        print(f"📁 Output directory does not exist yet, skipping cleanup")
+
+# ============================================================================
 # MAIN PIPELINE
 # ============================================================================
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--input', required=True)
-    parser.add_argument('--frame', required=True) 
-    parser.add_argument('--chroma', help="Alias for --frame", required=False) 
+    parser.add_argument('--frame', required=True)
+    parser.add_argument('--chroma', help="Alias for --frame", required=False)
     parser.add_argument('--subtitle', default="", help="Kept for compatibility, not used")
     parser.add_argument('--s3-folder', default='mut-hologram')
     parser.add_argument('--json', action='store_true')
@@ -288,11 +520,17 @@ def main():
 
     start_total = time.time()
 
-    # 1. Prepare Paths
+    # 1. Prepare Paths FIRST (before cleanup to avoid race condition)
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     session_dir = os.path.join(DEFAULT_OUTPUT_DIR, timestamp)
     os.makedirs(session_dir, exist_ok=True)
-    
+
+    # 2. Create lock file to prevent other processes from cleaning up this session
+    create_session_lock(session_dir)
+
+    # 3. Clean up previous outputs (but preserve current session and any in-use sessions)
+    cleanup_output_directory(timestamp)
+
     output_video_path = os.path.join(session_dir, f"final_{timestamp}.mp4")
     qr_path = os.path.join(session_dir, f"qr_{timestamp}.png")
 
@@ -306,7 +544,7 @@ def main():
     }
 
     try:
-        # 2. Process Video
+        # Step 1: Process Video (composition with frame overlay)
         comp_time = composite_video(
             input_video=args.input,
             frame_image=frame_path,
@@ -314,12 +552,12 @@ def main():
         )
         results['compositionTime'] = comp_time
 
-        # 3. Extract frames at 5s, 10s, 15s for photo printing
+        # Step 2: Extract frames at 5s, 10s, 15s for photo printing
         frame_timestamps = [5, 10, 15]
         frame_paths = extract_frames(output_video_path, frame_timestamps, session_dir)
         results['framePaths'] = frame_paths
 
-        # 4. Upload S3
+        # Step 3: Upload to S3
         uploader = S3Uploader()
         s3_url, s3_key = uploader.upload(output_video_path, args.s3_folder)
 
@@ -327,11 +565,11 @@ def main():
             results['s3Url'] = s3_url
             results['s3Key'] = s3_key
 
-            # 5. Generate QR
+            # Step 4: Generate QR code
             generate_qr(s3_url, qr_path)
             results['qrCodePath'] = qr_path
 
-            # 6. Keep local video file for playback (don't delete)
+            # Keep local video file for playback (don't delete)
             # The hologram display will use the S3 URL for playback
             print(f"✅ Local video preserved: {output_video_path}")
             results['videoDeleted'] = False
@@ -343,6 +581,9 @@ def main():
         if not args.json:
             print(f"❌ Critical Failure: {e}")
             sys.exit(1)
+    finally:
+        # Always remove the session lock when done (success or failure)
+        remove_session_lock(session_dir)
 
     results['totalTime'] = time.time() - start_total
 

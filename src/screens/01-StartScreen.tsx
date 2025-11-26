@@ -1,4 +1,5 @@
 // src/screens/01-StartScreen.tsx
+import { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
 import { Button } from '@/components/ui/button';
@@ -43,7 +44,87 @@ const buttonVariants = {
 };
 
 export function StartScreen() {
+  console.log('🏁 [StartScreen] Component mounted/rendered');
+
   const setScreen = useAppStore((state) => state.setScreen);
+  const setCameraStream = useAppStore((state) => state.setCameraStream);
+  const cameraStream = useAppStore((state) => state.cameraStream);
+
+  // Start webcam IMMEDIATELY when user sees Start screen - keep it running GLOBALLY across all screens
+  useEffect(() => {
+    console.log('🎬 [StartScreen] Camera initialization useEffect triggered');
+
+    // Only start camera if not already running AND active
+    if (cameraStream) {
+      if (cameraStream.active) {
+        console.log('📹 [StartScreen] Camera already running from previous session, skipping initialization');
+        console.log(`   Active tracks: ${cameraStream.getVideoTracks().length}`);
+        return;
+      } else {
+        console.warn('⚠️ [StartScreen] Camera stream exists but is inactive, will reinitialize');
+      }
+    }
+
+    console.log('📷 [StartScreen] Starting webcam IMMEDIATELY in background...');
+
+    const startBackgroundCamera = async () => {
+      try {
+        // Enumerate cameras to find Canon EOS or other DSLR
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+        console.log('📹 [StartScreen] Available cameras:');
+        videoDevices.forEach((device, index) => {
+          console.log(`  ${index + 1}. ${device.label || 'Unknown Camera'}`);
+        });
+
+        // Priority: 2nd camera (index 1) > 1st camera (index 0)
+        // This is because the 2nd camera is typically the external/DSLR camera
+        let deviceId: string | undefined;
+        let selectedCamera: MediaDeviceInfo | undefined;
+
+        if (videoDevices.length >= 2) {
+          // Use 2nd camera (index 1) - typically external camera
+          selectedCamera = videoDevices[1];
+          deviceId = selectedCamera.deviceId;
+          console.log(`✅ [StartScreen] Using 2nd camera: ${selectedCamera.label || 'Camera 2'}`);
+        } else if (videoDevices.length === 1) {
+          // Fallback to 1st camera (index 0)
+          selectedCamera = videoDevices[0];
+          deviceId = selectedCamera.deviceId;
+          console.log(`⚠️ [StartScreen] Only 1 camera available, using: ${selectedCamera.label || 'Camera 1'}`);
+        } else {
+          console.error('❌ [StartScreen] No cameras found!');
+          return;
+        }
+
+        // Start camera stream and KEEP IT RUNNING in background
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            deviceId: deviceId ? { exact: deviceId } : undefined,
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          }
+        });
+
+        // Store stream in GLOBAL store (persists across screens!)
+        setCameraStream(stream);
+
+        console.log('✅ [StartScreen] Camera is now RUNNING in GLOBAL background stream');
+        console.log('   ✓ Stream will persist across FrameSelectionScreen → ShootingGuideScreen');
+        console.log('   ✓ No preview shown - camera warming up continuously');
+        console.log('   ✓ Will only stop when app resets to idle');
+
+      } catch (error) {
+        console.warn('⚠️ [StartScreen] Camera background startup failed (non-critical):', error);
+      }
+    };
+
+    // Start camera immediately (no delay)
+    startBackgroundCamera();
+
+    // NO CLEANUP - stream persists in global store!
+  }, [cameraStream, setCameraStream]);
 
   return (
     <motion.div

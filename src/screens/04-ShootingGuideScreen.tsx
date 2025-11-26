@@ -50,12 +50,13 @@ const countdownVariants = {
 
 export function ShootingGuideScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
+  const cameraStream = useAppStore((state) => state.cameraStream);
+  const setCameraStream = useAppStore((state) => state.setCameraStream);
   const selectedFrame = useSessionStore((state) => state.selectedFrame);
   const [countdown, setCountdown] = useState<number | null>(10);
   const [showInstructions, setShowInstructions] = useState(true);
   const [videoReady, setVideoReady] = useState(false); // Track when video is ready
   const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
 
   // Monitor 2 stays on logo - ensure it's set to logo mode
   useEffect(() => {
@@ -76,44 +77,86 @@ export function ShootingGuideScreen() {
     };
   }, []);
 
-  // Initialize camera for Monitor 1
+  // Initialize camera for Monitor 1 - use GLOBAL stream from appStore
   useEffect(() => {
-    console.log('📷 [ShootingGuideScreen] Initializing camera for Monitor 1...');
+    console.log('📷 [ShootingGuideScreen] Setting up camera display for Monitor 1...');
 
-    const startCamera = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: 1080 },
-            height: { ideal: 1920 },
-            facingMode: 'user'
-          },
-          audio: false
-        });
+    // Use global camera stream from StartScreen (already running!)
+    if (cameraStream && cameraStream.active) {
+      console.log('✅ [ShootingGuideScreen] Using GLOBAL camera stream (instant connection!)');
+      console.log(`   Active tracks: ${cameraStream.getVideoTracks().length}`);
 
-        console.log('✅ [ShootingGuideScreen] Camera access granted!');
-        streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = cameraStream;
+        console.log('📺 [ShootingGuideScreen] Camera stream assigned to video element');
+      }
+    } else {
+      // Fallback: Start new camera if global stream not available
+      console.warn('⚠️ [ShootingGuideScreen] Global camera stream not available, starting new...');
 
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          console.log('📺 [ShootingGuideScreen] Camera stream assigned to video element');
+      const startCamera = async () => {
+        try {
+          // Enumerate cameras to find Canon EOS or other DSLR
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+          console.log('📹 [ShootingGuideScreen] Available cameras:');
+          videoDevices.forEach((device, index) => {
+            console.log(`  ${index + 1}. ${device.label || 'Unknown Camera'}`);
+          });
+
+          // Priority: 2nd camera (index 1) > 1st camera (index 0)
+          // This is because the 2nd camera is typically the external/DSLR camera
+          let deviceId: string | undefined;
+          let selectedCamera: MediaDeviceInfo | undefined;
+
+          if (videoDevices.length >= 2) {
+            // Use 2nd camera (index 1) - typically external camera
+            selectedCamera = videoDevices[1];
+            deviceId = selectedCamera.deviceId;
+            console.log(`✅ [ShootingGuideScreen] Using 2nd camera: ${selectedCamera.label || 'Camera 2'}`);
+          } else if (videoDevices.length === 1) {
+            // Fallback to 1st camera (index 0)
+            selectedCamera = videoDevices[0];
+            deviceId = selectedCamera.deviceId;
+            console.log(`⚠️ [ShootingGuideScreen] Only 1 camera available, using: ${selectedCamera.label || 'Camera 1'}`);
+          } else {
+            console.error('❌ [ShootingGuideScreen] No cameras found!');
+            setVideoReady(true); // Show UI anyway
+            return;
+          }
+
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              deviceId: deviceId ? { exact: deviceId } : undefined,
+              width: { ideal: 1920 },
+              height: { ideal: 1080 }
+            },
+            audio: false
+          });
+
+          console.log('✅ [ShootingGuideScreen] Camera access granted!');
+
+          // Store in global store for persistence
+          setCameraStream(stream);
+
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+            console.log('📺 [ShootingGuideScreen] Camera stream assigned to video element');
+          }
+        } catch (error) {
+          console.error('❌ [ShootingGuideScreen] Failed to access camera:', error);
+          // Still show UI even if camera fails (for testing)
+          setVideoReady(true);
         }
-      } catch (error) {
-        console.error('❌ [ShootingGuideScreen] Failed to access camera:', error);
-        // Still show UI even if camera fails (for testing)
-        setVideoReady(true);
-      }
-    };
+      };
 
-    startCamera();
+      startCamera();
+    }
 
-    return () => {
-      console.log('🛑 [ShootingGuideScreen] Stopping camera...');
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-      }
-    };
-  }, []);
+    // NO CLEANUP - stream persists in global store!
+    // Camera will be stopped when app resets to idle
+  }, [cameraStream, setCameraStream]);
 
   // Handle video ready event
   const handleVideoReady = () => {
@@ -159,6 +202,7 @@ export function ShootingGuideScreen() {
       exit="exit"
     >
       {/* Live Camera Feed - Full Screen Background */}
+      {/* CSS Filter matches Python face enhancement: brightness +5%, contrast +12%, saturation +10% */}
       <video
         ref={videoRef}
         autoPlay
@@ -171,6 +215,7 @@ export function ShootingGuideScreen() {
           transform: 'scaleX(-1)', // Mirror the video
           opacity: videoReady ? 1 : 0, // Hide until ready
           transition: 'opacity 0.3s ease-in'
+          // No live filter - enhancement applied by Python pipeline during video processing
         }}
       />
 

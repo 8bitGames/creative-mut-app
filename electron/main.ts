@@ -448,6 +448,11 @@ ipcMain.handle('video:process', async (_event, params) => {
       const relativePath = params.chromaVideo.substring(1);
       frameOverlayPath = path.join(app.getAppPath(), 'public', relativePath);
       console.log(`   Frame overlay converted: ${params.chromaVideo} -> ${frameOverlayPath}`);
+    } else if (params.chromaVideo && params.chromaVideo.startsWith('./')) {
+      // Relative path like "./frame1.png" -> filesystem path
+      const relativePath = params.chromaVideo.substring(2);
+      frameOverlayPath = path.join(app.getAppPath(), 'public', relativePath);
+      console.log(`   Frame overlay converted: ${params.chromaVideo} -> ${frameOverlayPath}`);
     }
 
     // Process video using Python pipeline
