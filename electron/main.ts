@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, screen, Menu, session } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 
@@ -17,6 +17,7 @@ import { PythonBridge } from './python/bridge';
 import { CameraController } from './hardware/camera';
 import { PrinterController } from './hardware/printer';
 import { CardReaderController } from './hardware/card-reader';
+import { appConfig, getConfig, getPaymentConfig, getTL3600Config, getCameraConfig } from './config';
 import {
   initDatabase,
   closeDatabase,
@@ -27,6 +28,8 @@ import {
   recordPayment,
   recordPrint,
   getDashboardStats,
+  getFlowStatistics,
+  insertSampleData,
 } from './database/analytics';
 
 let mainWindow: BrowserWindow | null = null;
@@ -49,17 +52,20 @@ let hologramState: {
 // In development: app.isPackaged = false, loads from Vite dev server
 // In production (installed app): app.isPackaged = true, loads from built files
 const isDevelopment = !app.isPackaged;
-const isSplitScreenMode = process.env.SPLIT_SCREEN_MODE === 'true';
 
-// Screen resolution settings (default 9:16 ratio)
-const MAIN_WIDTH = parseInt(process.env.MAIN_WIDTH || '1080', 10);
-const MAIN_HEIGHT = parseInt(process.env.MAIN_HEIGHT || '1920', 10);
-const HOLOGRAM_WIDTH = parseInt(process.env.HOLOGRAM_WIDTH || '1080', 10);
-const HOLOGRAM_HEIGHT = parseInt(process.env.HOLOGRAM_HEIGHT || '1920', 10);
+// Display settings - loaded from config after app.whenReady()
+// These are populated when config is loaded
+let displaySettings = {
+  splitScreenMode: false,
+  mainWidth: 1080,
+  mainHeight: 1920,
+  hologramWidth: 1080,
+  hologramHeight: 1920,
+};
 
 // Helper function to get the target window for hologram updates
 function getHologramTargetWindow() {
-  return isSplitScreenMode ? mainWindow : hologramWindow;
+  return displaySettings.splitScreenMode ? mainWindow : hologramWindow;
 }
 
 function createWindow() {
@@ -70,12 +76,12 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     x: x,
     y: y,
-    width: isDevelopment ? 2200 : MAIN_WIDTH,
-    height: isDevelopment ? 1100 : MAIN_HEIGHT,
+    width: isDevelopment ? 2200 : displaySettings.mainWidth,
+    height: isDevelopment ? 1100 : displaySettings.mainHeight,
     fullscreen: false,
     frame: isDevelopment, // No frame in production
     resizable: isDevelopment,
-    alwaysOnTop: !isDevelopment && !isSplitScreenMode, // Stay on top in production
+    alwaysOnTop: !isDevelopment && !displaySettings.splitScreenMode, // Stay on top in production
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -85,7 +91,7 @@ function createWindow() {
     },
   });
 
-  console.log(`📺 Main window: ${MAIN_WIDTH}x${MAIN_HEIGHT} at (${x}, ${y})`);
+  console.log(`📺 Main window: ${displaySettings.mainWidth}x${displaySettings.mainHeight} at (${x}, ${y})`);
 
   if (isDevelopment) {
     // In dev mode, load from Vite server
@@ -112,8 +118,8 @@ function createHologramWindow() {
   hologramWindow = new BrowserWindow({
     x: x,
     y: y,
-    width: isDevelopment ? width : HOLOGRAM_WIDTH,
-    height: isDevelopment ? height : HOLOGRAM_HEIGHT,
+    width: isDevelopment ? width : displaySettings.hologramWidth,
+    height: isDevelopment ? height : displaySettings.hologramHeight,
     fullscreen: false,
     frame: isDevelopment, // No frame in production
     show: true,
@@ -142,11 +148,44 @@ function createHologramWindow() {
     hologramWindow = null;
   });
 
-  console.log(`📺 Hologram window: ${HOLOGRAM_WIDTH}x${HOLOGRAM_HEIGHT} at (${x}, ${y}) on display ${displays.length > 1 ? 2 : 1}`);
+  console.log(`📺 Hologram window: ${displaySettings.hologramWidth}x${displaySettings.hologramHeight} at (${x}, ${y}) on display ${displays.length > 1 ? 2 : 1}`);
 }
 
 app.whenReady().then(async () => {
   console.log('🚀 Initializing MUT Hologram Studio...');
+
+  // Grant camera/microphone permissions automatically
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowedPermissions = ['media', 'mediaKeySystem', 'geolocation', 'notifications'];
+    if (allowedPermissions.includes(permission)) {
+      console.log(`✅ Permission granted: ${permission}`);
+      callback(true);
+    } else {
+      console.log(`❌ Permission denied: ${permission}`);
+      callback(false);
+    }
+  });
+
+  // Also handle permission check (for getUserMedia)
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    const allowedPermissions = ['media', 'mediaKeySystem', 'geolocation', 'notifications'];
+    return allowedPermissions.includes(permission);
+  });
+
+  console.log('📷 Camera permissions handler configured');
+
+  // Load configuration from config.json (or create default)
+  const config = appConfig.load();
+
+  // Apply display settings from config
+  displaySettings = {
+    splitScreenMode: config.display.splitScreenMode,
+    mainWidth: config.display.mainWidth,
+    mainHeight: config.display.mainHeight,
+    hologramWidth: config.display.hologramWidth,
+    hologramHeight: config.display.hologramHeight,
+  };
+  console.log(`📺 Display mode: ${displaySettings.splitScreenMode ? 'Split Screen' : 'Dual Monitor'}`);
 
   // Initialize analytics database (with error handling for native module issues)
   try {
@@ -175,14 +214,11 @@ app.whenReady().then(async () => {
     mainWindow?.webContents.send('video:progress', progress);
   });
 
-  // Initialize camera controller
-  // Modes: mockMode (default), useWebcam (for MacBook), or real DSLR
-  const useMock = process.env.MOCK_CAMERA !== 'false';
-  const useWebcam = process.env.USE_WEBCAM === 'true';
-
+  // Initialize camera controller using config
+  const cameraConfig = getCameraConfig();
   cameraController = new CameraController({
-    mockMode: useMock && !useWebcam,
-    useWebcam: useWebcam
+    mockMode: cameraConfig.mockMode && !cameraConfig.useWebcam,
+    useWebcam: cameraConfig.useWebcam
   });
   const cameraResult = await cameraController.connect();
   if (cameraResult.success) {
@@ -200,16 +236,54 @@ app.whenReady().then(async () => {
     console.error('⚠️  Printer initialization failed:', printerResult.error);
   }
 
-  // Initialize card reader (mock mode by default, 80% approval rate)
-  cardReader = new CardReaderController({ mockMode: true, mockApprovalRate: 0.8 });
+  // Initialize card reader
+  // Load config and determine mode:
+  // - If config.payment.useMockMode is true: Force mock mode (even in production)
+  // - If config.payment.useMockMode is false (default): Auto-detect based on environment
+  //   - Development: Use mock mode (safe for testing)
+  //   - Production: Use real TL3600 hardware
+  const paymentConfig = getPaymentConfig();
+  const tl3600Config = getTL3600Config();
+
+  // useMockMode=true forces mock, otherwise development=mock, production=real
+  const useMockCardReader = paymentConfig.useMockMode || isDevelopment;
+
+  cardReader = new CardReaderController({
+    mockMode: useMockCardReader,
+    mockApprovalRate: paymentConfig.mockApprovalRate,
+    readerPort: tl3600Config.port,
+    terminalId: tl3600Config.terminalId,
+  });
   const cardReaderResult = await cardReader.connect();
   if (cardReaderResult.success) {
-    console.log('✅ Card reader initialized (mock mode)');
+    const mode = useMockCardReader ? 'mock mode' : `TL3600 on ${tl3600Config.port}`;
+    console.log(`✅ Card reader initialized (${mode})`);
 
     // Set up payment status event forwarding
     cardReader.on('status', (statusUpdate) => {
       mainWindow?.webContents.send('payment:status', statusUpdate);
     });
+
+    // Forward card events for real hardware mode
+    if (!useMockCardReader) {
+      cardReader.on('cardRemoved', () => {
+        mainWindow?.webContents.send('payment:card-removed');
+      });
+
+      cardReader.on('paymentComplete', (result) => {
+        mainWindow?.webContents.send('payment:complete', result);
+      });
+
+      cardReader.on('error', (error) => {
+        mainWindow?.webContents.send('payment:error', {
+          message: error instanceof Error ? error.message : 'Unknown error',
+        });
+      });
+
+      cardReader.on('disconnected', () => {
+        mainWindow?.webContents.send('payment:disconnected');
+      });
+    }
   } else {
     console.error('⚠️  Card reader initialization failed:', cardReaderResult.error);
   }
@@ -219,7 +293,7 @@ app.whenReady().then(async () => {
   createWindow();
 
   // Only create hologram window if NOT in split-screen mode
-  if (!isSplitScreenMode) {
+  if (!displaySettings.splitScreenMode) {
     console.log('📺 Creating separate hologram window (dual-monitor mode)');
     createHologramWindow();
   } else {
@@ -229,7 +303,7 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
-      if (!isSplitScreenMode) {
+      if (!displaySettings.splitScreenMode) {
         createHologramWindow();
       }
     }
@@ -683,7 +757,66 @@ ipcMain.handle('payment:get-status', async () => {
   return {
     success: status.connected,
     status: status.connected ? 'idle' : 'offline',
+    mode: status.mode,
   };
+});
+
+// Cancel a previous transaction (for dashboard manual cancellation)
+ipcMain.handle('payment:cancel-transaction', async (_event, options: {
+  approvalNumber: string;
+  originalDate: string;
+  originalTime: string;
+  amount: number;
+  transactionType: string;
+}) => {
+  console.log('🚫 Transaction cancellation requested:', options);
+
+  if (!cardReader) {
+    return {
+      success: false,
+      error: 'Card reader not initialized',
+    };
+  }
+
+  try {
+    const result = await cardReader.cancelTransaction({
+      approvalNumber: options.approvalNumber,
+      originalDate: options.originalDate,
+      originalTime: options.originalTime,
+      amount: options.amount,
+      transactionType: options.transactionType,
+    });
+
+    return result;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    return {
+      success: false,
+      error: errorMessage,
+    };
+  }
+});
+
+// List available COM ports for TL3600 configuration
+ipcMain.handle('payment:list-ports', async () => {
+  console.log('🔌 Listing available COM ports...');
+
+  try {
+    const ports = await CardReaderController.listPorts();
+    console.log(`   Found ${ports.length} ports:`, ports.map(p => p.path).join(', '));
+    return {
+      success: true,
+      ports,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('❌ Failed to list ports:', errorMessage);
+    return {
+      success: false,
+      error: errorMessage,
+      ports: [],
+    };
+  }
 });
 
 // Hologram window control with persistent state
@@ -723,7 +856,7 @@ ipcMain.handle('hologram:show-qr', async (_event, qrCodePath, videoPath) => {
   console.log('💾 [IPC] Hologram state updated:', JSON.stringify(hologramState));
 
   const targetWindow = getHologramTargetWindow();
-  const windowName = isSplitScreenMode ? 'main window' : 'hologram window';
+  const windowName = displaySettings.splitScreenMode ? 'main window' : 'hologram window';
 
   if (!targetWindow) {
     console.error(`❌ [IPC] ${windowName} is NULL - cannot send message!`);
@@ -863,8 +996,14 @@ ipcMain.handle('analytics:update-images', async (_event, sessionId: string, imag
   return { success: true };
 });
 
-ipcMain.handle('analytics:record-payment', async (_event, sessionId: string, amount: number, status: string, errorMessage?: string) => {
-  recordPayment(sessionId, amount, status as any, errorMessage);
+ipcMain.handle('analytics:record-payment', async (_event, sessionId: string, amount: number, status: string, errorMessage?: string, details?: {
+  approvalNumber?: string;
+  salesDate?: string;
+  salesTime?: string;
+  transactionMedia?: string;
+  cardNumber?: string;
+}) => {
+  recordPayment(sessionId, amount, status as any, errorMessage, details);
   return { success: true };
 });
 
@@ -876,6 +1015,147 @@ ipcMain.handle('analytics:record-print', async (_event, sessionId: string, image
 ipcMain.handle('analytics:get-dashboard-stats', async () => {
   const stats = getDashboardStats();
   return { success: true, stats };
+});
+
+ipcMain.handle('analytics:get-flow-statistics', async () => {
+  const stats = getFlowStatistics();
+  return { success: true, stats };
+});
+
+ipcMain.handle('analytics:insert-sample-data', async () => {
+  console.log('📊 [IPC] Inserting sample data...');
+  const result = insertSampleData();
+  return result;
+});
+
+// Configuration IPC Handlers
+ipcMain.handle('config:get', async () => {
+  console.log('⚙️ [IPC] Getting configuration');
+  try {
+    const config = getConfig();
+    const configPath = appConfig.getConfigPath();
+    return {
+      success: true,
+      config,
+      configPath,
+    };
+  } catch (error) {
+    console.error('❌ [IPC] Failed to get config:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+});
+
+ipcMain.handle('config:update', async (_event, updates: any) => {
+  console.log('⚙️ [IPC] Updating configuration:', updates);
+  try {
+    const success = appConfig.update(updates);
+    if (success) {
+      return { success: true, config: getConfig() };
+    }
+    return { success: false, error: 'Failed to save config' };
+  } catch (error) {
+    console.error('❌ [IPC] Failed to update config:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+});
+
+ipcMain.handle('config:update-tl3600', async (_event, updates: any) => {
+  console.log('⚙️ [IPC] Updating TL3600 configuration:', updates);
+  try {
+    const success = appConfig.updateTL3600(updates);
+    if (success) {
+      return { success: true, config: getTL3600Config() };
+    }
+    return { success: false, error: 'Failed to save TL3600 config' };
+  } catch (error) {
+    console.error('❌ [IPC] Failed to update TL3600 config:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+});
+
+ipcMain.handle('config:update-payment', async (_event, updates: any) => {
+  console.log('⚙️ [IPC] Updating payment configuration:', updates);
+  try {
+    const success = appConfig.updatePayment(updates);
+    if (success) {
+      return { success: true, config: getPaymentConfig() };
+    }
+    return { success: false, error: 'Failed to save payment config' };
+  } catch (error) {
+    console.error('❌ [IPC] Failed to update payment config:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+});
+
+ipcMain.handle('config:update-camera', async (_event, updates: any) => {
+  console.log('⚙️ [IPC] Updating camera configuration:', updates);
+  try {
+    const success = appConfig.updateCamera(updates);
+    if (success) {
+      return { success: true, config: getCameraConfig() };
+    }
+    return { success: false, error: 'Failed to save camera config' };
+  } catch (error) {
+    console.error('❌ [IPC] Failed to update camera config:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+});
+
+ipcMain.handle('config:update-display', async (_event, updates: any) => {
+  console.log('⚙️ [IPC] Updating display configuration:', updates);
+  console.log('⚠️ Note: Display changes require app restart to take effect');
+  try {
+    const success = appConfig.updateDisplay(updates);
+    if (success) {
+      return { success: true, config: getConfig().display, requiresRestart: true };
+    }
+    return { success: false, error: 'Failed to save display config' };
+  } catch (error) {
+    console.error('❌ [IPC] Failed to update display config:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+});
+
+ipcMain.handle('config:reset', async () => {
+  console.log('⚙️ [IPC] Resetting configuration to defaults');
+  try {
+    const success = appConfig.reset();
+    if (success) {
+      return { success: true, config: getConfig() };
+    }
+    return { success: false, error: 'Failed to reset config' };
+  } catch (error) {
+    console.error('❌ [IPC] Failed to reset config:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+});
+
+ipcMain.handle('config:get-path', async () => {
+  return {
+    success: true,
+    path: appConfig.getConfigPath(),
+  };
 });
 
 // Close database on app quit

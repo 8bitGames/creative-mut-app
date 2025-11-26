@@ -41,6 +41,7 @@
     "@radix-ui/react-separator": "^1.1.8",
     "@radix-ui/react-slot": "^1.2.4",
     "@radix-ui/react-toast": "^1.2.15",
+    "@serialport/parser-byte-length": "^13.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "better-sqlite3": "^12.4.6",
     "class-variance-authority": "^0.7.1",
@@ -51,6 +52,7 @@
     "lucide-react": "^0.300.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "serialport": "^13.0.0",
     "tailwind-merge": "^2.6.0",
     "zustand": "^4.5.7"
   },
@@ -66,7 +68,7 @@
     "electron-vite": "^4.0.1",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.18",
-    "typescript": "^5.3.3",
+    "typescript": "^5.9.3",
     "vite": "^7.2.4",
     "vite-plugin-electron": "^0.29.0"
   }

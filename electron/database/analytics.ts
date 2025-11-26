@@ -28,6 +28,12 @@ export interface PaymentRecord {
   status: 'pending' | 'approved' | 'declined' | 'cancelled' | 'timeout' | 'error';
   payment_time: number;
   error_message?: string;
+  // Cancellation-related fields (from TL3600)
+  approval_number?: string;      // 승인번호
+  sales_date?: string;           // 매출일 (YYYYMMDD)
+  sales_time?: string;           // 매출시간 (hhmmss)
+  transaction_media?: string;    // 거래매체: '1' IC, '2' RF/MS, '3' RF
+  card_number?: string;          // 카드번호 (마스킹)
   created_at?: string;
 }
 
@@ -39,6 +45,36 @@ export interface PrintRecord {
   success: boolean;
   error_message?: string;
   created_at?: string;
+}
+
+/**
+ * Flow statistics for user journey tracking
+ */
+export interface FlowStatistics {
+  // Step counts
+  sessionsStarted: number;
+  frameSelected: number;
+  recordingCompleted: number;
+  processingCompleted: number;
+  paymentAttempted: number;
+  paymentApproved: number;
+  printCompleted: number;
+
+  // Conversion rates (percentage)
+  frameSelectionRate: number;      // frameSelected / sessionsStarted
+  recordingCompletionRate: number; // recordingCompleted / frameSelected
+  processingCompletionRate: number;// processingCompleted / recordingCompleted
+  paymentAttemptRate: number;      // paymentAttempted / processingCompleted
+  paymentSuccessRate: number;      // paymentApproved / paymentAttempted
+  printCompletionRate: number;     // printCompleted / paymentApproved
+  overallConversionRate: number;   // printCompleted / sessionsStarted
+
+  // Drop-off analysis
+  dropOffPoints: Array<{
+    step: string;
+    dropped: number;
+    dropRate: number;
+  }>;
 }
 
 export interface DashboardStats {
@@ -63,6 +99,12 @@ export interface DashboardStats {
     frame_selected: string;
     payment_status: string;
     amount: number;
+    // Cancellation-related fields
+    approval_number?: string;
+    sales_date?: string;
+    sales_time?: string;
+    transaction_media?: string;
+    card_number?: string;
   }>;
 
   // Hourly distribution (for chart)
@@ -105,6 +147,11 @@ export function initDatabase(): void {
       status TEXT NOT NULL,
       payment_time INTEGER NOT NULL,
       error_message TEXT,
+      approval_number TEXT,
+      sales_date TEXT,
+      sales_time TEXT,
+      transaction_media TEXT,
+      card_number TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (session_id) REFERENCES sessions(session_id)
     );
@@ -125,7 +172,41 @@ export function initDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
   `);
 
+  // Migration: Add new columns to existing payments table if they don't exist
+  migratePaymentsTable();
+
   console.log('✅ [Analytics] Database initialized');
+}
+
+/**
+ * Migrate payments table to add new cancellation-related columns
+ */
+function migratePaymentsTable(): void {
+  if (!db) return;
+
+  // Check if columns exist and add them if not
+  const tableInfo = db.prepare('PRAGMA table_info(payments)').all() as Array<{ name: string }>;
+  const columnNames = tableInfo.map(col => col.name);
+
+  const newColumns = [
+    { name: 'approval_number', type: 'TEXT' },
+    { name: 'sales_date', type: 'TEXT' },
+    { name: 'sales_time', type: 'TEXT' },
+    { name: 'transaction_media', type: 'TEXT' },
+    { name: 'card_number', type: 'TEXT' },
+  ];
+
+  for (const column of newColumns) {
+    if (!columnNames.includes(column.name)) {
+      try {
+        db.exec(`ALTER TABLE payments ADD COLUMN ${column.name} ${column.type}`);
+        console.log(`📊 [Analytics] Added column: payments.${column.name}`);
+      } catch (error) {
+        // Column might already exist, ignore error
+        console.log(`📊 [Analytics] Column ${column.name} already exists or error:`, error);
+      }
+    }
+  }
 }
 
 /**
@@ -188,23 +269,46 @@ export function recordSessionEnd(sessionId: string, endTime: number): void {
 }
 
 /**
+ * Payment details for cancellation support
+ */
+export interface PaymentDetails {
+  approvalNumber?: string;      // 승인번호
+  salesDate?: string;           // 매출일 (YYYYMMDD)
+  salesTime?: string;           // 매출시간 (hhmmss)
+  transactionMedia?: string;    // 거래매체: '1' IC, '2' RF/MS, '3' RF
+  cardNumber?: string;          // 카드번호 (마스킹)
+}
+
+/**
  * Record a payment attempt
  */
 export function recordPayment(
   sessionId: string,
   amount: number,
   status: PaymentRecord['status'],
-  errorMessage?: string
+  errorMessage?: string,
+  details?: PaymentDetails
 ): void {
   if (!db) return;
 
   const stmt = db.prepare(`
-    INSERT INTO payments (session_id, amount, status, payment_time, error_message)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO payments (session_id, amount, status, payment_time, error_message, approval_number, sales_date, sales_time, transaction_media, card_number)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  stmt.run(sessionId, amount, status, Date.now(), errorMessage || null);
-  console.log(`📊 [Analytics] Payment recorded: ${sessionId} - ${status} - ${amount}원`);
+  stmt.run(
+    sessionId,
+    amount,
+    status,
+    Date.now(),
+    errorMessage || null,
+    details?.approvalNumber || null,
+    details?.salesDate || null,
+    details?.salesTime || null,
+    details?.transactionMedia || null,
+    details?.cardNumber || null
+  );
+  console.log(`📊 [Analytics] Payment recorded: ${sessionId} - ${status} - ${amount}원 (approval: ${details?.approvalNumber || 'N/A'})`);
 }
 
 /**
@@ -297,7 +401,7 @@ export function getDashboardStats(): DashboardStats {
     LIMIT 5
   `).all() as Array<{ frame: string; count: number }>;
 
-  // Recent sessions with payment info
+  // Recent sessions with payment info (including cancellation fields)
   const recentSessions = db.prepare(`
     SELECT
       s.session_id,
@@ -305,7 +409,12 @@ export function getDashboardStats(): DashboardStats {
       COALESCE(s.duration_seconds, 0) as duration_seconds,
       COALESCE(s.frame_selected, 'N/A') as frame_selected,
       COALESCE(p.status, 'N/A') as payment_status,
-      COALESCE(p.amount, 0) as amount
+      COALESCE(p.amount, 0) as amount,
+      p.approval_number,
+      p.sales_date,
+      p.sales_time,
+      p.transaction_media,
+      p.card_number
     FROM sessions s
     LEFT JOIN payments p ON s.session_id = p.session_id
     ORDER BY s.start_time DESC
@@ -317,6 +426,11 @@ export function getDashboardStats(): DashboardStats {
     frame_selected: string;
     payment_status: string;
     amount: number;
+    approval_number?: string;
+    sales_date?: string;
+    sales_time?: string;
+    transaction_media?: string;
+    card_number?: string;
   }>;
 
   // Hourly distribution (today)
@@ -359,6 +473,303 @@ export function getDashboardStats(): DashboardStats {
     hourlyDistribution,
     dailyRevenue,
   };
+}
+
+/**
+ * Get flow statistics for user journey analysis
+ */
+export function getFlowStatistics(): FlowStatistics {
+  if (!db) {
+    return {
+      sessionsStarted: 0,
+      frameSelected: 0,
+      recordingCompleted: 0,
+      processingCompleted: 0,
+      paymentAttempted: 0,
+      paymentApproved: 0,
+      printCompleted: 0,
+      frameSelectionRate: 0,
+      recordingCompletionRate: 0,
+      processingCompletionRate: 0,
+      paymentAttemptRate: 0,
+      paymentSuccessRate: 0,
+      printCompletionRate: 0,
+      overallConversionRate: 0,
+      dropOffPoints: [],
+    };
+  }
+
+  // Step 1: Total sessions started
+  const sessionsStarted = (db.prepare(`
+    SELECT COUNT(*) as count FROM sessions
+  `).get() as { count: number }).count;
+
+  // Step 2: Sessions with frame selected
+  const frameSelected = (db.prepare(`
+    SELECT COUNT(*) as count FROM sessions WHERE frame_selected IS NOT NULL
+  `).get() as { count: number }).count;
+
+  // Step 3: Sessions with recording completed (images_captured > 0)
+  const recordingCompleted = (db.prepare(`
+    SELECT COUNT(*) as count FROM sessions WHERE images_captured > 0
+  `).get() as { count: number }).count;
+
+  // Step 4: Sessions that completed processing (completed = 1)
+  const processingCompleted = (db.prepare(`
+    SELECT COUNT(*) as count FROM sessions WHERE completed = 1
+  `).get() as { count: number }).count;
+
+  // Step 5: Sessions with payment attempted
+  const paymentAttempted = (db.prepare(`
+    SELECT COUNT(DISTINCT session_id) as count FROM payments
+  `).get() as { count: number }).count;
+
+  // Step 6: Sessions with payment approved
+  const paymentApproved = (db.prepare(`
+    SELECT COUNT(DISTINCT session_id) as count FROM payments WHERE status = 'approved'
+  `).get() as { count: number }).count;
+
+  // Step 7: Sessions with print completed
+  const printCompleted = (db.prepare(`
+    SELECT COUNT(DISTINCT session_id) as count FROM prints WHERE success = 1
+  `).get() as { count: number }).count;
+
+  // Calculate conversion rates
+  const calcRate = (numerator: number, denominator: number): number => {
+    if (denominator === 0) return 0;
+    return Math.round((numerator / denominator) * 100);
+  };
+
+  const frameSelectionRate = calcRate(frameSelected, sessionsStarted);
+  const recordingCompletionRate = calcRate(recordingCompleted, frameSelected);
+  const processingCompletionRate = calcRate(processingCompleted, recordingCompleted);
+  const paymentAttemptRate = calcRate(paymentAttempted, processingCompleted);
+  const paymentSuccessRate = calcRate(paymentApproved, paymentAttempted);
+  const printCompletionRate = calcRate(printCompleted, paymentApproved);
+  const overallConversionRate = calcRate(printCompleted, sessionsStarted);
+
+  // Calculate drop-offs
+  const dropOffPoints = [
+    {
+      step: '프레임 선택',
+      dropped: sessionsStarted - frameSelected,
+      dropRate: calcRate(sessionsStarted - frameSelected, sessionsStarted),
+    },
+    {
+      step: '녹화 완료',
+      dropped: frameSelected - recordingCompleted,
+      dropRate: calcRate(frameSelected - recordingCompleted, frameSelected),
+    },
+    {
+      step: '처리 완료',
+      dropped: recordingCompleted - processingCompleted,
+      dropRate: calcRate(recordingCompleted - processingCompleted, recordingCompleted),
+    },
+    {
+      step: '결제 시도',
+      dropped: processingCompleted - paymentAttempted,
+      dropRate: calcRate(processingCompleted - paymentAttempted, processingCompleted),
+    },
+    {
+      step: '결제 승인',
+      dropped: paymentAttempted - paymentApproved,
+      dropRate: calcRate(paymentAttempted - paymentApproved, paymentAttempted),
+    },
+    {
+      step: '인쇄 완료',
+      dropped: paymentApproved - printCompleted,
+      dropRate: calcRate(paymentApproved - printCompleted, paymentApproved),
+    },
+  ];
+
+  return {
+    sessionsStarted,
+    frameSelected,
+    recordingCompleted,
+    processingCompleted,
+    paymentAttempted,
+    paymentApproved,
+    printCompleted,
+    frameSelectionRate,
+    recordingCompletionRate,
+    processingCompletionRate,
+    paymentAttemptRate,
+    paymentSuccessRate,
+    printCompletionRate,
+    overallConversionRate,
+    dropOffPoints,
+  };
+}
+
+/**
+ * Insert sample data for testing the dashboard
+ */
+export function insertSampleData(): { success: boolean; stats: { sessionsStarted: number; frameSelected: number; recordingCompleted: number; processingCompleted: number; paymentAttempted: number; paymentApproved: number; printCompleted: number } } {
+  if (!db) {
+    return { success: false, stats: { sessionsStarted: 0, frameSelected: 0, recordingCompleted: 0, processingCompleted: 0, paymentAttempted: 0, paymentApproved: 0, printCompleted: 0 } };
+  }
+
+  console.log('📊 [Analytics] Inserting sample data...');
+
+  // Clear existing data first
+  db.exec('DELETE FROM prints');
+  db.exec('DELETE FROM payments');
+  db.exec('DELETE FROM sessions');
+
+  // Sample frames
+  const frames = ['프레임A', '프레임B', '프레임C', '프레임D', '프레임E'];
+
+  // Generate sample sessions (100 sessions over the past 7 days)
+  const now = Date.now();
+  const dayMs = 24 * 60 * 60 * 1000;
+
+  const insertSession = db.prepare(`
+    INSERT INTO sessions (session_id, start_time, end_time, duration_seconds, frame_selected, images_captured, completed)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const insertPayment = db.prepare(`
+    INSERT INTO payments (session_id, amount, status, payment_time, approval_number, sales_date, sales_time, transaction_media, card_number)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const insertPrint = db.prepare(`
+    INSERT INTO prints (session_id, image_path, print_time, success)
+    VALUES (?, ?, ?, ?)
+  `);
+
+  // Statistics for the funnel
+  const stats = {
+    sessionsStarted: 0,
+    frameSelected: 0,
+    recordingCompleted: 0,
+    processingCompleted: 0,
+    paymentAttempted: 0,
+    paymentApproved: 0,
+    printCompleted: 0
+  };
+
+  // Create 100 sessions with realistic drop-off rates
+  for (let i = 0; i < 100; i++) {
+    const sessionId = `sample_session_${now}_${i}`;
+    const daysAgo = Math.floor(Math.random() * 7);
+    const hoursAgo = Math.floor(Math.random() * 24);
+    const startTime = now - (daysAgo * dayMs) - (hoursAgo * 60 * 60 * 1000);
+
+    stats.sessionsStarted++;
+
+    // 85% select a frame
+    const selectedFrame = Math.random() < 0.85;
+    const frameName = selectedFrame ? frames[Math.floor(Math.random() * frames.length)] : null;
+
+    if (selectedFrame) stats.frameSelected++;
+
+    // 90% of those who selected frame complete recording
+    const recordingDone = selectedFrame && Math.random() < 0.90;
+    const imagesCaptured = recordingDone ? Math.floor(Math.random() * 3) + 1 : 0;
+
+    if (recordingDone) stats.recordingCompleted++;
+
+    // 95% of those who recorded complete processing
+    const processingDone = recordingDone && Math.random() < 0.95;
+
+    if (processingDone) stats.processingCompleted++;
+
+    // Duration: 2-8 minutes
+    const durationSeconds = processingDone ? Math.floor(Math.random() * 360) + 120 : Math.floor(Math.random() * 60);
+    const endTime = processingDone ? startTime + (durationSeconds * 1000) : null;
+
+    // Insert session
+    insertSession.run(
+      sessionId,
+      startTime,
+      endTime,
+      durationSeconds,
+      frameName,
+      imagesCaptured,
+      processingDone ? 1 : 0
+    );
+
+    // 85% of those who completed processing attempt payment
+    const paymentAttemptedFlag = processingDone && Math.random() < 0.85;
+
+    if (paymentAttemptedFlag) {
+      stats.paymentAttempted++;
+
+      // 80% payment success rate
+      const paymentApprovedFlag = Math.random() < 0.80;
+      const paymentTime = startTime + (durationSeconds * 1000) + 5000;
+
+      if (paymentApprovedFlag) {
+        stats.paymentApproved++;
+
+        // Generate approval details
+        const salesDate = new Date(paymentTime).toISOString().slice(0, 10).replace(/-/g, '');
+        const salesTime = new Date(paymentTime).toTimeString().slice(0, 8).replace(/:/g, '');
+        const approvalNumber = String(Math.floor(Math.random() * 100000000)).padStart(8, '0');
+        const transactionMedia = ['1', '2', '3'][Math.floor(Math.random() * 3)];
+        const cardLast4 = String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+
+        insertPayment.run(
+          sessionId,
+          5000,
+          'approved',
+          paymentTime,
+          approvalNumber,
+          salesDate,
+          salesTime,
+          transactionMedia,
+          `****-****-****-${cardLast4}`
+        );
+
+        // 95% of approved payments result in successful print
+        const printDone = Math.random() < 0.95;
+
+        if (printDone) {
+          stats.printCompleted++;
+
+          insertPrint.run(
+            sessionId,
+            `/frames/${sessionId}_print.jpg`,
+            paymentTime + 30000,
+            1
+          );
+        } else {
+          // Print failed
+          insertPrint.run(
+            sessionId,
+            `/frames/${sessionId}_print.jpg`,
+            paymentTime + 30000,
+            0
+          );
+        }
+      } else {
+        // Payment declined
+        insertPayment.run(
+          sessionId,
+          5000,
+          'declined',
+          paymentTime,
+          null,
+          null,
+          null,
+          null,
+          null
+        );
+      }
+    }
+  }
+
+  console.log('✅ [Analytics] Sample data inserted');
+  console.log(`   Sessions Started: ${stats.sessionsStarted}`);
+  console.log(`   Frame Selected: ${stats.frameSelected}`);
+  console.log(`   Recording Completed: ${stats.recordingCompleted}`);
+  console.log(`   Processing Completed: ${stats.processingCompleted}`);
+  console.log(`   Payment Attempted: ${stats.paymentAttempted}`);
+  console.log(`   Payment Approved: ${stats.paymentApproved}`);
+  console.log(`   Print Completed: ${stats.printCompleted}`);
+
+  return { success: true, stats };
 }
 
 /**

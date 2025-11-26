@@ -7,6 +7,14 @@ import path from 'path';
 // All Node.js built-in modules
 const nodeBuiltins = [...builtinModules, ...builtinModules.map(m => `node:${m}`)];
 
+// Native modules that should not be bundled
+const nativeModules = [
+  'better-sqlite3',
+  'serialport',
+  '@serialport/bindings-cpp',
+  '@serialport/parser-byte-length',
+];
+
 export default defineConfig({
   // Use relative paths for Electron's file:// protocol
   base: './',
@@ -25,14 +33,12 @@ export default defineConfig({
             rollupOptions: {
               external: [
                 'electron',
-                'better-sqlite3',
                 'dotenv',
+                ...nativeModules,
                 ...nodeBuiltins,
               ],
               output: {
                 format: 'cjs',
-                // Ensure electron is required correctly
-                interop: 'auto',
               },
             },
           },
@@ -50,7 +56,6 @@ export default defineConfig({
               external: ['electron', ...nodeBuiltins],
               output: {
                 format: 'cjs',
-                interop: 'auto',
               },
             },
           },

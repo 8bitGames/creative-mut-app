@@ -1,5 +1,5 @@
 // src/screens/09-PaymentScreen.tsx
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CreditCard, Loader2, CheckCircle, XCircle, Clock, Sparkles } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
@@ -7,6 +7,9 @@ import { useSessionStore } from '@/store/sessionStore';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+
+// Payment amount is fixed at 5,000원
+const PAYMENT_AMOUNT = 5000;
 
 enum PaymentStatus {
   IDLE = 'idle',
@@ -18,6 +21,22 @@ enum PaymentStatus {
   ERROR = 'error',
   CANCELLED = 'cancelled',
   TIMEOUT = 'timeout',
+}
+
+interface PaymentResultData {
+  success: boolean;
+  status: string;
+  transactionId?: string;
+  amount?: number;
+  cardType?: string;
+  cardLast4?: string;
+  approvalNumber?: string;
+  salesDate?: string;
+  salesTime?: string;
+  transactionMedia?: string;
+  error?: string;
+  rejectCode?: string;
+  rejectMessage?: string;
 }
 
 const containerVariants = {
@@ -53,9 +72,12 @@ const cardVariants = {
 export function PaymentScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
   const processedResult = useSessionStore((state) => state.processedResult);
+  const setLastPaymentResult = useSessionStore((state) => state.setLastPaymentResult);
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>(PaymentStatus.WAITING);
   const [timeLeft, setTimeLeft] = useState(30);
   const [message, setMessage] = useState('');
+  const cleanupRef = useRef<(() => void)[]>([]);
+  const paymentStartedRef = useRef(false);
 
   // CRITICAL: Ensure hologram display (video + QR) persists when entering this screen
   // AGGRESSIVE APPROACH: Poll every 500ms to ensure hologram stays in correct state
@@ -95,7 +117,11 @@ export function PaymentScreen() {
   }, [processedResult]);
 
   useEffect(() => {
-    // Start payment process (mock implementation)
+    // Prevent double-starting payment
+    if (paymentStartedRef.current) return;
+    paymentStartedRef.current = true;
+
+    // Start payment process
     startPayment();
 
     // 30-second timeout timer
@@ -109,31 +135,152 @@ export function PaymentScreen() {
       });
     }, 1000);
 
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      // Cleanup event listeners
+      cleanupRef.current.forEach(cleanup => cleanup());
+      cleanupRef.current = [];
+    };
   }, []);
 
   const startPayment = async () => {
     setPaymentStatus(PaymentStatus.WAITING);
     setMessage('카드를 삽입해주세요');
 
-    // Mock payment simulation - ALWAYS SUCCEEDS for testing
-    // Simulate card insertion after 1 second
-    setTimeout(() => {
-      setPaymentStatus(PaymentStatus.CARD_INSERTED);
-      setMessage('카드가 감지되었습니다');
+    // @ts-ignore - Electron API
+    const electron = window.electron;
+    if (!electron?.payment) {
+      console.error('❌ [PaymentScreen] Electron payment API not available');
+      setPaymentStatus(PaymentStatus.ERROR);
+      setMessage('결제 시스템을 초기화할 수 없습니다');
+      return;
+    }
 
-      setTimeout(() => {
-        setPaymentStatus(PaymentStatus.PROCESSING);
-        setMessage('결제 처리 중...');
+    // Set up event listeners for real-time payment updates
+    const unsubscribeStatus = electron.payment.onStatus((status: { status: string; message?: string; cardType?: string }) => {
+      console.log('💳 [PaymentScreen] Payment status update:', status);
 
-        setTimeout(() => {
-          // ALWAYS SUCCEED for testing
+      switch (status.status) {
+        case 'waiting':
+          setPaymentStatus(PaymentStatus.WAITING);
+          setMessage(status.message || '카드를 삽입해주세요');
+          break;
+        case 'card_inserted':
+          setPaymentStatus(PaymentStatus.CARD_INSERTED);
+          setMessage(status.message || '카드가 감지되었습니다');
+          break;
+        case 'processing':
+          setPaymentStatus(PaymentStatus.PROCESSING);
+          setMessage(status.message || '결제 처리 중...');
+          break;
+        case 'approved':
           setPaymentStatus(PaymentStatus.APPROVED);
-          setMessage('결제가 완료되었습니다!');
-          console.log('✅ [PaymentScreen] Payment approved - will navigate to printing in 1 second');
-        }, 1000);
-      }, 500);
-    }, 1000);
+          setMessage(status.message || '결제가 완료되었습니다!');
+          break;
+        case 'declined':
+          setPaymentStatus(PaymentStatus.DECLINED);
+          setMessage(status.message || '결제가 거부되었습니다');
+          break;
+        case 'cancelled':
+          setPaymentStatus(PaymentStatus.CANCELLED);
+          setMessage(status.message || '결제가 취소되었습니다');
+          break;
+        case 'timeout':
+          setPaymentStatus(PaymentStatus.TIMEOUT);
+          setMessage(status.message || '시간이 초과되었습니다');
+          break;
+        default:
+          console.warn('⚠️ [PaymentScreen] Unknown payment status:', status.status);
+      }
+    });
+    cleanupRef.current.push(unsubscribeStatus);
+
+    const unsubscribeComplete = electron.payment.onComplete((result: PaymentResultData) => {
+      console.log('💳 [PaymentScreen] Payment complete:', result);
+      const sessionId = useSessionStore.getState().sessionId;
+
+      if (result.success) {
+        setPaymentStatus(PaymentStatus.APPROVED);
+        setMessage('결제가 완료되었습니다!');
+
+        // Store payment result for potential cancellation later
+        setLastPaymentResult({
+          transactionId: result.transactionId,
+          approvalNumber: result.approvalNumber,
+          salesDate: result.salesDate,
+          salesTime: result.salesTime,
+          amount: result.amount || PAYMENT_AMOUNT,
+          transactionMedia: result.transactionMedia,
+          cardType: result.cardType,
+          cardLast4: result.cardLast4,
+        });
+
+        // Record payment to analytics with cancellation details
+        // @ts-ignore - Electron API
+        if (window.electron?.analytics?.recordPayment) {
+          // @ts-ignore
+          window.electron.analytics.recordPayment(
+            sessionId,
+            result.amount || PAYMENT_AMOUNT,
+            'approved',
+            undefined,
+            {
+              approvalNumber: result.approvalNumber,
+              salesDate: result.salesDate,
+              salesTime: result.salesTime,
+              transactionMedia: result.transactionMedia,
+              cardNumber: result.cardLast4 ? `****-****-****-${result.cardLast4}` : undefined,
+            }
+          );
+          console.log('📊 [PaymentScreen] Payment recorded to analytics with cancellation details');
+        }
+
+        console.log('✅ [PaymentScreen] Payment approved - will navigate to printing in 1 second');
+      } else {
+        setPaymentStatus(PaymentStatus.DECLINED);
+        setMessage(result.rejectMessage || result.error || '결제가 거부되었습니다');
+
+        // Record failed payment to analytics
+        // @ts-ignore - Electron API
+        if (window.electron?.analytics?.recordPayment) {
+          // @ts-ignore
+          window.electron.analytics.recordPayment(
+            sessionId,
+            PAYMENT_AMOUNT,
+            'declined',
+            result.rejectMessage || result.error
+          );
+        }
+      }
+    });
+    cleanupRef.current.push(unsubscribeComplete);
+
+    const unsubscribeError = electron.payment.onError((error: { message: string }) => {
+      console.error('❌ [PaymentScreen] Payment error:', error);
+      setPaymentStatus(PaymentStatus.ERROR);
+      setMessage(error.message || '결제 오류가 발생했습니다');
+    });
+    cleanupRef.current.push(unsubscribeError);
+
+    // Start the actual payment process
+    try {
+      console.log(`💳 [PaymentScreen] Starting payment: ${PAYMENT_AMOUNT}원`);
+      const result = await electron.payment.process({
+        amount: PAYMENT_AMOUNT,
+        currency: 'KRW',
+        description: 'MUT 홀로그램 사진 인쇄',
+      });
+
+      // Handle immediate result (for mock mode or quick responses)
+      if (result && result.success !== undefined) {
+        console.log('💳 [PaymentScreen] Immediate payment result:', result);
+        // The event listeners will handle the UI update
+      }
+    } catch (error) {
+      console.error('❌ [PaymentScreen] Payment request failed:', error);
+      setPaymentStatus(PaymentStatus.ERROR);
+      setMessage('결제 요청에 실패했습니다');
+    }
   };
 
   const handleTimeout = () => {
@@ -144,13 +291,22 @@ export function PaymentScreen() {
     }
   };
 
-  const handleCancel = () => {
+  const handleCancel = async () => {
+    // @ts-ignore - Electron API
+    const electron = window.electron;
+    if (electron?.payment) {
+      await electron.payment.cancel();
+    }
     setPaymentStatus(PaymentStatus.CANCELLED);
     setTimeout(() => setScreen('idle'), 500);
   };
 
   const handleRetry = () => {
     setTimeLeft(30);
+    paymentStartedRef.current = false;
+    // Cleanup previous listeners
+    cleanupRef.current.forEach(cleanup => cleanup());
+    cleanupRef.current = [];
     startPayment();
   };
 

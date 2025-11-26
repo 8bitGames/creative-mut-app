@@ -59,23 +59,27 @@ export function CaptureScreen() {
   const [recordingTime, setRecordingTime] = useState(0); // Elapsed recording time in seconds
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const canvasStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const shutterSoundRef = useRef<HTMLAudioElement | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
-  // Initialize camera stream
+  // Initialize camera stream with canvas rotation (16:9 → 9:16)
   useEffect(() => {
-    console.log('📷 [CaptureScreen] Component mounted - Initializing camera...');
+    console.log('📷 [CaptureScreen] Component mounted - Initializing camera with rotation...');
 
     const startCamera = async () => {
       try {
-        console.log('🎥 [CaptureScreen] Requesting camera access (1080x1920, facingMode: user)...');
+        // Request 16:9 landscape from webcam (what most webcams output natively)
+        console.log('🎥 [CaptureScreen] Requesting camera access (1920x1080, facingMode: user)...');
 
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            width: { ideal: 1080 },
-            height: { ideal: 1920 },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
             facingMode: 'user'
           },
           audio: false
@@ -84,8 +88,62 @@ export function CaptureScreen() {
         console.log('✅ [CaptureScreen] Camera access granted!');
         streamRef.current = stream;
 
+        // Set up hidden video element to receive webcam stream
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
+
+          // Wait for video metadata to load
+          videoRef.current.onloadedmetadata = () => {
+            const video = videoRef.current!;
+            const canvas = canvasRef.current!;
+            const ctx = canvas.getContext('2d')!;
+
+            // Get actual video dimensions
+            const videoWidth = video.videoWidth;
+            const videoHeight = video.videoHeight;
+
+            console.log(`📐 [CaptureScreen] Video dimensions: ${videoWidth}x${videoHeight}`);
+
+            // Canvas size = rotated dimensions (swap width/height for 90° rotation)
+            canvas.width = videoHeight;  // 1080 → canvas width
+            canvas.height = videoWidth;  // 1920 → canvas height
+
+            console.log(`🔄 [CaptureScreen] Canvas dimensions (rotated): ${canvas.width}x${canvas.height}`);
+
+            // Draw rotated frames to canvas
+            const drawRotatedFrame = () => {
+              if (!video.paused && !video.ended) {
+                // Save context state
+                ctx.save();
+
+                // Move to center of canvas
+                ctx.translate(canvas.width / 2, canvas.height / 2);
+
+                // Rotate 90 degrees clockwise
+                ctx.rotate(90 * Math.PI / 180);
+
+                // Mirror horizontally (for selfie mode) and draw
+                ctx.scale(-1, 1);
+
+                // Draw video centered (note: dimensions are swapped due to rotation)
+                ctx.drawImage(video, -videoWidth / 2, -videoHeight / 2, videoWidth, videoHeight);
+
+                // Restore context state
+                ctx.restore();
+              }
+
+              // Continue animation loop
+              animationFrameRef.current = requestAnimationFrame(drawRotatedFrame);
+            };
+
+            // Start drawing loop
+            drawRotatedFrame();
+
+            // Create stream from canvas for recording (30fps)
+            canvasStreamRef.current = canvas.captureStream(30);
+            console.log('🎬 [CaptureScreen] Canvas stream created for recording');
+          };
+
           console.log('📺 [CaptureScreen] Stream assigned to video element');
         }
       } catch (error) {
@@ -101,9 +159,22 @@ export function CaptureScreen() {
     // Cleanup: Stop camera when component unmounts
     return () => {
       console.log('🛑 [CaptureScreen] Component unmounting - Stopping camera...');
+
+      // Stop animation frame
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+
+      // Stop original webcam stream
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
+
+      // Stop canvas stream
+      if (canvasStreamRef.current) {
+        canvasStreamRef.current.getTracks().forEach(track => track.stop());
+      }
+
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
@@ -146,15 +217,16 @@ export function CaptureScreen() {
     console.log('✅ [CaptureScreen] Photo effect played (no actual capture)');
   }, []);
 
-  // Start video recording
+  // Start video recording (uses rotated canvas stream)
   const startVideoRecording = useCallback(() => {
-    if (!streamRef.current) {
-      console.error('❌ [CaptureScreen] No stream available for recording');
+    // Use canvas stream for rotated video recording
+    if (!canvasStreamRef.current) {
+      console.error('❌ [CaptureScreen] No canvas stream available for recording');
       return;
     }
 
     try {
-      console.log('🎬 [CaptureScreen] Starting video recording...');
+      console.log('🎬 [CaptureScreen] Starting video recording (rotated canvas stream)...');
       recordedChunksRef.current = [];
 
       // Try different codecs in order of preference (MP4 first for better compatibility)
@@ -183,7 +255,8 @@ export function CaptureScreen() {
         console.log('   Using codec: WebM (default)');
       }
 
-      const mediaRecorder = new MediaRecorder(streamRef.current, options);
+      // Record from canvas stream (rotated 9:16 video)
+      const mediaRecorder = new MediaRecorder(canvasStreamRef.current, options);
 
       // Handle data chunks as they become available
       mediaRecorder.ondataavailable = async (event) => {
@@ -367,14 +440,19 @@ export function CaptureScreen() {
       animate="visible"
       exit="exit"
     >
-      {/* Live Camera Feed - Full Screen Background */}
+      {/* Hidden video element - source for canvas rotation */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted
+        className="hidden"
+      />
+
+      {/* Live Camera Feed - Rotated Canvas (9:16 portrait) */}
+      <canvas
+        ref={canvasRef}
         className="absolute inset-0 w-full h-full object-cover"
-        style={{ transform: 'scaleX(-1)' }} // Mirror the video
       />
 
       {/* Frame Overlay - Always visible at 100% opacity during both phases */}

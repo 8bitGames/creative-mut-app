@@ -74,46 +74,128 @@ export interface VideoAPI {
   onComplete: (callback: (result: VideoCompleteResult) => void) => () => void;
 }
 
-// Payment API Types
-export type PaymentMethod = 'card' | 'cash';
-
+// Payment API Types - supports both mock mode and TL3600 hardware
 export interface PaymentProcessParams {
   amount: number;
-  currency: string;
-  method: PaymentMethod;
+  currency?: string;
+  description?: string;
 }
 
 export interface PaymentProcessResult {
   success: boolean;
-  paymentId?: string;
+  status?: string;
+  transactionId?: string;
   error?: string;
 }
 
-export interface PaymentStatus {
+export interface PaymentStatusResult {
   success: boolean;
-  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
-  paymentId: string;
+  status: string;
+  mode?: 'mock' | 'tl3600';
   error?: string;
 }
 
 export interface PaymentStatusUpdate {
   status: string;
   message?: string;
+  cardType?: string;
 }
 
 export interface PaymentCompleteResult {
   success: boolean;
+  status: string;
   transactionId?: string;
-  receiptUrl?: string;
+  amount?: number;
+  timestamp?: string;
+  cardType?: string;
+  cardLast4?: string;
+  cardNumber?: string;
+  approvalNumber?: string;
+  salesDate?: string;
+  salesTime?: string;
+  transactionMedia?: string;
+  error?: string;
+  rejectCode?: string;
+  rejectMessage?: string;
+}
+
+export interface CancelTransactionParams {
+  approvalNumber: string;
+  originalDate: string;   // YYYYMMDD
+  originalTime: string;   // hhmmss
+  amount: number;
+  transactionType: string; // '1' IC, '2' RF/MS
+}
+
+export interface PortInfo {
+  path: string;
+  manufacturer?: string;
+}
+
+export interface ListPortsResult {
+  success: boolean;
+  ports: PortInfo[];
   error?: string;
 }
 
 export interface PaymentAPI {
   process: (params: PaymentProcessParams) => Promise<PaymentProcessResult>;
-  cancel: (paymentId: string) => Promise<{ success: boolean }>;
-  getStatus: (paymentId: string) => Promise<PaymentStatus>;
+  cancel: () => Promise<{ success: boolean }>;
+  getStatus: () => Promise<PaymentStatusResult>;
+  cancelTransaction: (params: CancelTransactionParams) => Promise<PaymentProcessResult>;
+  listPorts: () => Promise<ListPortsResult>;
   onStatus: (callback: (status: PaymentStatusUpdate) => void) => () => void;
   onComplete: (callback: (result: PaymentCompleteResult) => void) => () => void;
+  onCardRemoved: (callback: () => void) => () => void;
+  onError: (callback: (error: { message: string }) => void) => () => void;
+  onDisconnected: (callback: () => void) => () => void;
+}
+
+// Configuration API Types
+export interface TL3600Config {
+  port: string;
+  terminalId: string;
+  timeout: number;
+  retryCount: number;
+}
+
+export interface PaymentConfigSettings {
+  useMockMode: boolean;
+  defaultAmount: number;
+  mockApprovalRate: number;
+}
+
+export interface DebugConfig {
+  enableLogging: boolean;
+  logLevel: 'error' | 'warn' | 'info' | 'debug';
+}
+
+export interface AppConfig {
+  tl3600: TL3600Config;
+  payment: PaymentConfigSettings;
+  debug: DebugConfig;
+}
+
+export interface ConfigGetResult {
+  success: boolean;
+  config?: AppConfig;
+  configPath?: string;
+  error?: string;
+}
+
+export interface ConfigUpdateResult {
+  success: boolean;
+  config?: AppConfig | TL3600Config | PaymentConfigSettings;
+  error?: string;
+}
+
+export interface ConfigAPI {
+  get: () => Promise<ConfigGetResult>;
+  update: (updates: Partial<AppConfig>) => Promise<ConfigUpdateResult>;
+  updateTL3600: (updates: Partial<TL3600Config>) => Promise<ConfigUpdateResult>;
+  updatePayment: (updates: Partial<PaymentConfigSettings>) => Promise<ConfigUpdateResult>;
+  reset: () => Promise<ConfigUpdateResult>;
+  getPath: () => Promise<{ success: boolean; path: string }>;
 }
 
 // Main Electron API Interface
@@ -122,6 +204,7 @@ export interface ElectronAPI {
   printer: PrinterAPI;
   video: VideoAPI;
   payment: PaymentAPI;
+  config: ConfigAPI;
 }
 
 // Extend Window interface

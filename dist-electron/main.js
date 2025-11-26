@@ -28,10 +28,9 @@ const child_process = require("child_process");
 const events = require("events");
 const fs = require("fs");
 const os = require("os");
+const serialport = require("serialport");
 const Database = require("better-sqlite3");
-const _interopDefault = (e) => e && e.__esModule ? e : { default: e };
-function _interopNamespace(e) {
-  if (e && e.__esModule) return e;
+function _interopNamespaceDefault(e) {
   const n = Object.create(null, { [Symbol.toStringTag]: { value: "Module" } });
   if (e) {
     for (const k in e) {
@@ -47,11 +46,10 @@ function _interopNamespace(e) {
   n.default = e;
   return Object.freeze(n);
 }
-const path__namespace = /* @__PURE__ */ _interopNamespace(path);
-const fs__namespace$1 = /* @__PURE__ */ _interopNamespace(fs$1);
-const fs__namespace = /* @__PURE__ */ _interopNamespace(fs);
-const os__namespace = /* @__PURE__ */ _interopNamespace(os);
-const Database__default = /* @__PURE__ */ _interopDefault(Database);
+const path__namespace = /* @__PURE__ */ _interopNamespaceDefault(path);
+const fs__namespace$1 = /* @__PURE__ */ _interopNamespaceDefault(fs$1);
+const fs__namespace = /* @__PURE__ */ _interopNamespaceDefault(fs);
+const os__namespace = /* @__PURE__ */ _interopNamespaceDefault(os);
 class PythonBridge extends events.EventEmitter {
   pythonPath;
   pipelineScriptPath;
@@ -62,17 +60,17 @@ class PythonBridge extends events.EventEmitter {
     super();
     const isProd = electron.app.isPackaged;
     if (isProd) {
-      this.pythonPath = path__namespace.default.join(process.resourcesPath, "python", "python.exe");
-      this.pipelineScriptPath = path__namespace.default.join(process.resourcesPath, "python", "pipeline.py");
-      this.stitcherScriptPath = path__namespace.default.join(process.resourcesPath, "python", "stitch_images.py");
-      this.stitcherWorkingDir = path__namespace.default.join(process.resourcesPath, "python");
-      this.pipelineWorkingDir = path__namespace.default.join(process.resourcesPath, "python");
+      this.pythonPath = path.join(process.resourcesPath, "python", "python.exe");
+      this.pipelineScriptPath = path.join(process.resourcesPath, "python", "pipeline.py");
+      this.stitcherScriptPath = path.join(process.resourcesPath, "python", "stitch_images.py");
+      this.stitcherWorkingDir = path.join(process.resourcesPath, "python");
+      this.pipelineWorkingDir = path.join(process.resourcesPath, "python");
     } else {
       this.pythonPath = process.platform === "win32" ? "python" : "python3";
-      this.pipelineScriptPath = path__namespace.default.join(electron.app.getAppPath(), "MUT-distribution", "pipeline.py");
-      this.stitcherScriptPath = path__namespace.default.join(electron.app.getAppPath(), "python", "stitch_images.py");
-      this.stitcherWorkingDir = path__namespace.default.join(electron.app.getAppPath(), "python");
-      this.pipelineWorkingDir = path__namespace.default.join(electron.app.getAppPath(), "MUT-distribution");
+      this.pipelineScriptPath = path.join(electron.app.getAppPath(), "MUT-distribution", "pipeline.py");
+      this.stitcherScriptPath = path.join(electron.app.getAppPath(), "python", "stitch_images.py");
+      this.stitcherWorkingDir = path.join(electron.app.getAppPath(), "python");
+      this.pipelineWorkingDir = path.join(electron.app.getAppPath(), "MUT-distribution");
     }
     console.log("🐍 [PythonBridge] Initialized");
     console.log(`   Python: ${this.pythonPath}`);
@@ -183,7 +181,7 @@ ${"=".repeat(70)}`);
     let frameFilesystemPath = options.frameTemplatePath;
     if (options.frameTemplatePath.startsWith("/")) {
       const relativePath = options.frameTemplatePath.substring(1);
-      frameFilesystemPath = path__namespace.default.join(electron.app.getAppPath(), "public", relativePath);
+      frameFilesystemPath = path.join(electron.app.getAppPath(), "public", relativePath);
       console.log(`   Frame template (filesystem): ${frameFilesystemPath}`);
     }
     this.emit("progress", {
@@ -239,7 +237,7 @@ ${"=".repeat(70)}`);
       console.log(`
 🎬 [PythonBridge] Stitching images...`);
       const timestamp = Date.now();
-      const outputPath = path__namespace.default.join(this.stitcherWorkingDir, "output", `stitched_${timestamp}.mp4`);
+      const outputPath = path.join(this.stitcherWorkingDir, "output", `stitched_${timestamp}.mp4`);
       const args = [
         this.stitcherScriptPath,
         "--images",
@@ -308,13 +306,13 @@ ${"=".repeat(70)}`);
       try {
         const fs2 = await import("fs/promises");
         const timestamp = Date.now();
-        const outputDir = path__namespace.default.join(this.pipelineWorkingDir, "output", `frames_${timestamp}`);
+        const outputDir = path.join(this.pipelineWorkingDir, "output", `frames_${timestamp}`);
         await fs2.mkdir(outputDir, { recursive: true });
         console.log(`   Output directory: ${outputDir}`);
         const extractedFrames = [];
         for (let i = 0; i < timestamps.length; i++) {
           const time = timestamps[i];
-          const framePath = path__namespace.default.join(outputDir, `frame_${time}s.jpg`);
+          const framePath = path.join(outputDir, `frame_${time}s.jpg`);
           console.log(`
    Extracting frame ${i + 1}/${timestamps.length} at ${time}s...`);
           const args = [
@@ -1027,20 +1025,1078 @@ class PrinterController extends events.EventEmitter {
     return { success: true };
   }
 }
+const STX = 2;
+const ETX = 3;
+const ACK = 6;
+const NACK = 21;
+const HEADER_SIZE = 35;
+const OFFSET = {
+  TERMINAL_ID: 1,
+  DATE_TIME: 17,
+  JOB_CODE: 31,
+  RESPONSE_CODE: 32,
+  DATA_LENGTH: 33,
+  DATA_START: 35
+};
+var JobCode = /* @__PURE__ */ ((JobCode2) => {
+  JobCode2["DEVICE_CHECK"] = "A";
+  JobCode2["TRANSACTION_APPROVAL"] = "B";
+  JobCode2["TRANSACTION_CANCEL"] = "C";
+  JobCode2["CARD_INQUIRY"] = "D";
+  JobCode2["PAYMENT_STANDBY"] = "E";
+  JobCode2["CARD_UID_READ"] = "F";
+  JobCode2["ADDITIONAL_APPROVAL"] = "G";
+  JobCode2["APPROVAL_CONFIRM"] = "H";
+  JobCode2["MEMORY_WRITE"] = "K";
+  JobCode2["LAST_APPROVAL"] = "L";
+  JobCode2["IC_CARD_CHECK"] = "M";
+  JobCode2["TRANSIT_INQUIRY"] = "N";
+  JobCode2["BARCODE_APPROVAL"] = "Q";
+  JobCode2["TERMINAL_RESET"] = "R";
+  JobCode2["DISPLAY_SETTINGS"] = "S";
+  JobCode2["TRANSIT_DISCOUNT"] = "T";
+  JobCode2["VERSION_CHECK"] = "V";
+  JobCode2["BARCODE_INQUIRY"] = "W";
+  JobCode2["SETTINGS_SET"] = "X";
+  JobCode2["SETTINGS_GET"] = "Y";
+  JobCode2["DISCOUNT_APPROVAL"] = "Z";
+  JobCode2["DEVICE_CHECK_RESPONSE"] = "a";
+  JobCode2["TRANSACTION_APPROVAL_RESPONSE"] = "b";
+  JobCode2["TRANSACTION_CANCEL_RESPONSE"] = "c";
+  JobCode2["CARD_INQUIRY_RESPONSE"] = "d";
+  JobCode2["PAYMENT_STANDBY_RESPONSE"] = "e";
+  JobCode2["CARD_UID_READ_RESPONSE"] = "f";
+  JobCode2["ADDITIONAL_APPROVAL_RESPONSE"] = "g";
+  JobCode2["MEMORY_WRITE_RESPONSE"] = "k";
+  JobCode2["LAST_APPROVAL_RESPONSE"] = "l";
+  JobCode2["IC_CARD_CHECK_RESPONSE"] = "m";
+  JobCode2["TRANSIT_INQUIRY_RESPONSE"] = "n";
+  JobCode2["BARCODE_APPROVAL_RESPONSE"] = "q";
+  JobCode2["DISPLAY_SETTINGS_RESPONSE"] = "s";
+  JobCode2["TRANSIT_DISCOUNT_RESPONSE"] = "t";
+  JobCode2["VERSION_CHECK_RESPONSE"] = "v";
+  JobCode2["BARCODE_INQUIRY_RESPONSE"] = "w";
+  JobCode2["SETTINGS_SET_RESPONSE"] = "x";
+  JobCode2["SETTINGS_GET_RESPONSE"] = "y";
+  JobCode2["DISCOUNT_APPROVAL_RESPONSE"] = "z";
+  JobCode2["EVENT_RESPONSE"] = "@";
+  return JobCode2;
+})(JobCode || {});
+var EventType = /* @__PURE__ */ ((EventType2) => {
+  EventType2["MS_CARD"] = "M";
+  EventType2["RF_CARD"] = "R";
+  EventType2["IC_CARD"] = "I";
+  EventType2["IC_CARD_REMOVED"] = "O";
+  EventType2["IC_FALLBACK"] = "F";
+  EventType2["BARCODE"] = "Q";
+  return EventType2;
+})(EventType || {});
+var TransactionType = /* @__PURE__ */ ((TransactionType2) => {
+  TransactionType2["APPROVAL"] = "1";
+  TransactionType2["FREE_PARKING"] = "7";
+  TransactionType2["DEVICE_MERCHANT"] = "M";
+  return TransactionType2;
+})(TransactionType || {});
+var TransactionResponseType = /* @__PURE__ */ ((TransactionResponseType2) => {
+  TransactionResponseType2["CREDIT"] = "1";
+  TransactionResponseType2["CASH_RECEIPT"] = "2";
+  TransactionResponseType2["PREPAID"] = "3";
+  TransactionResponseType2["ZERO_PAY"] = "4";
+  TransactionResponseType2["KAKAO_MONEY"] = "5";
+  TransactionResponseType2["KAKAO_CREDIT"] = "6";
+  TransactionResponseType2["NAVER_PAY"] = "8";
+  TransactionResponseType2["REJECTED"] = "X";
+  return TransactionResponseType2;
+})(TransactionResponseType || {});
+var CancelType = /* @__PURE__ */ ((CancelType2) => {
+  CancelType2["REQUEST_CANCEL"] = "1";
+  CancelType2["LAST_TRANSACTION"] = "2";
+  CancelType2["VAN_NO_CARD"] = "3";
+  CancelType2["PG_NO_CARD"] = "4";
+  CancelType2["PG_PARTIAL"] = "5";
+  CancelType2["DIRECT_PREV"] = "6";
+  return CancelType2;
+})(CancelType || {});
+var DeviceStatus = /* @__PURE__ */ ((DeviceStatus2) => {
+  DeviceStatus2["NOT_INSTALLED"] = "N";
+  DeviceStatus2["OK"] = "O";
+  DeviceStatus2["ERROR"] = "X";
+  DeviceStatus2["FAIL"] = "F";
+  return DeviceStatus2;
+})(DeviceStatus || {});
+var SignatureRequired = /* @__PURE__ */ ((SignatureRequired2) => {
+  SignatureRequired2["NO"] = "1";
+  SignatureRequired2["YES"] = "2";
+  return SignatureRequired2;
+})(SignatureRequired || {});
+const PAYMENT_DEFAULTS = {
+  AMOUNT: 5e3,
+  TAX: 0,
+  SERVICE_CHARGE: 0,
+  INSTALLMENT: "00"
+};
+const SERIAL_CONFIG = {
+  BAUD_RATE: 115200,
+  DATA_BITS: 8,
+  STOP_BITS: 1,
+  PARITY: "none"
+};
+const TIMEOUT = {
+  ACK_WAIT: 3e3,
+  // ACK 대기 3초
+  RESPONSE_WAIT: 3e4,
+  // 응답 대기 30초
+  MAX_RETRY: 3,
+  // 최대 재시도 3회
+  PAYMENT_TIMEOUT: 3e4
+  // 결제 타임아웃 30초
+};
+const ERROR_CODES = {
+  "6B": { message: "카드 잔액 부족", userMessage: "잔액이 부족합니다" },
+  "0A": { message: "네트워크 오류", userMessage: "네트워크 오류, 다시 시도해주세요" },
+  "0C": { message: "서버 타임아웃", userMessage: "서버 응답 없음, 다시 시도해주세요" },
+  "6D": { message: "선불 카드 이상", userMessage: "사용할 수 없는 카드입니다" },
+  "69": { message: "사용 불가 카드", userMessage: "사용할 수 없는 카드입니다" },
+  "71": { message: "미등록 카드", userMessage: "사용할 수 없는 카드입니다" },
+  "6F": { message: "재시도 요청", userMessage: "다시 시도해주세요" },
+  "7A": { message: "Tmoney 서비스 불가", userMessage: "Tmoney 서비스 불가, 관리자에게 문의하세요" },
+  "74": { message: "카드 변경", userMessage: "거래 중 카드가 변경되었습니다" },
+  "B3": { message: "포맷오류", userMessage: "시스템 오류, 다시 시도해주세요" }
+};
+const FIELD_SIZE = {
+  TERMINAL_ID: 16,
+  DATE_TIME: 14
+};
+function formatDateTime(date = /* @__PURE__ */ new Date()) {
+  const year = date.getFullYear().toString();
+  const month = (date.getMonth() + 1).toString().padStart(2, "0");
+  const day = date.getDate().toString().padStart(2, "0");
+  const hours = date.getHours().toString().padStart(2, "0");
+  const minutes = date.getMinutes().toString().padStart(2, "0");
+  const seconds = date.getSeconds().toString().padStart(2, "0");
+  return `${year}${month}${day}${hours}${minutes}${seconds}`;
+}
+function formatAmount(amount, length) {
+  return amount.toString().padStart(length, "0");
+}
+function padString(str, length, padChar = 0) {
+  const buf = Buffer.alloc(length, padChar);
+  const strBuf = Buffer.from(str, "ascii");
+  strBuf.copy(buf, 0, 0, Math.min(strBuf.length, length));
+  return buf;
+}
+function calculateBCC(data) {
+  let bcc = 0;
+  for (let i = 0; i < data.length; i++) {
+    bcc ^= data[i];
+  }
+  return bcc;
+}
+function extractString(buf, start, length) {
+  const slice = buf.slice(start, start + length);
+  return slice.toString("ascii").replace(/\x00/g, "").trim();
+}
+function extractNumber(buf, start, length) {
+  const str = extractString(buf, start, length);
+  return parseInt(str, 10) || 0;
+}
+function buildPacket(options) {
+  const { terminalId, jobCode, data = Buffer.alloc(0) } = options;
+  const dataLength = data.length;
+  const packetLength = HEADER_SIZE + dataLength + 2;
+  const packet = Buffer.alloc(packetLength);
+  let offset = 0;
+  packet.writeUInt8(STX, offset);
+  offset += 1;
+  const terminalIdBuf = padString(terminalId, FIELD_SIZE.TERMINAL_ID);
+  terminalIdBuf.copy(packet, offset);
+  offset += FIELD_SIZE.TERMINAL_ID;
+  const dateTimeBuf = Buffer.from(formatDateTime(), "ascii");
+  dateTimeBuf.copy(packet, offset);
+  offset += FIELD_SIZE.DATE_TIME;
+  packet.write(jobCode, offset, 1, "ascii");
+  offset += 1;
+  packet.writeUInt8(0, offset);
+  offset += 1;
+  packet.writeUInt16LE(dataLength, offset);
+  offset += 2;
+  if (dataLength > 0) {
+    data.copy(packet, offset);
+    offset += dataLength;
+  }
+  packet.writeUInt8(ETX, offset);
+  offset += 1;
+  const bcc = calculateBCC(packet.slice(0, offset));
+  packet.writeUInt8(bcc, offset);
+  return packet;
+}
+function buildApprovalRequestData(transactionType, amount, tax = 0, serviceCharge = 0, installment = "00", signature = "1") {
+  const data = Buffer.alloc(30);
+  let offset = 0;
+  data.write(transactionType, offset, 1, "ascii");
+  offset += 1;
+  data.write(formatAmount(amount, 10), offset, 10, "ascii");
+  offset += 10;
+  data.write(formatAmount(tax, 8), offset, 8, "ascii");
+  offset += 8;
+  data.write(formatAmount(serviceCharge, 8), offset, 8, "ascii");
+  offset += 8;
+  data.write(installment.padStart(2, "0"), offset, 2, "ascii");
+  offset += 2;
+  data.write(signature, offset, 1, "ascii");
+  return data;
+}
+function buildCancelRequestData(cancelType, transactionType, amount, tax, serviceCharge, installment, signature, approvalNumber, originalDate, originalTime) {
+  const data = Buffer.alloc(59);
+  let offset = 0;
+  data.write(cancelType, offset, 1, "ascii");
+  offset += 1;
+  data.write(transactionType, offset, 1, "ascii");
+  offset += 1;
+  data.write(formatAmount(amount, 10), offset, 10, "ascii");
+  offset += 10;
+  data.write(formatAmount(tax, 8), offset, 8, "ascii");
+  offset += 8;
+  data.write(formatAmount(serviceCharge, 8), offset, 8, "ascii");
+  offset += 8;
+  data.write(installment.padStart(2, "0"), offset, 2, "ascii");
+  offset += 2;
+  data.write(signature, offset, 1, "ascii");
+  offset += 1;
+  const approvalBuf = Buffer.alloc(12, 32);
+  Buffer.from(approvalNumber, "ascii").copy(approvalBuf);
+  approvalBuf.copy(data, offset);
+  offset += 12;
+  data.write(originalDate.padEnd(8, "0"), offset, 8, "ascii");
+  offset += 8;
+  data.write(originalTime.padEnd(6, "0"), offset, 6, "ascii");
+  offset += 6;
+  data.write("00", offset, 2, "ascii");
+  return data;
+}
+function parsePacket(buffer) {
+  if (buffer.length < HEADER_SIZE + 2) {
+    console.error("Packet too short:", buffer.length);
+    return null;
+  }
+  if (buffer[0] !== STX) {
+    console.error("Invalid STX:", buffer[0]);
+    return null;
+  }
+  const terminalId = extractString(buffer, OFFSET.TERMINAL_ID, FIELD_SIZE.TERMINAL_ID);
+  const dateTime = extractString(buffer, OFFSET.DATE_TIME, FIELD_SIZE.DATE_TIME);
+  const jobCode = String.fromCharCode(buffer[OFFSET.JOB_CODE]);
+  const responseCode = buffer[OFFSET.RESPONSE_CODE];
+  const dataLength = buffer.readUInt16LE(OFFSET.DATA_LENGTH);
+  const expectedLength = HEADER_SIZE + dataLength + 2;
+  if (buffer.length < expectedLength) {
+    console.error("Packet length mismatch. Expected:", expectedLength, "Got:", buffer.length);
+    return null;
+  }
+  const data = buffer.slice(OFFSET.DATA_START, OFFSET.DATA_START + dataLength);
+  const etxIndex = OFFSET.DATA_START + dataLength;
+  if (buffer[etxIndex] !== ETX) {
+    console.error("Invalid ETX at index", etxIndex, ":", buffer[etxIndex]);
+    return null;
+  }
+  const receivedBcc = buffer[etxIndex + 1];
+  const calculatedBcc = calculateBCC(buffer.slice(0, etxIndex + 1));
+  const isValid = receivedBcc === calculatedBcc;
+  if (!isValid) {
+    console.error("BCC mismatch. Received:", receivedBcc, "Calculated:", calculatedBcc);
+  }
+  return {
+    header: {
+      terminalId,
+      dateTime,
+      jobCode,
+      responseCode,
+      dataLength
+    },
+    data,
+    bcc: receivedBcc,
+    isValid
+  };
+}
+function parseDeviceCheckResponse(data) {
+  return {
+    cardModuleStatus: data.toString("ascii", 0, 1),
+    rfModuleStatus: data.toString("ascii", 1, 2),
+    vanServerStatus: data.toString("ascii", 2, 3),
+    linkServerStatus: data.toString("ascii", 3, 4)
+  };
+}
+function parseEventResponse(data) {
+  return {
+    eventType: data.toString("ascii", 0, 1)
+  };
+}
+function parseApprovalResponse(data) {
+  let offset = 0;
+  const transactionType = data.toString("ascii", offset, offset + 1);
+  offset += 1;
+  const transactionMedia = data.toString("ascii", offset, offset + 1);
+  offset += 1;
+  const cardNumber = extractString(data, offset, 20);
+  offset += 20;
+  const approvedAmount = extractNumber(data, offset, 10);
+  offset += 10;
+  const tax = extractNumber(data, offset, 8);
+  offset += 8;
+  const serviceCharge = extractNumber(data, offset, 8);
+  offset += 8;
+  const installment = extractString(data, offset, 2);
+  offset += 2;
+  const approvalNumber = extractString(data, offset, 12);
+  offset += 12;
+  const salesDate = extractString(data, offset, 8);
+  offset += 8;
+  const salesTime = extractString(data, offset, 6);
+  offset += 6;
+  const transactionId = extractString(data, offset, 12);
+  offset += 12;
+  const merchantId = extractString(data, offset, 15);
+  offset += 15;
+  const terminalNumber = extractString(data, offset, 14);
+  offset += 14;
+  const issuerOrRejectData = extractString(data, offset, 20);
+  offset += 20;
+  const acquirerData = extractString(data, offset, 20);
+  const isRejected = transactionType === TransactionResponseType.REJECTED;
+  let issuerCode = "";
+  let issuerName = "";
+  let acquirerCode = "";
+  let acquirerName = "";
+  let rejectCode;
+  let rejectMessage;
+  if (isRejected) {
+    rejectMessage = issuerOrRejectData;
+    if (acquirerData.startsWith("-")) {
+      rejectCode = acquirerData.substring(1, 3);
+      const errorInfo = ERROR_CODES[rejectCode];
+      if (errorInfo) {
+        rejectMessage = errorInfo.userMessage;
+      }
+    }
+  } else {
+    issuerCode = issuerOrRejectData.substring(0, 4);
+    issuerName = issuerOrRejectData.substring(4).trim();
+    acquirerCode = acquirerData.substring(0, 4);
+    acquirerName = acquirerData.substring(4).trim();
+  }
+  return {
+    transactionType,
+    transactionMedia,
+    cardNumber,
+    approvedAmount,
+    tax,
+    serviceCharge,
+    installment,
+    approvalNumber,
+    salesDate,
+    salesTime,
+    transactionId,
+    merchantId,
+    terminalNumber,
+    issuerCode,
+    issuerName,
+    acquirerCode,
+    acquirerName,
+    isRejected,
+    rejectCode,
+    rejectMessage
+  };
+}
+function parseCardInquiryResponse(data) {
+  let offset = 0;
+  const transactionMedia = data.toString("ascii", offset, offset + 1);
+  offset += 1;
+  const cardType = data.toString("ascii", offset, offset + 1);
+  offset += 1;
+  const cardNumber = extractString(data, offset, 20);
+  offset += 20;
+  const lastTransactionDateTime = extractString(data, offset, 14);
+  offset += 14;
+  const lastTransactionAmount = extractNumber(data, offset, 8);
+  offset += 8;
+  const cardBalance = extractNumber(data, offset, 8);
+  offset += 8;
+  const transactionStatus = data.toString("ascii", offset, offset + 1);
+  return {
+    transactionMedia,
+    cardType,
+    cardNumber,
+    lastTransactionDateTime,
+    lastTransactionAmount,
+    cardBalance,
+    transactionStatus
+  };
+}
+function findCompletePacket(buffer) {
+  if (buffer.length < HEADER_SIZE + 2) {
+    return 0;
+  }
+  const stxIndex = buffer.indexOf(STX);
+  if (stxIndex === -1) {
+    return 0;
+  }
+  if (buffer.length - stxIndex < HEADER_SIZE + 2) {
+    return 0;
+  }
+  const dataLength = buffer.readUInt16LE(stxIndex + OFFSET.DATA_LENGTH);
+  const expectedLength = HEADER_SIZE + dataLength + 2;
+  if (buffer.length - stxIndex >= expectedLength) {
+    const etxIndex = stxIndex + HEADER_SIZE + dataLength;
+    if (buffer[etxIndex] === ETX) {
+      return expectedLength;
+    }
+  }
+  return 0;
+}
+class TL3600Serial extends events.EventEmitter {
+  port = null;
+  portPath;
+  baudRate;
+  isConnected = false;
+  receiveBuffer = Buffer.alloc(0);
+  pendingResponse = null;
+  constructor(config) {
+    super();
+    this.portPath = config.port;
+    this.baudRate = config.baudRate || SERIAL_CONFIG.BAUD_RATE;
+  }
+  /**
+   * Connect to serial port
+   */
+  async connect() {
+    if (this.isConnected && this.port?.isOpen) {
+      return { success: true };
+    }
+    return new Promise((resolve) => {
+      try {
+        this.port = new serialport.SerialPort({
+          path: this.portPath,
+          baudRate: this.baudRate,
+          dataBits: SERIAL_CONFIG.DATA_BITS,
+          stopBits: SERIAL_CONFIG.STOP_BITS,
+          parity: SERIAL_CONFIG.PARITY,
+          autoOpen: false
+        });
+        this.port.on("error", (err) => {
+          console.error("❌ [TL3600] Serial port error:", err.message);
+          this.emit("error", err);
+        });
+        this.port.on("close", () => {
+          console.log("🔌 [TL3600] Serial port closed");
+          this.isConnected = false;
+          this.emit("disconnected");
+        });
+        this.port.on("data", (data) => {
+          this.handleIncomingData(data);
+        });
+        this.port.open((err) => {
+          if (err) {
+            console.error("❌ [TL3600] Failed to open port:", err.message);
+            resolve({ success: false, error: err.message });
+            return;
+          }
+          console.log(`✅ [TL3600] Connected to ${this.portPath} at ${this.baudRate} baud`);
+          this.isConnected = true;
+          this.emit("connected");
+          resolve({ success: true });
+        });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        console.error("❌ [TL3600] Connection error:", errorMessage);
+        resolve({ success: false, error: errorMessage });
+      }
+    });
+  }
+  /**
+   * Disconnect from serial port
+   */
+  async disconnect() {
+    if (this.pendingResponse) {
+      clearTimeout(this.pendingResponse.timeout);
+      this.pendingResponse.reject(new Error("Disconnecting"));
+      this.pendingResponse = null;
+    }
+    if (this.port?.isOpen) {
+      return new Promise((resolve) => {
+        this.port.close((err) => {
+          if (err) {
+            console.error("❌ [TL3600] Error closing port:", err.message);
+          }
+          this.isConnected = false;
+          this.port = null;
+          resolve();
+        });
+      });
+    }
+    this.isConnected = false;
+    this.port = null;
+  }
+  /**
+   * Check if connected
+   */
+  isPortConnected() {
+    return this.isConnected && (this.port?.isOpen ?? false);
+  }
+  /**
+   * Send packet and wait for response with ACK/NACK handling
+   */
+  async sendPacket(packet, expectResponse = true) {
+    if (!this.isPortConnected()) {
+      return { success: false, error: "Not connected" };
+    }
+    let retryCount = 0;
+    while (retryCount < TIMEOUT.MAX_RETRY) {
+      try {
+        console.log(`📤 [TL3600] Sending packet (attempt ${retryCount + 1}/${TIMEOUT.MAX_RETRY})`);
+        console.log(`   Data: ${packet.toString("hex").toUpperCase()}`);
+        await this.writeToPort(packet);
+        const ackResult = await this.waitForAck();
+        if (!ackResult.success) {
+          if (ackResult.nack) {
+            console.warn(`⚠️ [TL3600] Received NACK, retrying...`);
+            retryCount++;
+            continue;
+          }
+          console.warn(`⚠️ [TL3600] ACK timeout, retrying...`);
+          retryCount++;
+          continue;
+        }
+        console.log(`✅ [TL3600] ACK received`);
+        if (!expectResponse) {
+          return { success: true };
+        }
+        const response = await this.waitForResponse();
+        if (response) {
+          await this.sendAck();
+          return { success: true, response };
+        }
+        console.warn(`⚠️ [TL3600] Response timeout`);
+        return { success: false, error: "Response timeout" };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        console.error(`❌ [TL3600] Send error:`, errorMessage);
+        retryCount++;
+      }
+    }
+    return { success: false, error: `Max retries (${TIMEOUT.MAX_RETRY}) exceeded` };
+  }
+  /**
+   * Send ACK
+   */
+  async sendAck() {
+    if (this.port?.isOpen) {
+      await this.writeToPort(Buffer.from([ACK]));
+      console.log(`📤 [TL3600] ACK sent`);
+    }
+  }
+  /**
+   * Send NACK
+   */
+  async sendNack() {
+    if (this.port?.isOpen) {
+      await this.writeToPort(Buffer.from([NACK]));
+      console.log(`📤 [TL3600] NACK sent`);
+    }
+  }
+  // ===========================================================================
+  // Private Methods
+  // ===========================================================================
+  /**
+   * Write data to serial port
+   */
+  writeToPort(data) {
+    return new Promise((resolve, reject) => {
+      if (!this.port?.isOpen) {
+        reject(new Error("Port not open"));
+        return;
+      }
+      this.port.write(data, (err) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        this.port.drain((drainErr) => {
+          if (drainErr) {
+            reject(drainErr);
+            return;
+          }
+          resolve();
+        });
+      });
+    });
+  }
+  /**
+   * Wait for ACK/NACK response
+   */
+  waitForAck() {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        this.removeAllListeners("ack");
+        this.removeAllListeners("nack");
+        resolve({ success: false });
+      }, TIMEOUT.ACK_WAIT);
+      this.once("ack", () => {
+        clearTimeout(timeout);
+        this.removeAllListeners("nack");
+        resolve({ success: true });
+      });
+      this.once("nack", () => {
+        clearTimeout(timeout);
+        this.removeAllListeners("ack");
+        resolve({ success: false, nack: true });
+      });
+    });
+  }
+  /**
+   * Wait for response packet
+   */
+  waitForResponse() {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingResponse = null;
+        resolve(null);
+      }, TIMEOUT.RESPONSE_WAIT);
+      this.pendingResponse = {
+        resolve: (packet) => {
+          clearTimeout(timeout);
+          this.pendingResponse = null;
+          resolve(packet);
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          this.pendingResponse = null;
+          reject(error);
+        },
+        timeout
+      };
+    });
+  }
+  /**
+   * Handle incoming data from serial port
+   */
+  handleIncomingData(data) {
+    console.log(`📥 [TL3600] Received: ${data.toString("hex").toUpperCase()}`);
+    if (data.length === 1) {
+      if (data[0] === ACK) {
+        this.emit("ack");
+        return;
+      }
+      if (data[0] === NACK) {
+        this.emit("nack");
+        return;
+      }
+    }
+    this.receiveBuffer = Buffer.concat([this.receiveBuffer, data]);
+    this.processReceiveBuffer();
+  }
+  /**
+   * Process receive buffer to extract complete packets
+   */
+  processReceiveBuffer() {
+    const stxIndex = this.receiveBuffer.indexOf(STX);
+    if (stxIndex === -1) {
+      this.receiveBuffer = Buffer.alloc(0);
+      return;
+    }
+    if (stxIndex > 0) {
+      this.receiveBuffer = this.receiveBuffer.slice(stxIndex);
+    }
+    const packetLength = findCompletePacket(this.receiveBuffer);
+    if (packetLength === 0) {
+      return;
+    }
+    const packetBuffer = this.receiveBuffer.slice(0, packetLength);
+    this.receiveBuffer = this.receiveBuffer.slice(packetLength);
+    const packet = parsePacket(packetBuffer);
+    if (!packet) {
+      console.error("❌ [TL3600] Failed to parse packet");
+      return;
+    }
+    if (!packet.isValid) {
+      console.error("❌ [TL3600] Invalid BCC, sending NACK");
+      this.sendNack();
+      return;
+    }
+    console.log(`✅ [TL3600] Valid packet received: Job Code = ${packet.header.jobCode}`);
+    if (packet.header.jobCode === JobCode.EVENT_RESPONSE) {
+      this.emit("event", packet);
+      return;
+    }
+    if (this.pendingResponse) {
+      this.pendingResponse.resolve(packet);
+    } else {
+      console.warn("⚠️ [TL3600] Unexpected packet received");
+      this.emit("packet", packet);
+    }
+    if (this.receiveBuffer.length > 0) {
+      this.processReceiveBuffer();
+    }
+  }
+}
+async function listSerialPorts() {
+  try {
+    const ports = await serialport.SerialPort.list();
+    return ports.map((port) => ({
+      path: port.path,
+      manufacturer: port.manufacturer
+    }));
+  } catch (error) {
+    console.error("Failed to list serial ports:", error);
+    return [];
+  }
+}
+class TL3600Controller extends events.EventEmitter {
+  serial;
+  terminalId;
+  isConnected = false;
+  isInPaymentMode = false;
+  currentPaymentRequest = null;
+  constructor(config) {
+    super();
+    this.terminalId = config.terminalId;
+    this.serial = new TL3600Serial({
+      port: config.port,
+      baudRate: config.baudRate
+    });
+    this.serial.on("error", (error) => this.emit("error", error));
+    this.serial.on("disconnected", () => {
+      this.isConnected = false;
+      this.isInPaymentMode = false;
+      this.emit("disconnected");
+    });
+    this.serial.on("event", (packet) => {
+      this.handleEvent(packet);
+    });
+  }
+  // ===========================================================================
+  // Connection Management
+  // ===========================================================================
+  /**
+   * Connect to payment terminal and check device status
+   */
+  async connect() {
+    console.log(`🔌 [TL3600] Connecting to terminal...`);
+    const connectResult = await this.serial.connect();
+    if (!connectResult.success) {
+      return { success: false, error: connectResult.error };
+    }
+    const deviceStatus = await this.checkDevice();
+    if (!deviceStatus) {
+      await this.serial.disconnect();
+      return { success: false, error: "Device check failed" };
+    }
+    if (deviceStatus.rfModuleStatus !== DeviceStatus.OK) {
+      console.warn(`⚠️ [TL3600] RF module status: ${deviceStatus.rfModuleStatus}`);
+    }
+    this.isConnected = true;
+    console.log(`✅ [TL3600] Connected successfully`);
+    console.log(`   Card Module: ${deviceStatus.cardModuleStatus}`);
+    console.log(`   RF Module: ${deviceStatus.rfModuleStatus}`);
+    console.log(`   VAN Server: ${deviceStatus.vanServerStatus}`);
+    return { success: true, deviceStatus };
+  }
+  /**
+   * Disconnect from terminal
+   */
+  async disconnect() {
+    console.log(`🔌 [TL3600] Disconnecting...`);
+    this.isConnected = false;
+    this.isInPaymentMode = false;
+    await this.serial.disconnect();
+  }
+  /**
+   * Check if connected
+   */
+  isTerminalConnected() {
+    return this.isConnected && this.serial.isPortConnected();
+  }
+  // ===========================================================================
+  // Device Operations
+  // ===========================================================================
+  /**
+   * Check device status (Job Code: A)
+   */
+  async checkDevice() {
+    console.log(`🔍 [TL3600] Checking device status...`);
+    const packet = buildPacket({
+      terminalId: this.terminalId,
+      jobCode: JobCode.DEVICE_CHECK
+    });
+    const result = await this.serial.sendPacket(packet);
+    if (!result.success || !result.response) {
+      console.error(`❌ [TL3600] Device check failed:`, result.error);
+      return null;
+    }
+    if (result.response.header.jobCode !== JobCode.DEVICE_CHECK_RESPONSE) {
+      console.error(`❌ [TL3600] Unexpected response: ${result.response.header.jobCode}`);
+      return null;
+    }
+    return parseDeviceCheckResponse(result.response.data);
+  }
+  // ===========================================================================
+  // Payment Operations
+  // ===========================================================================
+  /**
+   * Enter payment standby mode (Job Code: E)
+   * Terminal will wait for card input and emit events
+   */
+  async enterPaymentMode(request) {
+    if (!this.isConnected) {
+      console.error(`❌ [TL3600] Not connected`);
+      return false;
+    }
+    console.log(`💳 [TL3600] Entering payment standby mode...`);
+    this.currentPaymentRequest = request || {};
+    const packet = buildPacket({
+      terminalId: this.terminalId,
+      jobCode: JobCode.PAYMENT_STANDBY
+    });
+    const result = await this.serial.sendPacket(packet);
+    if (!result.success) {
+      console.error(`❌ [TL3600] Failed to enter payment mode:`, result.error);
+      return false;
+    }
+    this.isInPaymentMode = true;
+    this.emit("paymentModeEntered");
+    console.log(`✅ [TL3600] Payment standby mode active`);
+    return true;
+  }
+  /**
+   * Request transaction approval (Job Code: B)
+   * Called internally when card is detected
+   */
+  async requestApproval(request) {
+    if (!this.isConnected) {
+      return { success: false, error: "Not connected" };
+    }
+    const amount = request?.amount ?? PAYMENT_DEFAULTS.AMOUNT;
+    const tax = request?.tax ?? PAYMENT_DEFAULTS.TAX;
+    const serviceCharge = request?.serviceCharge ?? PAYMENT_DEFAULTS.SERVICE_CHARGE;
+    const installment = request?.installment ?? PAYMENT_DEFAULTS.INSTALLMENT;
+    console.log(`💳 [TL3600] Requesting approval for ${amount}원...`);
+    const data = buildApprovalRequestData(
+      TransactionType.APPROVAL,
+      amount,
+      tax,
+      serviceCharge,
+      installment,
+      SignatureRequired.NO
+    );
+    const packet = buildPacket({
+      terminalId: this.terminalId,
+      jobCode: JobCode.TRANSACTION_APPROVAL,
+      data
+    });
+    const result = await this.serial.sendPacket(packet);
+    if (!result.success || !result.response) {
+      console.error(`❌ [TL3600] Approval request failed:`, result.error);
+      return { success: false, error: result.error || "Request failed" };
+    }
+    if (result.response.header.jobCode !== JobCode.TRANSACTION_APPROVAL_RESPONSE) {
+      console.error(`❌ [TL3600] Unexpected response: ${result.response.header.jobCode}`);
+      return { success: false, error: "Unexpected response" };
+    }
+    const response = parseApprovalResponse(result.response.data);
+    if (response.isRejected) {
+      console.error(`❌ [TL3600] Transaction rejected: ${response.rejectMessage}`);
+      return {
+        success: false,
+        error: response.rejectMessage || "Transaction rejected",
+        rejectCode: response.rejectCode,
+        rejectMessage: response.rejectMessage
+      };
+    }
+    console.log(`✅ [TL3600] Transaction approved!`);
+    console.log(`   Approval Number: ${response.approvalNumber}`);
+    console.log(`   Amount: ${response.approvedAmount}원`);
+    console.log(`   Card: ${response.cardNumber}`);
+    return {
+      success: true,
+      transactionType: response.transactionType,
+      cardNumber: response.cardNumber,
+      approvedAmount: response.approvedAmount,
+      approvalNumber: response.approvalNumber,
+      salesDate: response.salesDate,
+      salesTime: response.salesTime,
+      transactionId: response.transactionId,
+      transactionMedia: response.transactionMedia
+    };
+  }
+  /**
+   * Request transaction cancel (Job Code: C)
+   * For dashboard manual cancellation
+   */
+  async requestCancel(request) {
+    if (!this.isConnected) {
+      return { success: false, error: "Not connected" };
+    }
+    console.log(`🚫 [TL3600] Requesting cancellation...`);
+    console.log(`   Original Approval: ${request.approvalNumber}`);
+    console.log(`   Original Date: ${request.originalDate}`);
+    console.log(`   Amount: ${request.amount}원`);
+    const data = buildCancelRequestData(
+      CancelType.VAN_NO_CARD,
+      // 무카드 취소
+      request.transactionType,
+      // '1' IC or '2' RF/MS
+      request.amount,
+      PAYMENT_DEFAULTS.TAX,
+      PAYMENT_DEFAULTS.SERVICE_CHARGE,
+      PAYMENT_DEFAULTS.INSTALLMENT,
+      SignatureRequired.NO,
+      request.approvalNumber,
+      request.originalDate,
+      request.originalTime
+    );
+    const packet = buildPacket({
+      terminalId: this.terminalId,
+      jobCode: JobCode.TRANSACTION_CANCEL,
+      data
+    });
+    const result = await this.serial.sendPacket(packet);
+    if (!result.success || !result.response) {
+      console.error(`❌ [TL3600] Cancel request failed:`, result.error);
+      return { success: false, error: result.error || "Request failed" };
+    }
+    if (result.response.header.jobCode !== JobCode.TRANSACTION_CANCEL_RESPONSE) {
+      console.error(`❌ [TL3600] Unexpected response: ${result.response.header.jobCode}`);
+      return { success: false, error: "Unexpected response" };
+    }
+    const response = parseApprovalResponse(result.response.data);
+    if (response.isRejected) {
+      console.error(`❌ [TL3600] Cancellation rejected: ${response.rejectMessage}`);
+      return {
+        success: false,
+        error: response.rejectMessage || "Cancellation rejected"
+      };
+    }
+    console.log(`✅ [TL3600] Cancellation successful!`);
+    return { success: true, response };
+  }
+  /**
+   * Inquire card information (Job Code: D)
+   */
+  async inquireCard() {
+    if (!this.isConnected) {
+      return null;
+    }
+    console.log(`🔍 [TL3600] Inquiring card...`);
+    const packet = buildPacket({
+      terminalId: this.terminalId,
+      jobCode: JobCode.CARD_INQUIRY
+    });
+    const result = await this.serial.sendPacket(packet);
+    if (!result.success || !result.response) {
+      console.error(`❌ [TL3600] Card inquiry failed:`, result.error);
+      return null;
+    }
+    if (result.response.header.jobCode !== JobCode.CARD_INQUIRY_RESPONSE) {
+      console.error(`❌ [TL3600] Unexpected response: ${result.response.header.jobCode}`);
+      return null;
+    }
+    return parseCardInquiryResponse(result.response.data);
+  }
+  // ===========================================================================
+  // Event Handling
+  // ===========================================================================
+  /**
+   * Handle incoming event from terminal
+   */
+  async handleEvent(packet) {
+    const event = parseEventResponse(packet.data);
+    console.log(`📨 [TL3600] Event received: ${event.eventType}`);
+    let cardEventType;
+    switch (event.eventType) {
+      case EventType.MS_CARD:
+        cardEventType = "ms";
+        console.log(`💳 [TL3600] MS card detected`);
+        break;
+      case EventType.RF_CARD:
+        cardEventType = "rf";
+        console.log(`💳 [TL3600] RF card detected`);
+        break;
+      case EventType.IC_CARD:
+        cardEventType = "ic";
+        console.log(`💳 [TL3600] IC card inserted`);
+        break;
+      case EventType.IC_CARD_REMOVED:
+        console.log(`💳 [TL3600] IC card removed`);
+        this.emit("cardRemoved");
+        return;
+      case EventType.IC_FALLBACK:
+        cardEventType = "ms";
+        console.log(`💳 [TL3600] IC fallback, treating as MS`);
+        break;
+      case EventType.BARCODE:
+        cardEventType = "barcode";
+        console.log(`📊 [TL3600] Barcode detected`);
+        break;
+      default:
+        console.warn(`⚠️ [TL3600] Unknown event type: ${event.eventType}`);
+        return;
+    }
+    const cardEvent = {
+      type: cardEventType,
+      timestamp: Date.now()
+    };
+    this.emit("cardDetected", cardEvent);
+    if (this.isInPaymentMode) {
+      this.isInPaymentMode = false;
+      this.emit("processingPayment");
+      const result = await this.requestApproval(this.currentPaymentRequest || void 0);
+      if (result.success) {
+        this.emit("paymentApproved", result);
+      } else {
+        this.emit("paymentRejected", result);
+      }
+      this.currentPaymentRequest = null;
+    }
+  }
+  // ===========================================================================
+  // Utility Methods
+  // ===========================================================================
+  /**
+   * Get available COM ports
+   */
+  static async listPorts() {
+    return listSerialPorts();
+  }
+  /**
+   * Get current status
+   */
+  getStatus() {
+    return {
+      connected: this.isConnected,
+      inPaymentMode: this.isInPaymentMode,
+      terminalId: this.terminalId
+    };
+  }
+}
 class CardReaderController extends events.EventEmitter {
   mockMode;
   mockApprovalRate;
   readerPort;
+  terminalId;
   isConnected = false;
   currentTransaction = null;
   timeoutTimer = null;
+  // TL3600 controller (for real hardware mode)
+  tl3600 = null;
   constructor(config = {}) {
     super();
     this.mockMode = config.mockMode ?? process.env.MOCK_CARD_READER !== "false";
     this.mockApprovalRate = config.mockApprovalRate ?? 0.8;
-    this.readerPort = config.readerPort ?? "COM1";
-    if (!this.mockMode) {
-      console.log(`Card reader configured on port: ${this.readerPort}`);
+    this.readerPort = config.readerPort ?? process.env.TL3600_PORT ?? "COM3";
+    this.terminalId = config.terminalId ?? process.env.TL3600_TERMINAL_ID ?? "0000000000000000";
+    if (this.mockMode) {
+      console.log("💳 Card reader initialized in MOCK mode");
+    } else {
+      console.log(`💳 Card reader configured for TL3600 on ${this.readerPort}`);
     }
   }
   /**
@@ -1050,16 +2106,122 @@ class CardReaderController extends events.EventEmitter {
     if (this.mockMode) {
       return this.mockConnect();
     }
+    return this.tl3600Connect();
+  }
+  /**
+   * Connect to TL3600 hardware
+   */
+  async tl3600Connect() {
     try {
-      throw new Error("Real card reader not implemented. Set MOCK_CARD_READER=true for testing.");
+      console.log(`🔌 [CardReader] Connecting to TL3600 on ${this.readerPort}...`);
+      this.tl3600 = new TL3600Controller({
+        port: this.readerPort,
+        terminalId: this.terminalId
+      });
+      this.setupTL3600Events();
+      const result = await this.tl3600.connect();
+      if (!result.success) {
+        console.error("❌ [CardReader] TL3600 connection failed:", result.error);
+        return { success: false, error: result.error };
+      }
+      this.isConnected = true;
+      console.log("✅ [CardReader] TL3600 connected successfully");
+      this.emit("connected", { model: "TL3600/TL3500BP" });
+      return { success: true };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      console.error("❌ Card reader connection failed:", errorMessage);
-      return {
-        success: false,
-        error: errorMessage
-      };
+      console.error("❌ [CardReader] TL3600 connection error:", errorMessage);
+      return { success: false, error: errorMessage };
     }
+  }
+  /**
+   * Set up TL3600 event handlers
+   */
+  setupTL3600Events() {
+    if (!this.tl3600) return;
+    this.tl3600.on("cardDetected", (event) => {
+      console.log(`💳 [CardReader] Card detected: ${event.type}`);
+      this.emit("status", {
+        status: "card_inserted",
+        message: "카드가 감지되었습니다",
+        cardType: event.type
+      });
+    });
+    this.tl3600.on("cardRemoved", () => {
+      console.log("💳 [CardReader] Card removed");
+      this.emit("cardRemoved");
+    });
+    this.tl3600.on("processingPayment", () => {
+      console.log("💳 [CardReader] Processing payment...");
+      this.emit("status", {
+        status: "processing",
+        message: "결제 처리 중..."
+      });
+    });
+    this.tl3600.on("paymentApproved", (result) => {
+      console.log("✅ [CardReader] Payment approved");
+      const paymentResult = this.convertTL3600Result(result, true);
+      this.emit("status", {
+        status: "approved",
+        message: "결제가 완료되었습니다!"
+      });
+      this.emit("paymentComplete", paymentResult);
+    });
+    this.tl3600.on("paymentRejected", (result) => {
+      console.log("❌ [CardReader] Payment rejected:", result.error);
+      const paymentResult = this.convertTL3600Result(result, false);
+      this.emit("status", {
+        status: "declined",
+        message: result.rejectMessage || result.error || "결제가 거부되었습니다"
+      });
+      this.emit("paymentComplete", paymentResult);
+    });
+    this.tl3600.on("error", (error) => {
+      console.error("❌ [CardReader] TL3600 error:", error.message);
+      this.emit("error", error);
+    });
+    this.tl3600.on("disconnected", () => {
+      console.log("🔌 [CardReader] TL3600 disconnected");
+      this.isConnected = false;
+      this.emit("disconnected");
+    });
+  }
+  /**
+   * Convert TL3600 result to PaymentResult format
+   */
+  convertTL3600Result(result, success) {
+    let cardType = "unknown";
+    if (result.transactionMedia) {
+      switch (result.transactionMedia) {
+        case "1":
+          cardType = "ic";
+          break;
+        case "2":
+          cardType = "ms";
+          break;
+        case "3":
+          cardType = "rf";
+          break;
+      }
+    }
+    const cardLast4 = result.cardNumber ? result.cardNumber.replace(/\D/g, "").slice(-4) : void 0;
+    return {
+      success,
+      status: success ? "approved" : "declined",
+      transactionId: result.transactionId,
+      amount: result.approvedAmount,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      cardType,
+      cardLast4,
+      cardNumber: result.cardNumber,
+      approvalNumber: result.approvalNumber,
+      salesDate: result.salesDate,
+      salesTime: result.salesTime,
+      transactionMedia: result.transactionMedia,
+      error: result.error,
+      rejectCode: result.rejectCode,
+      rejectMessage: result.rejectMessage
+    };
   }
   /**
    * Disconnect card reader
@@ -1068,6 +2230,10 @@ class CardReaderController extends events.EventEmitter {
     if (this.timeoutTimer) {
       clearTimeout(this.timeoutTimer);
       this.timeoutTimer = null;
+    }
+    if (this.tl3600) {
+      await this.tl3600.disconnect();
+      this.tl3600 = null;
     }
     this.isConnected = false;
     this.currentTransaction = null;
@@ -1088,17 +2254,93 @@ class CardReaderController extends events.EventEmitter {
     if (this.mockMode) {
       return this.mockProcessPayment(options);
     }
-    try {
-      throw new Error("Real card reader not implemented. Set MOCK_CARD_READER=true for testing.");
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      console.error("❌ Payment processing failed:", errorMessage);
+    return this.tl3600ProcessPayment(options);
+  }
+  /**
+   * Process payment using TL3600
+   */
+  async tl3600ProcessPayment(options) {
+    if (!this.tl3600) {
       return {
         success: false,
         status: "error",
-        error: errorMessage
+        error: "TL3600 not initialized"
       };
     }
+    console.log(`💳 [CardReader] Starting TL3600 payment: ${options.amount}원`);
+    this.emit("status", {
+      status: "waiting",
+      message: `카드를 삽입해주세요
+금액: ${options.amount.toLocaleString()}원`
+    });
+    const success = await this.tl3600.enterPaymentMode({
+      amount: options.amount
+    });
+    if (!success) {
+      return {
+        success: false,
+        status: "error",
+        error: "Failed to enter payment mode"
+      };
+    }
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        this.removeAllListeners("paymentComplete");
+        resolve({
+          success: false,
+          status: "timeout",
+          error: "결제 시간이 초과되었습니다"
+        });
+      }, 3e4);
+      this.once("paymentComplete", (result) => {
+        clearTimeout(timeout);
+        resolve(result);
+      });
+    });
+  }
+  /**
+   * Cancel a previous transaction
+   */
+  async cancelTransaction(options) {
+    if (this.mockMode) {
+      console.log("💳 [CardReader] Mock cancel - always succeeds");
+      return {
+        success: true,
+        status: "approved",
+        transactionId: `CANCEL_${Date.now()}`,
+        amount: options.amount,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    }
+    if (!this.tl3600) {
+      return {
+        success: false,
+        status: "error",
+        error: "TL3600 not initialized"
+      };
+    }
+    console.log(`🚫 [CardReader] Cancelling transaction: ${options.approvalNumber}`);
+    const result = await this.tl3600.requestCancel({
+      approvalNumber: options.approvalNumber,
+      originalDate: options.originalDate,
+      originalTime: options.originalTime,
+      amount: options.amount,
+      transactionType: options.transactionType
+    });
+    if (result.success) {
+      return {
+        success: true,
+        status: "approved",
+        transactionId: result.response?.transactionId,
+        amount: options.amount,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      };
+    }
+    return {
+      success: false,
+      status: "error",
+      error: result.error || "Cancellation failed"
+    };
   }
   /**
    * Cancel current payment
@@ -1121,9 +2363,19 @@ class CardReaderController extends events.EventEmitter {
    */
   getStatus() {
     return {
-      connected: this.isConnected
+      connected: this.isConnected,
+      mode: this.mockMode ? "mock" : "tl3600"
     };
   }
+  /**
+   * Get available COM ports (for configuration)
+   */
+  static async listPorts() {
+    return TL3600Controller.listPorts();
+  }
+  // ===========================================================================
+  // Mock Mode Methods
+  // ===========================================================================
   /**
    * Mock mode: Simulate card reader connection
    */
@@ -1193,7 +2445,10 @@ class CardReaderController extends events.EventEmitter {
         amount: options.amount,
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
         cardType,
-        cardLast4
+        cardLast4,
+        approvalNumber: Math.random().toString(36).substr(2, 8).toUpperCase(),
+        salesDate: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10).replace(/-/g, ""),
+        salesTime: (/* @__PURE__ */ new Date()).toTimeString().slice(0, 8).replace(/:/g, "")
       };
       this.emit("status", {
         status: "approved",
@@ -1229,11 +2484,208 @@ class CardReaderController extends events.EventEmitter {
     }
   }
 }
+const DEFAULT_CONFIG = {
+  tl3600: {
+    port: "COM3",
+    terminalId: "0000000000000000",
+    timeout: 3e3,
+    retryCount: 3
+  },
+  payment: {
+    useMockMode: false,
+    // Will be overridden by isDevelopment if not explicitly set
+    defaultAmount: 5e3,
+    mockApprovalRate: 0.8
+  },
+  camera: {
+    useWebcam: true,
+    // Default to webcam for easier testing
+    mockMode: false
+  },
+  display: {
+    splitScreenMode: false,
+    // Default to dual-monitor mode
+    mainWidth: 1080,
+    mainHeight: 1920,
+    hologramWidth: 1080,
+    hologramHeight: 1920
+  },
+  debug: {
+    enableLogging: true,
+    logLevel: "info"
+  }
+};
+class ConfigManager {
+  config = DEFAULT_CONFIG;
+  configPath = "";
+  loaded = false;
+  /**
+   * Get the config file path
+   */
+  getConfigPath() {
+    if (!this.configPath) {
+      const userDataPath = electron.app.getPath("userData");
+      this.configPath = path__namespace.join(userDataPath, "config.json");
+    }
+    return this.configPath;
+  }
+  /**
+   * Load configuration from file
+   * Creates default config file if it doesn't exist
+   */
+  load() {
+    if (this.loaded) {
+      return this.config;
+    }
+    const configPath = this.getConfigPath();
+    console.log(`📂 [Config] Loading configuration from: ${configPath}`);
+    try {
+      if (fs__namespace.existsSync(configPath)) {
+        const fileContent = fs__namespace.readFileSync(configPath, "utf-8");
+        const loadedConfig = JSON.parse(fileContent);
+        this.config = this.mergeWithDefaults(loadedConfig);
+        console.log("✅ [Config] Configuration loaded successfully");
+      } else {
+        console.log("📝 [Config] Config file not found, creating default...");
+        this.config = { ...DEFAULT_CONFIG };
+        this.save();
+        console.log("✅ [Config] Default configuration created");
+      }
+    } catch (error) {
+      console.error("❌ [Config] Failed to load config, using defaults:", error);
+      this.config = { ...DEFAULT_CONFIG };
+    }
+    this.loaded = true;
+    this.logConfig();
+    return this.config;
+  }
+  /**
+   * Save current configuration to file
+   */
+  save() {
+    const configPath = this.getConfigPath();
+    try {
+      const configDir = path__namespace.dirname(configPath);
+      if (!fs__namespace.existsSync(configDir)) {
+        fs__namespace.mkdirSync(configDir, { recursive: true });
+      }
+      const content = JSON.stringify(this.config, null, 2);
+      fs__namespace.writeFileSync(configPath, content, "utf-8");
+      console.log("💾 [Config] Configuration saved");
+      return true;
+    } catch (error) {
+      console.error("❌ [Config] Failed to save config:", error);
+      return false;
+    }
+  }
+  /**
+   * Get current configuration
+   */
+  get() {
+    if (!this.loaded) {
+      return this.load();
+    }
+    return this.config;
+  }
+  /**
+   * Update configuration
+   */
+  update(updates) {
+    this.config = this.mergeWithDefaults({ ...this.config, ...updates });
+    return this.save();
+  }
+  /**
+   * Update TL3600 settings
+   */
+  updateTL3600(updates) {
+    this.config.tl3600 = { ...this.config.tl3600, ...updates };
+    return this.save();
+  }
+  /**
+   * Update payment settings
+   */
+  updatePayment(updates) {
+    this.config.payment = { ...this.config.payment, ...updates };
+    return this.save();
+  }
+  /**
+   * Reset to default configuration
+   */
+  reset() {
+    this.config = { ...DEFAULT_CONFIG };
+    return this.save();
+  }
+  /**
+   * Update camera settings
+   */
+  updateCamera(updates) {
+    this.config.camera = { ...this.config.camera, ...updates };
+    return this.save();
+  }
+  /**
+   * Update display settings
+   */
+  updateDisplay(updates) {
+    this.config.display = { ...this.config.display, ...updates };
+    return this.save();
+  }
+  /**
+   * Merge loaded config with defaults
+   */
+  mergeWithDefaults(loaded) {
+    return {
+      tl3600: {
+        ...DEFAULT_CONFIG.tl3600,
+        ...loaded.tl3600 || {}
+      },
+      payment: {
+        ...DEFAULT_CONFIG.payment,
+        ...loaded.payment || {}
+      },
+      camera: {
+        ...DEFAULT_CONFIG.camera,
+        ...loaded.camera || {}
+      },
+      display: {
+        ...DEFAULT_CONFIG.display,
+        ...loaded.display || {}
+      },
+      debug: {
+        ...DEFAULT_CONFIG.debug,
+        ...loaded.debug || {}
+      }
+    };
+  }
+  /**
+   * Log current configuration (for debugging)
+   */
+  logConfig() {
+    console.log("📋 [Config] Current configuration:");
+    console.log(`   TL3600 Port: ${this.config.tl3600.port}`);
+    console.log(`   Payment Mock Mode: ${this.config.payment.useMockMode}`);
+    console.log(`   Camera: ${this.config.camera.useWebcam ? "Webcam" : "DSLR"} (mock: ${this.config.camera.mockMode})`);
+    console.log(`   Display: ${this.config.display.splitScreenMode ? "Split Screen" : "Dual Monitor"}`);
+    console.log(`   Resolution: Main ${this.config.display.mainWidth}x${this.config.display.mainHeight}, Hologram ${this.config.display.hologramWidth}x${this.config.display.hologramHeight}`);
+  }
+}
+const appConfig = new ConfigManager();
+function getConfig() {
+  return appConfig.get();
+}
+function getTL3600Config() {
+  return appConfig.get().tl3600;
+}
+function getPaymentConfig() {
+  return appConfig.get().payment;
+}
+function getCameraConfig() {
+  return appConfig.get().camera;
+}
 let db = null;
 function initDatabase() {
   const dbPath = path__namespace.join(electron.app.getPath("userData"), "analytics.db");
   console.log(`📊 [Analytics] Initializing database at: ${dbPath}`);
-  db = new Database__default.default(dbPath);
+  db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -1255,6 +2707,11 @@ function initDatabase() {
       status TEXT NOT NULL,
       payment_time INTEGER NOT NULL,
       error_message TEXT,
+      approval_number TEXT,
+      sales_date TEXT,
+      sales_time TEXT,
+      transaction_media TEXT,
+      card_number TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (session_id) REFERENCES sessions(session_id)
     );
@@ -1274,7 +2731,30 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_payments_session_id ON payments(session_id);
     CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
   `);
+  migratePaymentsTable();
   console.log("✅ [Analytics] Database initialized");
+}
+function migratePaymentsTable() {
+  if (!db) return;
+  const tableInfo = db.prepare("PRAGMA table_info(payments)").all();
+  const columnNames = tableInfo.map((col) => col.name);
+  const newColumns = [
+    { name: "approval_number", type: "TEXT" },
+    { name: "sales_date", type: "TEXT" },
+    { name: "sales_time", type: "TEXT" },
+    { name: "transaction_media", type: "TEXT" },
+    { name: "card_number", type: "TEXT" }
+  ];
+  for (const column of newColumns) {
+    if (!columnNames.includes(column.name)) {
+      try {
+        db.exec(`ALTER TABLE payments ADD COLUMN ${column.name} ${column.type}`);
+        console.log(`📊 [Analytics] Added column: payments.${column.name}`);
+      } catch (error) {
+        console.log(`📊 [Analytics] Column ${column.name} already exists or error:`, error);
+      }
+    }
+  }
 }
 function recordSessionStart(sessionId, startTime) {
   if (!db) return;
@@ -1311,14 +2791,25 @@ function recordSessionEnd(sessionId, endTime) {
   stmt.run(endTime, endTime, sessionId);
   console.log(`📊 [Analytics] Session completed: ${sessionId}`);
 }
-function recordPayment(sessionId, amount, status, errorMessage) {
+function recordPayment(sessionId, amount, status, errorMessage, details) {
   if (!db) return;
   const stmt = db.prepare(`
-    INSERT INTO payments (session_id, amount, status, payment_time, error_message)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO payments (session_id, amount, status, payment_time, error_message, approval_number, sales_date, sales_time, transaction_media, card_number)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  stmt.run(sessionId, amount, status, Date.now(), errorMessage || null);
-  console.log(`📊 [Analytics] Payment recorded: ${sessionId} - ${status} - ${amount}원`);
+  stmt.run(
+    sessionId,
+    amount,
+    status,
+    Date.now(),
+    errorMessage || null,
+    details?.approvalNumber || null,
+    details?.salesDate || null,
+    details?.salesTime || null,
+    details?.transactionMedia || null,
+    details?.cardNumber || null
+  );
+  console.log(`📊 [Analytics] Payment recorded: ${sessionId} - ${status} - ${amount}원 (approval: ${details?.approvalNumber || "N/A"})`);
 }
 function recordPrint(sessionId, imagePath, success, errorMessage) {
   if (!db) return;
@@ -1387,7 +2878,12 @@ function getDashboardStats() {
       COALESCE(s.duration_seconds, 0) as duration_seconds,
       COALESCE(s.frame_selected, 'N/A') as frame_selected,
       COALESCE(p.status, 'N/A') as payment_status,
-      COALESCE(p.amount, 0) as amount
+      COALESCE(p.amount, 0) as amount,
+      p.approval_number,
+      p.sales_date,
+      p.sales_time,
+      p.transaction_media,
+      p.card_number
     FROM sessions s
     LEFT JOIN payments p ON s.session_id = p.session_id
     ORDER BY s.start_time DESC
@@ -1426,6 +2922,230 @@ function getDashboardStats() {
     dailyRevenue
   };
 }
+function getFlowStatistics() {
+  if (!db) {
+    return {
+      sessionsStarted: 0,
+      frameSelected: 0,
+      recordingCompleted: 0,
+      processingCompleted: 0,
+      paymentAttempted: 0,
+      paymentApproved: 0,
+      printCompleted: 0,
+      frameSelectionRate: 0,
+      recordingCompletionRate: 0,
+      processingCompletionRate: 0,
+      paymentAttemptRate: 0,
+      paymentSuccessRate: 0,
+      printCompletionRate: 0,
+      overallConversionRate: 0,
+      dropOffPoints: []
+    };
+  }
+  const sessionsStarted = db.prepare(`
+    SELECT COUNT(*) as count FROM sessions
+  `).get().count;
+  const frameSelected = db.prepare(`
+    SELECT COUNT(*) as count FROM sessions WHERE frame_selected IS NOT NULL
+  `).get().count;
+  const recordingCompleted = db.prepare(`
+    SELECT COUNT(*) as count FROM sessions WHERE images_captured > 0
+  `).get().count;
+  const processingCompleted = db.prepare(`
+    SELECT COUNT(*) as count FROM sessions WHERE completed = 1
+  `).get().count;
+  const paymentAttempted = db.prepare(`
+    SELECT COUNT(DISTINCT session_id) as count FROM payments
+  `).get().count;
+  const paymentApproved = db.prepare(`
+    SELECT COUNT(DISTINCT session_id) as count FROM payments WHERE status = 'approved'
+  `).get().count;
+  const printCompleted = db.prepare(`
+    SELECT COUNT(DISTINCT session_id) as count FROM prints WHERE success = 1
+  `).get().count;
+  const calcRate = (numerator, denominator) => {
+    if (denominator === 0) return 0;
+    return Math.round(numerator / denominator * 100);
+  };
+  const frameSelectionRate = calcRate(frameSelected, sessionsStarted);
+  const recordingCompletionRate = calcRate(recordingCompleted, frameSelected);
+  const processingCompletionRate = calcRate(processingCompleted, recordingCompleted);
+  const paymentAttemptRate = calcRate(paymentAttempted, processingCompleted);
+  const paymentSuccessRate = calcRate(paymentApproved, paymentAttempted);
+  const printCompletionRate = calcRate(printCompleted, paymentApproved);
+  const overallConversionRate = calcRate(printCompleted, sessionsStarted);
+  const dropOffPoints = [
+    {
+      step: "프레임 선택",
+      dropped: sessionsStarted - frameSelected,
+      dropRate: calcRate(sessionsStarted - frameSelected, sessionsStarted)
+    },
+    {
+      step: "녹화 완료",
+      dropped: frameSelected - recordingCompleted,
+      dropRate: calcRate(frameSelected - recordingCompleted, frameSelected)
+    },
+    {
+      step: "처리 완료",
+      dropped: recordingCompleted - processingCompleted,
+      dropRate: calcRate(recordingCompleted - processingCompleted, recordingCompleted)
+    },
+    {
+      step: "결제 시도",
+      dropped: processingCompleted - paymentAttempted,
+      dropRate: calcRate(processingCompleted - paymentAttempted, processingCompleted)
+    },
+    {
+      step: "결제 승인",
+      dropped: paymentAttempted - paymentApproved,
+      dropRate: calcRate(paymentAttempted - paymentApproved, paymentAttempted)
+    },
+    {
+      step: "인쇄 완료",
+      dropped: paymentApproved - printCompleted,
+      dropRate: calcRate(paymentApproved - printCompleted, paymentApproved)
+    }
+  ];
+  return {
+    sessionsStarted,
+    frameSelected,
+    recordingCompleted,
+    processingCompleted,
+    paymentAttempted,
+    paymentApproved,
+    printCompleted,
+    frameSelectionRate,
+    recordingCompletionRate,
+    processingCompletionRate,
+    paymentAttemptRate,
+    paymentSuccessRate,
+    printCompletionRate,
+    overallConversionRate,
+    dropOffPoints
+  };
+}
+function insertSampleData() {
+  if (!db) {
+    return { success: false, stats: { sessionsStarted: 0, frameSelected: 0, recordingCompleted: 0, processingCompleted: 0, paymentAttempted: 0, paymentApproved: 0, printCompleted: 0 } };
+  }
+  console.log("📊 [Analytics] Inserting sample data...");
+  db.exec("DELETE FROM prints");
+  db.exec("DELETE FROM payments");
+  db.exec("DELETE FROM sessions");
+  const frames = ["프레임A", "프레임B", "프레임C", "프레임D", "프레임E"];
+  const now = Date.now();
+  const dayMs = 24 * 60 * 60 * 1e3;
+  const insertSession = db.prepare(`
+    INSERT INTO sessions (session_id, start_time, end_time, duration_seconds, frame_selected, images_captured, completed)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertPayment = db.prepare(`
+    INSERT INTO payments (session_id, amount, status, payment_time, approval_number, sales_date, sales_time, transaction_media, card_number)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertPrint = db.prepare(`
+    INSERT INTO prints (session_id, image_path, print_time, success)
+    VALUES (?, ?, ?, ?)
+  `);
+  const stats = {
+    sessionsStarted: 0,
+    frameSelected: 0,
+    recordingCompleted: 0,
+    processingCompleted: 0,
+    paymentAttempted: 0,
+    paymentApproved: 0,
+    printCompleted: 0
+  };
+  for (let i = 0; i < 100; i++) {
+    const sessionId = `sample_session_${now}_${i}`;
+    const daysAgo = Math.floor(Math.random() * 7);
+    const hoursAgo = Math.floor(Math.random() * 24);
+    const startTime = now - daysAgo * dayMs - hoursAgo * 60 * 60 * 1e3;
+    stats.sessionsStarted++;
+    const selectedFrame = Math.random() < 0.85;
+    const frameName = selectedFrame ? frames[Math.floor(Math.random() * frames.length)] : null;
+    if (selectedFrame) stats.frameSelected++;
+    const recordingDone = selectedFrame && Math.random() < 0.9;
+    const imagesCaptured = recordingDone ? Math.floor(Math.random() * 3) + 1 : 0;
+    if (recordingDone) stats.recordingCompleted++;
+    const processingDone = recordingDone && Math.random() < 0.95;
+    if (processingDone) stats.processingCompleted++;
+    const durationSeconds = processingDone ? Math.floor(Math.random() * 360) + 120 : Math.floor(Math.random() * 60);
+    const endTime = processingDone ? startTime + durationSeconds * 1e3 : null;
+    insertSession.run(
+      sessionId,
+      startTime,
+      endTime,
+      durationSeconds,
+      frameName,
+      imagesCaptured,
+      processingDone ? 1 : 0
+    );
+    const paymentAttemptedFlag = processingDone && Math.random() < 0.85;
+    if (paymentAttemptedFlag) {
+      stats.paymentAttempted++;
+      const paymentApprovedFlag = Math.random() < 0.8;
+      const paymentTime = startTime + durationSeconds * 1e3 + 5e3;
+      if (paymentApprovedFlag) {
+        stats.paymentApproved++;
+        const salesDate = new Date(paymentTime).toISOString().slice(0, 10).replace(/-/g, "");
+        const salesTime = new Date(paymentTime).toTimeString().slice(0, 8).replace(/:/g, "");
+        const approvalNumber = String(Math.floor(Math.random() * 1e8)).padStart(8, "0");
+        const transactionMedia = ["1", "2", "3"][Math.floor(Math.random() * 3)];
+        const cardLast4 = String(Math.floor(Math.random() * 1e4)).padStart(4, "0");
+        insertPayment.run(
+          sessionId,
+          5e3,
+          "approved",
+          paymentTime,
+          approvalNumber,
+          salesDate,
+          salesTime,
+          transactionMedia,
+          `****-****-****-${cardLast4}`
+        );
+        const printDone = Math.random() < 0.95;
+        if (printDone) {
+          stats.printCompleted++;
+          insertPrint.run(
+            sessionId,
+            `/frames/${sessionId}_print.jpg`,
+            paymentTime + 3e4,
+            1
+          );
+        } else {
+          insertPrint.run(
+            sessionId,
+            `/frames/${sessionId}_print.jpg`,
+            paymentTime + 3e4,
+            0
+          );
+        }
+      } else {
+        insertPayment.run(
+          sessionId,
+          5e3,
+          "declined",
+          paymentTime,
+          null,
+          null,
+          null,
+          null,
+          null
+        );
+      }
+    }
+  }
+  console.log("✅ [Analytics] Sample data inserted");
+  console.log(`   Sessions Started: ${stats.sessionsStarted}`);
+  console.log(`   Frame Selected: ${stats.frameSelected}`);
+  console.log(`   Recording Completed: ${stats.recordingCompleted}`);
+  console.log(`   Processing Completed: ${stats.processingCompleted}`);
+  console.log(`   Payment Attempted: ${stats.paymentAttempted}`);
+  console.log(`   Payment Approved: ${stats.paymentApproved}`);
+  console.log(`   Print Completed: ${stats.printCompleted}`);
+  return { success: true, stats };
+}
 function closeDatabase() {
   if (db) {
     db.close();
@@ -1450,13 +3170,15 @@ let hologramState = {
   mode: "logo"
 };
 const isDevelopment = !electron.app.isPackaged;
-const isSplitScreenMode = process.env.SPLIT_SCREEN_MODE === "true";
-const MAIN_WIDTH = parseInt(process.env.MAIN_WIDTH || "1080", 10);
-const MAIN_HEIGHT = parseInt(process.env.MAIN_HEIGHT || "1920", 10);
-const HOLOGRAM_WIDTH = parseInt(process.env.HOLOGRAM_WIDTH || "1080", 10);
-const HOLOGRAM_HEIGHT = parseInt(process.env.HOLOGRAM_HEIGHT || "1920", 10);
+let displaySettings = {
+  splitScreenMode: false,
+  mainWidth: 1080,
+  mainHeight: 1920,
+  hologramWidth: 1080,
+  hologramHeight: 1920
+};
 function getHologramTargetWindow() {
-  return isSplitScreenMode ? mainWindow : hologramWindow;
+  return displaySettings.splitScreenMode ? mainWindow : hologramWindow;
 }
 function createWindow() {
   const displays = electron.screen.getAllDisplays();
@@ -1465,13 +3187,13 @@ function createWindow() {
   mainWindow = new electron.BrowserWindow({
     x,
     y,
-    width: isDevelopment ? 2200 : MAIN_WIDTH,
-    height: isDevelopment ? 1100 : MAIN_HEIGHT,
+    width: isDevelopment ? 2200 : displaySettings.mainWidth,
+    height: isDevelopment ? 1100 : displaySettings.mainHeight,
     fullscreen: false,
     frame: isDevelopment,
     // No frame in production
     resizable: isDevelopment,
-    alwaysOnTop: !isDevelopment && !isSplitScreenMode,
+    alwaysOnTop: !isDevelopment && !displaySettings.splitScreenMode,
     // Stay on top in production
     webPreferences: {
       preload: path__namespace.join(__dirname, "preload.js"),
@@ -1481,7 +3203,7 @@ function createWindow() {
       webSecurity: false
     }
   });
-  console.log(`📺 Main window: ${MAIN_WIDTH}x${MAIN_HEIGHT} at (${x}, ${y})`);
+  console.log(`📺 Main window: ${displaySettings.mainWidth}x${displaySettings.mainHeight} at (${x}, ${y})`);
   if (isDevelopment) {
     mainWindow.loadURL("http://localhost:5173/");
     mainWindow.webContents.openDevTools();
@@ -1499,8 +3221,8 @@ function createHologramWindow() {
   hologramWindow = new electron.BrowserWindow({
     x,
     y,
-    width: isDevelopment ? width : HOLOGRAM_WIDTH,
-    height: isDevelopment ? height : HOLOGRAM_HEIGHT,
+    width: isDevelopment ? width : displaySettings.hologramWidth,
+    height: isDevelopment ? height : displaySettings.hologramHeight,
     fullscreen: false,
     frame: isDevelopment,
     // No frame in production
@@ -1525,10 +3247,34 @@ function createHologramWindow() {
   hologramWindow.on("closed", () => {
     hologramWindow = null;
   });
-  console.log(`📺 Hologram window: ${HOLOGRAM_WIDTH}x${HOLOGRAM_HEIGHT} at (${x}, ${y}) on display ${displays.length > 1 ? 2 : 1}`);
+  console.log(`📺 Hologram window: ${displaySettings.hologramWidth}x${displaySettings.hologramHeight} at (${x}, ${y}) on display ${displays.length > 1 ? 2 : 1}`);
 }
 electron.app.whenReady().then(async () => {
   console.log("🚀 Initializing MUT Hologram Studio...");
+  electron.session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowedPermissions = ["media", "mediaKeySystem", "geolocation", "notifications"];
+    if (allowedPermissions.includes(permission)) {
+      console.log(`✅ Permission granted: ${permission}`);
+      callback(true);
+    } else {
+      console.log(`❌ Permission denied: ${permission}`);
+      callback(false);
+    }
+  });
+  electron.session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    const allowedPermissions = ["media", "mediaKeySystem", "geolocation", "notifications"];
+    return allowedPermissions.includes(permission);
+  });
+  console.log("📷 Camera permissions handler configured");
+  const config = appConfig.load();
+  displaySettings = {
+    splitScreenMode: config.display.splitScreenMode,
+    mainWidth: config.display.mainWidth,
+    mainHeight: config.display.mainHeight,
+    hologramWidth: config.display.hologramWidth,
+    hologramHeight: config.display.hologramHeight
+  };
+  console.log(`📺 Display mode: ${displaySettings.splitScreenMode ? "Split Screen" : "Dual Monitor"}`);
   try {
     initDatabase();
   } catch (error) {
@@ -1547,11 +3293,10 @@ electron.app.whenReady().then(async () => {
   pythonBridge.on("progress", (progress) => {
     mainWindow?.webContents.send("video:progress", progress);
   });
-  const useMock = process.env.MOCK_CAMERA !== "false";
-  const useWebcam = process.env.USE_WEBCAM === "true";
+  const cameraConfig = getCameraConfig();
   cameraController = new CameraController({
-    mockMode: useMock && !useWebcam,
-    useWebcam
+    mockMode: cameraConfig.mockMode && !cameraConfig.useWebcam,
+    useWebcam: cameraConfig.useWebcam
   });
   const cameraResult = await cameraController.connect();
   if (cameraResult.success) {
@@ -1566,19 +3311,44 @@ electron.app.whenReady().then(async () => {
   } else {
     console.error("⚠️  Printer initialization failed:", printerResult.error);
   }
-  cardReader = new CardReaderController({ mockMode: true, mockApprovalRate: 0.8 });
+  const paymentConfig = getPaymentConfig();
+  const tl3600Config = getTL3600Config();
+  const useMockCardReader = paymentConfig.useMockMode || isDevelopment;
+  cardReader = new CardReaderController({
+    mockMode: useMockCardReader,
+    mockApprovalRate: paymentConfig.mockApprovalRate,
+    readerPort: tl3600Config.port,
+    terminalId: tl3600Config.terminalId
+  });
   const cardReaderResult = await cardReader.connect();
   if (cardReaderResult.success) {
-    console.log("✅ Card reader initialized (mock mode)");
+    const mode = useMockCardReader ? "mock mode" : `TL3600 on ${tl3600Config.port}`;
+    console.log(`✅ Card reader initialized (${mode})`);
     cardReader.on("status", (statusUpdate) => {
       mainWindow?.webContents.send("payment:status", statusUpdate);
     });
+    if (!useMockCardReader) {
+      cardReader.on("cardRemoved", () => {
+        mainWindow?.webContents.send("payment:card-removed");
+      });
+      cardReader.on("paymentComplete", (result) => {
+        mainWindow?.webContents.send("payment:complete", result);
+      });
+      cardReader.on("error", (error) => {
+        mainWindow?.webContents.send("payment:error", {
+          message: error instanceof Error ? error.message : "Unknown error"
+        });
+      });
+      cardReader.on("disconnected", () => {
+        mainWindow?.webContents.send("payment:disconnected");
+      });
+    }
   } else {
     console.error("⚠️  Card reader initialization failed:", cardReaderResult.error);
   }
   console.log("✅ All systems initialized\n");
   createWindow();
-  if (!isSplitScreenMode) {
+  if (!displaySettings.splitScreenMode) {
     console.log("📺 Creating separate hologram window (dual-monitor mode)");
     createHologramWindow();
   } else {
@@ -1587,7 +3357,7 @@ electron.app.whenReady().then(async () => {
   electron.app.on("activate", () => {
     if (electron.BrowserWindow.getAllWindows().length === 0) {
       createWindow();
-      if (!isSplitScreenMode) {
+      if (!displaySettings.splitScreenMode) {
         createHologramWindow();
       }
     }
@@ -1945,8 +3715,53 @@ electron.ipcMain.handle("payment:get-status", async () => {
   const status = cardReader.getStatus();
   return {
     success: status.connected,
-    status: status.connected ? "idle" : "offline"
+    status: status.connected ? "idle" : "offline",
+    mode: status.mode
   };
+});
+electron.ipcMain.handle("payment:cancel-transaction", async (_event, options) => {
+  console.log("🚫 Transaction cancellation requested:", options);
+  if (!cardReader) {
+    return {
+      success: false,
+      error: "Card reader not initialized"
+    };
+  }
+  try {
+    const result = await cardReader.cancelTransaction({
+      approvalNumber: options.approvalNumber,
+      originalDate: options.originalDate,
+      originalTime: options.originalTime,
+      amount: options.amount,
+      transactionType: options.transactionType
+    });
+    return result;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    return {
+      success: false,
+      error: errorMessage
+    };
+  }
+});
+electron.ipcMain.handle("payment:list-ports", async () => {
+  console.log("🔌 Listing available COM ports...");
+  try {
+    const ports = await CardReaderController.listPorts();
+    console.log(`   Found ${ports.length} ports:`, ports.map((p) => p.path).join(", "));
+    return {
+      success: true,
+      ports
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error("❌ Failed to list ports:", errorMessage);
+    return {
+      success: false,
+      error: errorMessage,
+      ports: []
+    };
+  }
 });
 electron.ipcMain.handle("hologram:set-mode", async (_event, mode, data) => {
   console.log("🎭 Hologram mode change requested:", mode);
@@ -1974,7 +3789,7 @@ electron.ipcMain.handle("hologram:show-qr", async (_event, qrCodePath, videoPath
   };
   console.log("💾 [IPC] Hologram state updated:", JSON.stringify(hologramState));
   const targetWindow = getHologramTargetWindow();
-  const windowName = isSplitScreenMode ? "main window" : "hologram window";
+  const windowName = displaySettings.splitScreenMode ? "main window" : "hologram window";
   if (!targetWindow) {
     console.error(`❌ [IPC] ${windowName} is NULL - cannot send message!`);
     return { success: false, error: `${windowName} not initialized` };
@@ -2074,8 +3889,8 @@ electron.ipcMain.handle("analytics:update-images", async (_event, sessionId, ima
   updateSessionImages(sessionId, imageCount);
   return { success: true };
 });
-electron.ipcMain.handle("analytics:record-payment", async (_event, sessionId, amount, status, errorMessage) => {
-  recordPayment(sessionId, amount, status, errorMessage);
+electron.ipcMain.handle("analytics:record-payment", async (_event, sessionId, amount, status, errorMessage, details) => {
+  recordPayment(sessionId, amount, status, errorMessage, details);
   return { success: true };
 });
 electron.ipcMain.handle("analytics:record-print", async (_event, sessionId, imagePath, success, errorMessage) => {
@@ -2085,6 +3900,136 @@ electron.ipcMain.handle("analytics:record-print", async (_event, sessionId, imag
 electron.ipcMain.handle("analytics:get-dashboard-stats", async () => {
   const stats = getDashboardStats();
   return { success: true, stats };
+});
+electron.ipcMain.handle("analytics:get-flow-statistics", async () => {
+  const stats = getFlowStatistics();
+  return { success: true, stats };
+});
+electron.ipcMain.handle("analytics:insert-sample-data", async () => {
+  console.log("📊 [IPC] Inserting sample data...");
+  const result = insertSampleData();
+  return result;
+});
+electron.ipcMain.handle("config:get", async () => {
+  console.log("⚙️ [IPC] Getting configuration");
+  try {
+    const config = getConfig();
+    const configPath = appConfig.getConfigPath();
+    return {
+      success: true,
+      config,
+      configPath
+    };
+  } catch (error) {
+    console.error("❌ [IPC] Failed to get config:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    };
+  }
+});
+electron.ipcMain.handle("config:update", async (_event, updates) => {
+  console.log("⚙️ [IPC] Updating configuration:", updates);
+  try {
+    const success = appConfig.update(updates);
+    if (success) {
+      return { success: true, config: getConfig() };
+    }
+    return { success: false, error: "Failed to save config" };
+  } catch (error) {
+    console.error("❌ [IPC] Failed to update config:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    };
+  }
+});
+electron.ipcMain.handle("config:update-tl3600", async (_event, updates) => {
+  console.log("⚙️ [IPC] Updating TL3600 configuration:", updates);
+  try {
+    const success = appConfig.updateTL3600(updates);
+    if (success) {
+      return { success: true, config: getTL3600Config() };
+    }
+    return { success: false, error: "Failed to save TL3600 config" };
+  } catch (error) {
+    console.error("❌ [IPC] Failed to update TL3600 config:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    };
+  }
+});
+electron.ipcMain.handle("config:update-payment", async (_event, updates) => {
+  console.log("⚙️ [IPC] Updating payment configuration:", updates);
+  try {
+    const success = appConfig.updatePayment(updates);
+    if (success) {
+      return { success: true, config: getPaymentConfig() };
+    }
+    return { success: false, error: "Failed to save payment config" };
+  } catch (error) {
+    console.error("❌ [IPC] Failed to update payment config:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    };
+  }
+});
+electron.ipcMain.handle("config:update-camera", async (_event, updates) => {
+  console.log("⚙️ [IPC] Updating camera configuration:", updates);
+  try {
+    const success = appConfig.updateCamera(updates);
+    if (success) {
+      return { success: true, config: getCameraConfig() };
+    }
+    return { success: false, error: "Failed to save camera config" };
+  } catch (error) {
+    console.error("❌ [IPC] Failed to update camera config:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    };
+  }
+});
+electron.ipcMain.handle("config:update-display", async (_event, updates) => {
+  console.log("⚙️ [IPC] Updating display configuration:", updates);
+  console.log("⚠️ Note: Display changes require app restart to take effect");
+  try {
+    const success = appConfig.updateDisplay(updates);
+    if (success) {
+      return { success: true, config: getConfig().display, requiresRestart: true };
+    }
+    return { success: false, error: "Failed to save display config" };
+  } catch (error) {
+    console.error("❌ [IPC] Failed to update display config:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    };
+  }
+});
+electron.ipcMain.handle("config:reset", async () => {
+  console.log("⚙️ [IPC] Resetting configuration to defaults");
+  try {
+    const success = appConfig.reset();
+    if (success) {
+      return { success: true, config: getConfig() };
+    }
+    return { success: false, error: "Failed to reset config" };
+  } catch (error) {
+    console.error("❌ [IPC] Failed to reset config:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    };
+  }
+});
+electron.ipcMain.handle("config:get-path", async () => {
+  return {
+    success: true,
+    path: appConfig.getConfigPath()
+  };
 });
 electron.app.on("before-quit", () => {
   closeDatabase();

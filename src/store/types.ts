@@ -105,6 +105,22 @@ export interface PaymentState {
   error?: string;
 }
 
+/**
+ * Payment result data for potential transaction cancellation
+ * Stores TL3600 payment details required for VAN no-card cancel
+ */
+export interface LastPaymentResult {
+  transactionId?: string;
+  approvalNumber?: string;
+  salesDate?: string;      // YYYYMMDD format
+  salesTime?: string;      // hhmmss format
+  amount: number;
+  transactionMedia?: string; // '1' IC, '2' MS, '3' RF
+  cardType?: string;
+  cardLast4?: string;
+  timestamp?: string;      // ISO timestamp
+}
+
 // ============================================
 // Print Types
 // ============================================

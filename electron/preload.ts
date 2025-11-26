@@ -90,38 +90,103 @@ const videoAPI = {
   },
 };
 
-// Payment API
+// Payment API - supports both mock mode and TL3600 hardware
 const paymentAPI = {
   process: (params: {
     amount: number;
-    currency: string;
-    method: 'card' | 'cash';
+    currency?: string;
+    description?: string;
   }) => ipcRenderer.invoke('payment:process', params),
 
-  cancel: (paymentId: string) => ipcRenderer.invoke('payment:cancel', paymentId),
+  cancel: () => ipcRenderer.invoke('payment:cancel'),
 
-  getStatus: (paymentId: string) => ipcRenderer.invoke('payment:get-status', paymentId),
+  getStatus: () => ipcRenderer.invoke('payment:get-status'),
 
-  onStatus: (callback: (status: { status: string; message?: string }) => void) => {
-    const listener = (_event: IpcRendererEvent, data: { status: string; message?: string }) => callback(data);
+  // Cancel a previous transaction (for dashboard manual cancellation)
+  cancelTransaction: (params: {
+    approvalNumber: string;
+    originalDate: string;   // YYYYMMDD
+    originalTime: string;   // hhmmss
+    amount: number;
+    transactionType: string; // '1' IC, '2' RF/MS
+  }) => ipcRenderer.invoke('payment:cancel-transaction', params),
+
+  // List available COM ports for TL3600 configuration
+  listPorts: () => ipcRenderer.invoke('payment:list-ports'),
+
+  // Payment status events
+  onStatus: (callback: (status: {
+    status: string;
+    message?: string;
+    cardType?: string;
+  }) => void) => {
+    const listener = (_event: IpcRendererEvent, data: {
+      status: string;
+      message?: string;
+      cardType?: string;
+    }) => callback(data);
     ipcRenderer.on('payment:status', listener);
     return () => ipcRenderer.removeListener('payment:status', listener);
   },
 
+  // Payment completion event
   onComplete: (callback: (result: {
     success: boolean;
+    status: string;
     transactionId?: string;
-    receiptUrl?: string;
+    amount?: number;
+    timestamp?: string;
+    cardType?: string;
+    cardLast4?: string;
+    cardNumber?: string;
+    approvalNumber?: string;
+    salesDate?: string;
+    salesTime?: string;
+    transactionMedia?: string;
     error?: string;
+    rejectCode?: string;
+    rejectMessage?: string;
   }) => void) => {
     const listener = (_event: IpcRendererEvent, data: {
       success: boolean;
+      status: string;
       transactionId?: string;
-      receiptUrl?: string;
+      amount?: number;
+      timestamp?: string;
+      cardType?: string;
+      cardLast4?: string;
+      cardNumber?: string;
+      approvalNumber?: string;
+      salesDate?: string;
+      salesTime?: string;
+      transactionMedia?: string;
       error?: string;
+      rejectCode?: string;
+      rejectMessage?: string;
     }) => callback(data);
     ipcRenderer.on('payment:complete', listener);
     return () => ipcRenderer.removeListener('payment:complete', listener);
+  },
+
+  // Card removed event (TL3600 only)
+  onCardRemoved: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('payment:card-removed', listener);
+    return () => ipcRenderer.removeListener('payment:card-removed', listener);
+  },
+
+  // Payment error event
+  onError: (callback: (error: { message: string }) => void) => {
+    const listener = (_event: IpcRendererEvent, data: { message: string }) => callback(data);
+    ipcRenderer.on('payment:error', listener);
+    return () => ipcRenderer.removeListener('payment:error', listener);
+  },
+
+  // Terminal disconnected event
+  onDisconnected: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('payment:disconnected', listener);
+    return () => ipcRenderer.removeListener('payment:disconnected', listener);
   },
 };
 
@@ -141,11 +206,91 @@ const analyticsAPI = {
     ipcRenderer.invoke('analytics:update-frame', sessionId, frameName),
   updateImages: (sessionId: string, imageCount: number) =>
     ipcRenderer.invoke('analytics:update-images', sessionId, imageCount),
-  recordPayment: (sessionId: string, amount: number, status: string, errorMessage?: string) =>
-    ipcRenderer.invoke('analytics:record-payment', sessionId, amount, status, errorMessage),
+  recordPayment: (sessionId: string, amount: number, status: string, errorMessage?: string, details?: {
+    approvalNumber?: string;
+    salesDate?: string;
+    salesTime?: string;
+    transactionMedia?: string;
+    cardNumber?: string;
+  }) =>
+    ipcRenderer.invoke('analytics:record-payment', sessionId, amount, status, errorMessage, details),
   recordPrint: (sessionId: string, imagePath: string, success: boolean, errorMessage?: string) =>
     ipcRenderer.invoke('analytics:record-print', sessionId, imagePath, success, errorMessage),
   getDashboardStats: () => ipcRenderer.invoke('analytics:get-dashboard-stats'),
+  getFlowStatistics: () => ipcRenderer.invoke('analytics:get-flow-statistics'),
+  insertSampleData: () => ipcRenderer.invoke('analytics:insert-sample-data'),
+};
+
+// Configuration API - allows runtime configuration changes without rebuilding
+const configAPI = {
+  // Get current configuration
+  get: () => ipcRenderer.invoke('config:get'),
+
+  // Update full configuration
+  update: (updates: {
+    tl3600?: {
+      port?: string;
+      terminalId?: string;
+      timeout?: number;
+      retryCount?: number;
+    };
+    payment?: {
+      useMockMode?: boolean;
+      defaultAmount?: number;
+      mockApprovalRate?: number;
+    };
+    camera?: {
+      useWebcam?: boolean;
+      mockMode?: boolean;
+    };
+    display?: {
+      splitScreenMode?: boolean;
+      mainWidth?: number;
+      mainHeight?: number;
+      hologramWidth?: number;
+      hologramHeight?: number;
+    };
+    debug?: {
+      enableLogging?: boolean;
+      logLevel?: 'error' | 'warn' | 'info' | 'debug';
+    };
+  }) => ipcRenderer.invoke('config:update', updates),
+
+  // Update TL3600 settings only
+  updateTL3600: (updates: {
+    port?: string;
+    terminalId?: string;
+    timeout?: number;
+    retryCount?: number;
+  }) => ipcRenderer.invoke('config:update-tl3600', updates),
+
+  // Update payment settings only
+  updatePayment: (updates: {
+    useMockMode?: boolean;
+    defaultAmount?: number;
+    mockApprovalRate?: number;
+  }) => ipcRenderer.invoke('config:update-payment', updates),
+
+  // Update camera settings only
+  updateCamera: (updates: {
+    useWebcam?: boolean;
+    mockMode?: boolean;
+  }) => ipcRenderer.invoke('config:update-camera', updates),
+
+  // Update display settings only
+  updateDisplay: (updates: {
+    splitScreenMode?: boolean;
+    mainWidth?: number;
+    mainHeight?: number;
+    hologramWidth?: number;
+    hologramHeight?: number;
+  }) => ipcRenderer.invoke('config:update-display', updates),
+
+  // Reset to default configuration
+  reset: () => ipcRenderer.invoke('config:reset'),
+
+  // Get config file path (for user reference)
+  getPath: () => ipcRenderer.invoke('config:get-path'),
 };
 
 // Hologram API
@@ -180,6 +325,7 @@ contextBridge.exposeInMainWorld('electron', {
   payment: paymentAPI,
   file: fileAPI,
   analytics: analyticsAPI,
+  config: configAPI,
   hologram: hologramAPI,
   ipcRenderer: ipcRendererAPI,
 });

@@ -5,7 +5,7 @@
 
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { Frame, ProcessingResult } from './types';
+import type { Frame, ProcessingResult, LastPaymentResult } from './types';
 
 interface SessionState {
   // Session data
@@ -15,6 +15,7 @@ interface SessionState {
   selectedFrame: Frame | null;
   processedResult: ProcessingResult | null;
   selectedPrintImage: string | null;
+  lastPaymentResult: LastPaymentResult | null;
   sessionId: string;
   sessionStartTime: number;
 
@@ -25,6 +26,7 @@ interface SessionState {
   setSelectedFrame: (frame: Frame | null) => void;
   setProcessedResult: (result: ProcessingResult | null) => void;
   setSelectedPrintImage: (imagePath: string | null) => void;
+  setLastPaymentResult: (result: LastPaymentResult | null) => void;
   cleanupSessionFiles: () => Promise<void>;
   clearSession: () => void;
 }
@@ -49,6 +51,7 @@ export const useSessionStore = create<SessionState>()(
     selectedFrame: null,
     processedResult: null,
     selectedPrintImage: null,
+    lastPaymentResult: null,
     sessionId: generateSessionId(),
     sessionStartTime: Date.now(),
 
@@ -87,6 +90,12 @@ export const useSessionStore = create<SessionState>()(
     setSelectedPrintImage: (imagePath) =>
       set((state) => {
         state.selectedPrintImage = imagePath;
+      }),
+
+    // Set the last payment result for potential cancellation
+    setLastPaymentResult: (result) =>
+      set((state) => {
+        state.lastPaymentResult = result;
       }),
 
     // Cleanup all session files (videos, frames, QR codes)
@@ -145,6 +154,7 @@ export const useSessionStore = create<SessionState>()(
         state.selectedFrame = null;
         state.processedResult = null;
         state.selectedPrintImage = null;
+        state.lastPaymentResult = null;
         state.sessionId = generateSessionId();
         state.sessionStartTime = Date.now();
       }),

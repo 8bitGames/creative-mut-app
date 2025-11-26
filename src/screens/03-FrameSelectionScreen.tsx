@@ -1,9 +1,12 @@
 // src/screens/03-FrameSelectionScreen.tsx
-import { useEffect } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
 import { useSessionStore } from '@/store/sessionStore';
 import type { Frame } from '@/store/types';
+
+// Inactivity timeout in seconds - return to idle if no selection
+const INACTIVITY_TIMEOUT = 30;
 
 // Frame data - Served from public directory
 const frames = [
@@ -66,8 +69,10 @@ const cardVariants = {
 
 export function FrameSelectionScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
+  const resetSession = useSessionStore((state) => state.resetSession);
   const selectedFrame = useSessionStore((state) => state.selectedFrame);
   const setSelectedFrame = useSessionStore((state) => state.setSelectedFrame);
+  const [timeRemaining, setTimeRemaining] = useState(INACTIVITY_TIMEOUT);
 
   // Auto-select first frame if none is selected
   useEffect(() => {
@@ -76,6 +81,27 @@ export function FrameSelectionScreen() {
       setSelectedFrame(frames[0] as Frame);
     }
   }, [selectedFrame, setSelectedFrame]);
+
+  // Inactivity timeout - return to idle after INACTIVITY_TIMEOUT seconds
+  useEffect(() => {
+    console.log('⏱️ [FrameSelectionScreen] Starting inactivity timer');
+
+    const countdownInterval = setInterval(() => {
+      setTimeRemaining((prev) => {
+        if (prev <= 1) {
+          console.log('⏰ [FrameSelectionScreen] Timeout - returning to idle');
+          resetSession();
+          setScreen('idle');
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      clearInterval(countdownInterval);
+    };
+  }, [setScreen, resetSession]);
 
   const handleFrameSelect = (frame: Frame) => {
     setSelectedFrame(frame);
@@ -97,6 +123,10 @@ export function FrameSelectionScreen() {
           촬영 영상은 QR코드를 통해
           <br />
           무료 다운로드가 가능합니다.
+        </p>
+        {/* Inactivity timer */}
+        <p className="text-lg text-gray-400 mt-4">
+          {timeRemaining}초 후 처음 화면으로 돌아갑니다
         </p>
       </motion.div>
 
