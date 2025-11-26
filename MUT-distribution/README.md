@@ -285,14 +285,48 @@ print(f"QR code saved to: {qr_path}")
 4. **Hardware Acceleration** - Auto-enabled for video decoding
 5. **Segment Count** - Increase for longer videos (4-8 segments)
 
-## Optional: Face Enhancement
+## Face Enhancement (✨ ACTIVE)
 
-The `FaceEnhancementAndMakeup/` directory contains optional CodeFormer integration. This is not required for basic video processing but can enhance face quality.
+**Face enhancement is now automatically enabled!** The pipeline enhances both photos and videos before frame overlay.
 
-**To use face enhancement:**
+### What Gets Enhanced
+- ✅ **Photos**: 3 captured images are enhanced before stitching (brightness, contrast, skin smoothing)
+- ✅ **Video**: Enhanced after stitching, before frame overlay (FFmpeg filters)
+
+### Enhancement Features
+- Brightness & contrast adjustment
+- Color saturation boost
+- Skin smoothing (bilateral filter)
+- Detail sharpening
+- Configurable levels: light, medium (default), strong
+
+### Configuration
+
+**Current level**: `medium` (recommended)
+
+To change the enhancement level, edit:
+- **Photos**: `python/stitch_images.py` line 55
+- **Video**: `MUT-distribution/pipeline.py` line 182
+
+Available levels: `'light'`, `'medium'`, `'strong'`
+
+To disable enhancement:
+- Set `enhance_faces=False` in both stitch_images.py and pipeline.py
+
+### Performance
+- Adds ~5-8 seconds to total processing time
+- No GPU required (uses CPU/FFmpeg filters)
+- Graceful fallback if enhancement fails
+
+### Advanced: CodeFormer Integration
+
+The `FaceEnhancementAndMakeup/` directory contains the full CodeFormer integration for advanced makeup application and face restoration. This requires additional setup:
+
 1. Install CodeFormer dependencies
-2. Import and integrate in pipeline
+2. Download model weights (large file)
 3. See `FaceEnhancementAndMakeup/README.md` for details
+
+**Note**: The current built-in enhancement provides excellent results without requiring large model downloads.
 
 ## License
 

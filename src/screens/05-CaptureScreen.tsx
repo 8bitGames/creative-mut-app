@@ -92,9 +92,12 @@ export function CaptureScreen() {
           deviceId = canonCamera.deviceId;
           console.log(`✅ Found Canon camera: ${canonCamera.label}`);
         } else {
-          console.warn('⚠️ Canon camera not found, using default camera');
-          // Use the last camera in the list (often external cameras are listed last)
-          deviceId = videoDevices[videoDevices.length - 1]?.deviceId;
+          // Fallback to built-in MacBook camera (usually first device)
+          console.warn('⚠️ Canon camera not found, using MacBook camera (first device)');
+          deviceId = videoDevices[0]?.deviceId; // Use first device (built-in camera)
+          if (videoDevices[0]) {
+            console.log(`   📱 Using: ${videoDevices[0].label || 'Built-in Camera'}`);
+          }
         }
 
         const stream = await navigator.mediaDevices.getUserMedia({

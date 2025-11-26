@@ -9,6 +9,10 @@ python-dotenv>=1.0.0
 qrcode[pil]>=7.4.2
 Pillow>=10.0.0
 
+# Face Enhancement
+opencv-python>=4.8.0
+numpy>=1.24.0
+
 # Note: FFmpeg and FFprobe must be installed separately on your system
 # macOS: brew install ffmpeg
 # Ubuntu: sudo apt-get install ffmpeg

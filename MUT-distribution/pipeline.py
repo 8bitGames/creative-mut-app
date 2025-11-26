@@ -79,9 +79,88 @@ def normalize_to_mp4(input_video):
         print(f"   ⚠️  Normalization failed, using original: {e.stderr.decode() if e.stderr else 'Unknown error'}")
         return input_video
 
-def composite_video(input_video, frame_image, output_path):
+def enhance_video(input_video, enhancement_level='medium'):
+    """
+    Apply face enhancement to video before frame overlay.
+    Uses FFmpeg filters for brightness, contrast, saturation, and sharpening.
+
+    Args:
+        input_video: Path to input video
+        enhancement_level: 'light', 'medium', or 'strong'
+
+    Returns:
+        Path to enhanced video
+    """
+    print(f"\n✨ Applying face enhancement to video...")
+    print(f"   Level: {enhancement_level}")
+
+    # Create enhanced video path
+    enhanced_path = input_video.rsplit('.', 1)[0] + '_enhanced.mp4'
+
+    # Enhancement parameters
+    params = {
+        'light': {
+            'brightness': 0.03,
+            'contrast': 1.08,
+            'saturation': 1.05,
+            'unsharp': '5:5:0.8:5:5:0.0'
+        },
+        'medium': {
+            'brightness': 0.05,
+            'contrast': 1.12,
+            'saturation': 1.1,
+            'unsharp': '5:5:1.0:5:5:0.0'
+        },
+        'strong': {
+            'brightness': 0.08,
+            'contrast': 1.18,
+            'saturation': 1.15,
+            'unsharp': '5:5:1.2:5:5:0.0'
+        }
+    }
+
+    current_params = params.get(enhancement_level, params['medium'])
+
+    # Build FFmpeg filter chain for face/skin enhancement
+    filter_chain = (
+        f"eq=brightness={current_params['brightness']}:"
+        f"contrast={current_params['contrast']}:"
+        f"saturation={current_params['saturation']},"
+        f"unsharp={current_params['unsharp']}"
+    )
+
+    cmd = [
+        'ffmpeg', '-y',
+        '-i', input_video,
+        '-vf', filter_chain,
+        '-c:v', 'libx264',
+        '-preset', 'medium',
+        '-crf', '18',
+        '-pix_fmt', 'yuv420p',
+        enhanced_path
+    ]
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=60)
+        file_size = os.path.getsize(enhanced_path) / (1024 * 1024)
+        print(f"   ✓ Video enhanced: {file_size:.1f} MB")
+        return enhanced_path
+    except subprocess.CalledProcessError as e:
+        print(f"   ⚠️  Enhancement failed, using original: {e.stderr.decode() if e.stderr else 'Unknown error'}")
+        return input_video
+
+def composite_video(input_video, frame_image, output_path, enhance_faces=True):
     """
     Composites video + frame overlay only.
+
+    Args:
+        input_video: Path to input video
+        frame_image: Path to frame overlay image
+        output_path: Path to output composed video
+        enhance_faces: Whether to apply face enhancement before frame overlay
+
+    Returns:
+        Duration of composition in seconds
     """
     start_time = time.time()
 
@@ -97,6 +176,10 @@ def composite_video(input_video, frame_image, output_path):
 
     # CRITICAL: Normalize input to MP4 first (fixes WebM issues)
     input_video = normalize_to_mp4(input_video)
+
+    # === FACE ENHANCEMENT STEP (BEFORE frame overlay) ===
+    if enhance_faces:
+        input_video = enhance_video(input_video, enhancement_level='medium')
 
     # Determine Encoder
     encoder = get_best_encoder()
