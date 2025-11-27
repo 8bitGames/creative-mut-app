@@ -11,6 +11,7 @@ export {
   getPrinterConfig,
   getDisplayConfig,
   getDemoConfig,
+  getDebugConfig,
   type AppConfig,
   type TL3600Config,
   type PaymentConfig,

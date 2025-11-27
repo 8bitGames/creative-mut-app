@@ -3,6 +3,7 @@ import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import { app } from 'electron';
 import { EventEmitter } from 'events';
+import { getDebugConfig } from '../config';
 
 export interface VideoProcessingOptions {
   inputVideo: string;
@@ -44,6 +45,7 @@ export class PythonBridge extends EventEmitter {
   private stitcherWorkingDir: string;
   private pipelineWorkingDir: string;
   private ffmpegPath: string;
+  private outputDir: string; // Output directory with write permissions
 
   constructor() {
     super();
@@ -60,11 +62,14 @@ export class PythonBridge extends EventEmitter {
       this.stitcherWorkingDir = path.join(process.resourcesPath, 'python');
       this.pipelineWorkingDir = path.join(process.resourcesPath, 'python');
       this.ffmpegPath = path.join(process.resourcesPath, 'ffmpeg', 'ffmpeg.exe');
+      // Use userData folder for output (has write permissions on all systems)
+      this.outputDir = path.join(app.getPath('userData'), 'output');
 
       console.log('🎬 [PythonBridge] Initialized (Production - Bundled EXE)');
       console.log(`   Pipeline EXE: ${this.pipelineExePath}`);
       console.log(`   Stitcher EXE: ${this.stitcherExePath}`);
       console.log(`   FFmpeg: ${this.ffmpegPath}`);
+      console.log(`   Output dir: ${this.outputDir}`);
     } else {
       // Development: Use system Python and script files
       // Windows uses 'python', Unix uses 'python3'
@@ -76,11 +81,14 @@ export class PythonBridge extends EventEmitter {
       this.stitcherWorkingDir = path.join(app.getAppPath(), 'python');
       this.pipelineWorkingDir = path.join(app.getAppPath(), 'MUT-distribution');
       this.ffmpegPath = 'ffmpeg'; // Use system FFmpeg
+      // Development: use local output directory
+      this.outputDir = path.join(app.getAppPath(), 'MUT-distribution', 'output');
 
       console.log('🐍 [PythonBridge] Initialized (Development - Python Scripts)');
       console.log(`   Python: ${this.pythonPath}`);
       console.log(`   Pipeline: ${this.pipelineScriptPath}`);
       console.log(`   Stitcher: ${this.stitcherScriptPath}`);
+      console.log(`   Output dir: ${this.outputDir}`);
     }
     console.log(`   Stitcher working dir: ${this.stitcherWorkingDir}`);
     console.log(`   Pipeline working dir: ${this.pipelineWorkingDir}`);
@@ -100,6 +108,7 @@ export class PythonBridge extends EventEmitter {
         args = [
           '--input', options.inputVideo,
           '--frame', options.frameOverlay,
+          '--output-dir', this.outputDir, // Use userData folder for write permissions
         ];
       } else {
         // Development: Use Python with script
@@ -117,6 +126,13 @@ export class PythonBridge extends EventEmitter {
 
       if (options.s3Folder) {
         args.push('--s3-folder', options.s3Folder);
+      }
+
+      // Add debug log file if enabled in config
+      const debugConfig = getDebugConfig();
+      if (debugConfig.logToFile && debugConfig.resolvedLogPath) {
+        args.push('--log-file', debugConfig.resolvedLogPath);
+        console.log(`   Debug logging to: ${debugConfig.resolvedLogPath}`);
       }
 
       // Add flag to output JSON results
@@ -284,11 +300,20 @@ export class PythonBridge extends EventEmitter {
    * Stitch 3 images into a video using stitch_images executable or script
    */
   private async stitchImagesToVideo(imagePaths: string[]): Promise<string> {
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
       console.log(`\n🎬 [PythonBridge] Stitching images...`);
 
       const timestamp = Date.now();
-      const outputPath = path.join(this.stitcherWorkingDir, 'output', `stitched_${timestamp}.mp4`);
+      // Use outputDir for stitched video (has write permissions in production)
+      const outputPath = path.join(this.outputDir, `stitched_${timestamp}.mp4`);
+
+      // Ensure output directory exists
+      try {
+        const fs = await import('fs/promises');
+        await fs.mkdir(this.outputDir, { recursive: true });
+      } catch (err) {
+        console.warn(`   Warning: Could not create output directory: ${err}`);
+      }
 
       let executable: string;
       let args: string[];
@@ -377,19 +402,19 @@ export class PythonBridge extends EventEmitter {
       console.log(`   Timestamps: ${timestamps.join('s, ')}s`);
 
       try {
-        // Create output directory for frames
+        // Create output directory for frames (use outputDir for write permissions)
         const fs = await import('fs/promises');
         const timestamp = Date.now();
-        const outputDir = path.join(this.pipelineWorkingDir, 'output', `frames_${timestamp}`);
-        await fs.mkdir(outputDir, { recursive: true });
-        console.log(`   Output directory: ${outputDir}`);
+        const framesOutputDir = path.join(this.outputDir, `frames_${timestamp}`);
+        await fs.mkdir(framesOutputDir, { recursive: true });
+        console.log(`   Output directory: ${framesOutputDir}`);
 
         const extractedFrames: string[] = [];
 
         // Extract each frame sequentially
         for (let i = 0; i < timestamps.length; i++) {
           const time = timestamps[i];
-          const framePath = path.join(outputDir, `frame_${time}s.jpg`);
+          const framePath = path.join(framesOutputDir, `frame_${time}s.jpg`);
 
           console.log(`\n   Extracting frame ${i + 1}/${timestamps.length} at ${time}s...`);
 

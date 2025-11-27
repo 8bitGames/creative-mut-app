@@ -50,6 +50,244 @@ const path__namespace = /* @__PURE__ */ _interopNamespaceDefault(path);
 const fs__namespace$1 = /* @__PURE__ */ _interopNamespaceDefault(fs$1);
 const fs__namespace = /* @__PURE__ */ _interopNamespaceDefault(fs);
 const os__namespace = /* @__PURE__ */ _interopNamespaceDefault(os);
+const DEFAULT_CONFIG = {
+  tl3600: {
+    port: "COM3",
+    terminalId: "0000000000000000",
+    timeout: 3e3,
+    retryCount: 3
+  },
+  payment: {
+    useMockMode: false,
+    // Will be overridden by isDevelopment if not explicitly set
+    defaultAmount: 5e3,
+    mockApprovalRate: 0.8
+  },
+  camera: {
+    useWebcam: true,
+    // Default to webcam for easier testing
+    mockMode: false
+  },
+  printer: {
+    mockMode: false
+    // Default to real printer
+  },
+  display: {
+    splitScreenMode: false,
+    // Default to dual-monitor mode
+    swapDisplays: false,
+    // Default: main→display1, hologram→display2
+    mainWidth: 1080,
+    mainHeight: 1920,
+    hologramWidth: 1080,
+    hologramHeight: 1920
+  },
+  demo: {
+    enabled: false,
+    // Default: demo mode disabled
+    videoPath: "demo.mov"
+    // Relative path auto-resolved to userData folder
+  },
+  debug: {
+    enableLogging: true,
+    logLevel: "info",
+    logToFile: false,
+    // Set to true to write logs to file
+    logFilePath: "debug.log"
+    // Relative to userData folder
+  }
+};
+class ConfigManager {
+  config = DEFAULT_CONFIG;
+  configPath = "";
+  loaded = false;
+  /**
+   * Get the config file path
+   */
+  getConfigPath() {
+    if (!this.configPath) {
+      const userDataPath = electron.app.getPath("userData");
+      this.configPath = path__namespace.join(userDataPath, "config.json");
+    }
+    return this.configPath;
+  }
+  /**
+   * Load configuration from file
+   * Creates default config file if it doesn't exist
+   */
+  load() {
+    if (this.loaded) {
+      return this.config;
+    }
+    const configPath = this.getConfigPath();
+    console.log(`📂 [Config] Loading configuration from: ${configPath}`);
+    try {
+      if (fs__namespace.existsSync(configPath)) {
+        const fileContent = fs__namespace.readFileSync(configPath, "utf-8");
+        const loadedConfig = JSON.parse(fileContent);
+        this.config = this.mergeWithDefaults(loadedConfig);
+        console.log("✅ [Config] Configuration loaded successfully");
+      } else {
+        console.log("📝 [Config] Config file not found, creating default...");
+        this.config = { ...DEFAULT_CONFIG };
+        this.save();
+        console.log("✅ [Config] Default configuration created");
+      }
+    } catch (error) {
+      console.error("❌ [Config] Failed to load config, using defaults:", error);
+      this.config = { ...DEFAULT_CONFIG };
+    }
+    this.loaded = true;
+    this.logConfig();
+    return this.config;
+  }
+  /**
+   * Save current configuration to file
+   */
+  save() {
+    const configPath = this.getConfigPath();
+    try {
+      const configDir = path__namespace.dirname(configPath);
+      if (!fs__namespace.existsSync(configDir)) {
+        fs__namespace.mkdirSync(configDir, { recursive: true });
+      }
+      const content = JSON.stringify(this.config, null, 2);
+      fs__namespace.writeFileSync(configPath, content, "utf-8");
+      console.log("💾 [Config] Configuration saved");
+      return true;
+    } catch (error) {
+      console.error("❌ [Config] Failed to save config:", error);
+      return false;
+    }
+  }
+  /**
+   * Get current configuration
+   */
+  get() {
+    if (!this.loaded) {
+      return this.load();
+    }
+    return this.config;
+  }
+  /**
+   * Update configuration
+   */
+  update(updates) {
+    this.config = this.mergeWithDefaults({ ...this.config, ...updates });
+    return this.save();
+  }
+  /**
+   * Update TL3600 settings
+   */
+  updateTL3600(updates) {
+    this.config.tl3600 = { ...this.config.tl3600, ...updates };
+    return this.save();
+  }
+  /**
+   * Update payment settings
+   */
+  updatePayment(updates) {
+    this.config.payment = { ...this.config.payment, ...updates };
+    return this.save();
+  }
+  /**
+   * Reset to default configuration
+   */
+  reset() {
+    this.config = { ...DEFAULT_CONFIG };
+    return this.save();
+  }
+  /**
+   * Update camera settings
+   */
+  updateCamera(updates) {
+    this.config.camera = { ...this.config.camera, ...updates };
+    return this.save();
+  }
+  /**
+   * Update display settings
+   */
+  updateDisplay(updates) {
+    this.config.display = { ...this.config.display, ...updates };
+    return this.save();
+  }
+  /**
+   * Merge loaded config with defaults
+   */
+  mergeWithDefaults(loaded) {
+    return {
+      tl3600: {
+        ...DEFAULT_CONFIG.tl3600,
+        ...loaded.tl3600 || {}
+      },
+      payment: {
+        ...DEFAULT_CONFIG.payment,
+        ...loaded.payment || {}
+      },
+      camera: {
+        ...DEFAULT_CONFIG.camera,
+        ...loaded.camera || {}
+      },
+      printer: {
+        ...DEFAULT_CONFIG.printer,
+        ...loaded.printer || {}
+      },
+      display: {
+        ...DEFAULT_CONFIG.display,
+        ...loaded.display || {}
+      },
+      demo: {
+        ...DEFAULT_CONFIG.demo,
+        ...loaded.demo || {}
+      },
+      debug: {
+        ...DEFAULT_CONFIG.debug,
+        ...loaded.debug || {}
+      }
+    };
+  }
+  /**
+   * Log current configuration (for debugging)
+   */
+  logConfig() {
+    console.log("📋 [Config] Current configuration:");
+    console.log(`   TL3600 Port: ${this.config.tl3600.port}`);
+    console.log(`   Payment Mock Mode: ${this.config.payment.useMockMode}`);
+    console.log(`   Camera: ${this.config.camera.useWebcam ? "Webcam" : "DSLR"} (mock: ${this.config.camera.mockMode})`);
+    console.log(`   Printer: ${this.config.printer.mockMode ? "Mock (skip printing)" : "Real printer"}`);
+    console.log(`   Display: ${this.config.display.splitScreenMode ? "Split Screen" : "Dual Monitor"}${this.config.display.swapDisplays ? " (SWAPPED)" : ""}`);
+    console.log(`   Resolution: Main ${this.config.display.mainWidth}x${this.config.display.mainHeight}, Hologram ${this.config.display.hologramWidth}x${this.config.display.hologramHeight}`);
+    console.log(`   Demo Mode: ${this.config.demo.enabled ? "Enabled" : "Disabled"}${this.config.demo.enabled ? ` (${this.config.demo.videoPath})` : ""}`);
+  }
+}
+const appConfig = new ConfigManager();
+function getConfig() {
+  return appConfig.get();
+}
+function getTL3600Config() {
+  return appConfig.get().tl3600;
+}
+function getPaymentConfig() {
+  return appConfig.get().payment;
+}
+function getCameraConfig() {
+  return appConfig.get().camera;
+}
+function getPrinterConfig() {
+  return appConfig.get().printer;
+}
+function getDebugConfig() {
+  const debug = appConfig.get().debug;
+  const userDataPath = electron.app.getPath("userData");
+  let resolvedLogPath = debug.logFilePath;
+  if (debug.logFilePath && !path__namespace.isAbsolute(debug.logFilePath)) {
+    resolvedLogPath = path__namespace.join(userDataPath, debug.logFilePath.replace(/^\.\//, ""));
+  }
+  return {
+    ...debug,
+    resolvedLogPath
+  };
+}
 class PythonBridge extends events.EventEmitter {
   isProd;
   pythonPath;
@@ -60,6 +298,8 @@ class PythonBridge extends events.EventEmitter {
   stitcherWorkingDir;
   pipelineWorkingDir;
   ffmpegPath;
+  outputDir;
+  // Output directory with write permissions
   constructor() {
     super();
     this.isProd = electron.app.isPackaged;
@@ -72,10 +312,12 @@ class PythonBridge extends events.EventEmitter {
       this.stitcherWorkingDir = path.join(process.resourcesPath, "python");
       this.pipelineWorkingDir = path.join(process.resourcesPath, "python");
       this.ffmpegPath = path.join(process.resourcesPath, "ffmpeg", "ffmpeg.exe");
+      this.outputDir = path.join(electron.app.getPath("userData"), "output");
       console.log("🎬 [PythonBridge] Initialized (Production - Bundled EXE)");
       console.log(`   Pipeline EXE: ${this.pipelineExePath}`);
       console.log(`   Stitcher EXE: ${this.stitcherExePath}`);
       console.log(`   FFmpeg: ${this.ffmpegPath}`);
+      console.log(`   Output dir: ${this.outputDir}`);
     } else {
       this.pythonPath = process.platform === "win32" ? "python" : "python3";
       this.pipelineExePath = "";
@@ -85,10 +327,12 @@ class PythonBridge extends events.EventEmitter {
       this.stitcherWorkingDir = path.join(electron.app.getAppPath(), "python");
       this.pipelineWorkingDir = path.join(electron.app.getAppPath(), "MUT-distribution");
       this.ffmpegPath = "ffmpeg";
+      this.outputDir = path.join(electron.app.getAppPath(), "MUT-distribution", "output");
       console.log("🐍 [PythonBridge] Initialized (Development - Python Scripts)");
       console.log(`   Python: ${this.pythonPath}`);
       console.log(`   Pipeline: ${this.pipelineScriptPath}`);
       console.log(`   Stitcher: ${this.stitcherScriptPath}`);
+      console.log(`   Output dir: ${this.outputDir}`);
     }
     console.log(`   Stitcher working dir: ${this.stitcherWorkingDir}`);
     console.log(`   Pipeline working dir: ${this.pipelineWorkingDir}`);
@@ -106,7 +350,10 @@ class PythonBridge extends events.EventEmitter {
           "--input",
           options.inputVideo,
           "--frame",
-          options.frameOverlay
+          options.frameOverlay,
+          "--output-dir",
+          this.outputDir
+          // Use userData folder for write permissions
         ];
       } else {
         executable = this.pythonPath;
@@ -123,6 +370,11 @@ class PythonBridge extends events.EventEmitter {
       }
       if (options.s3Folder) {
         args.push("--s3-folder", options.s3Folder);
+      }
+      const debugConfig = getDebugConfig();
+      if (debugConfig.logToFile && debugConfig.resolvedLogPath) {
+        args.push("--log-file", debugConfig.resolvedLogPath);
+        console.log(`   Debug logging to: ${debugConfig.resolvedLogPath}`);
       }
       args.push("--json");
       console.log(`Starting pipeline: ${executable} ${args.join(" ")}`);
@@ -260,11 +512,17 @@ ${"=".repeat(70)}`);
    * Stitch 3 images into a video using stitch_images executable or script
    */
   async stitchImagesToVideo(imagePaths) {
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
       console.log(`
 🎬 [PythonBridge] Stitching images...`);
       const timestamp = Date.now();
-      const outputPath = path.join(this.stitcherWorkingDir, "output", `stitched_${timestamp}.mp4`);
+      const outputPath = path.join(this.outputDir, `stitched_${timestamp}.mp4`);
+      try {
+        const fs2 = await import("fs/promises");
+        await fs2.mkdir(this.outputDir, { recursive: true });
+      } catch (err) {
+        console.warn(`   Warning: Could not create output directory: ${err}`);
+      }
       let executable;
       let args;
       if (this.isProd) {
@@ -348,13 +606,13 @@ ${"=".repeat(70)}`);
       try {
         const fs2 = await import("fs/promises");
         const timestamp = Date.now();
-        const outputDir = path.join(this.pipelineWorkingDir, "output", `frames_${timestamp}`);
-        await fs2.mkdir(outputDir, { recursive: true });
-        console.log(`   Output directory: ${outputDir}`);
+        const framesOutputDir = path.join(this.outputDir, `frames_${timestamp}`);
+        await fs2.mkdir(framesOutputDir, { recursive: true });
+        console.log(`   Output directory: ${framesOutputDir}`);
         const extractedFrames = [];
         for (let i = 0; i < timestamps.length; i++) {
           const time = timestamps[i];
-          const framePath = path.join(outputDir, `frame_${time}s.jpg`);
+          const framePath = path.join(framesOutputDir, `frame_${time}s.jpg`);
           console.log(`
    Extracting frame ${i + 1}/${timestamps.length} at ${time}s...`);
           const args = [
@@ -874,46 +1132,65 @@ class PrinterController extends events.EventEmitter {
         const imagePath = options.imagePath.replace(/\//g, "\\");
         const copies = options.copies || 1;
         const printerName = this.printerName || await this.getDefaultPrinter();
+        console.log(`🖨️  Printing to: ${printerName}`);
+        console.log(`🖨️  Image path: ${imagePath}`);
         const psCommand = `
           Add-Type -AssemblyName System.Drawing
+          
           $imagePath = "${imagePath}"
           $printerName = "${printerName}"
           $copies = ${copies}
-
-          for ($i = 0; $i -lt $copies; $i++) {
-            $img = [System.Drawing.Image]::FromFile($imagePath)
-            $printDoc = New-Object System.Drawing.Printing.PrintDocument
-
-            if ($printerName) {
-              $printDoc.PrinterSettings.PrinterName = $printerName
-            }
-
-            $printDoc.add_PrintPage({
-              param($sender, $e)
-              $bounds = $e.MarginBounds
-              $imgRatio = $img.Width / $img.Height
-              $boundsRatio = $bounds.Width / $bounds.Height
-
-              if ($imgRatio -gt $boundsRatio) {
-                $newWidth = $bounds.Width
-                $newHeight = $bounds.Width / $imgRatio
-              } else {
-                $newHeight = $bounds.Height
-                $newWidth = $bounds.Height * $imgRatio
-              }
-
-              $x = $bounds.X + ($bounds.Width - $newWidth) / 2
-              $y = $bounds.Y + ($bounds.Height - $newHeight) / 2
-
-              $e.Graphics.DrawImage($img, $x, $y, $newWidth, $newHeight)
-              $e.HasMorePages = $false
-            })
-
-            $printDoc.Print()
-            $img.Dispose()
+          
+          $img = [System.Drawing.Image]::FromFile($imagePath)
+          Write-Output "Image size: $($img.Width) x $($img.Height)"
+          
+          $printDoc = New-Object System.Drawing.Printing.PrintDocument
+          
+          if ($printerName) {
+            $printDoc.PrinterSettings.PrinterName = $printerName
           }
-
-          Write-Output "Print job submitted to $printerName"
+          
+          # Landscape mode (horizontal paper)
+          $printDoc.DefaultPageSettings.Landscape = $true
+          
+          # Minimize margins
+          $printDoc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0)
+          
+          $printDoc.add_PrintPage({
+            param($sender, $e)
+            
+            # Use PageBounds for full page area
+            $pageWidth = $e.PageBounds.Width
+            $pageHeight = $e.PageBounds.Height
+            
+            Write-Output "Full page: $pageWidth x $pageHeight"
+            
+            # Fit to HEIGHT, maintain aspect ratio (no stretch)
+            $imgRatio = $img.Width / $img.Height
+            $drawHeight = $pageHeight
+            $drawWidth = $pageHeight * $imgRatio
+            
+            # Center both horizontally AND vertically
+            $x = ($pageWidth - $drawWidth) / 2
+            $y = ($pageHeight - $drawHeight) / 2
+            
+            Write-Output "Drawing: $drawWidth x $drawHeight centered at ($x, $y)"
+            
+            # High quality rendering
+            $e.Graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+            $e.Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+            
+            $e.Graphics.DrawImage($img, $x, $y, $drawWidth, $drawHeight)
+            $e.HasMorePages = $false
+          })
+          
+          for ($i = 0; $i -lt $copies; $i++) {
+            Write-Output "Printing copy $($i + 1) of $copies..."
+            $printDoc.Print()
+          }
+          
+          $img.Dispose()
+          Write-Output "Print job completed"
         `;
         result = await this.executeWindowsCommand(psCommand);
       } else {
@@ -2546,216 +2823,6 @@ class CardReaderController extends events.EventEmitter {
     }
   }
 }
-const DEFAULT_CONFIG = {
-  tl3600: {
-    port: "COM3",
-    terminalId: "0000000000000000",
-    timeout: 3e3,
-    retryCount: 3
-  },
-  payment: {
-    useMockMode: false,
-    // Will be overridden by isDevelopment if not explicitly set
-    defaultAmount: 5e3,
-    mockApprovalRate: 0.8
-  },
-  camera: {
-    useWebcam: true,
-    // Default to webcam for easier testing
-    mockMode: false
-  },
-  display: {
-    splitScreenMode: false,
-    // Default to dual-monitor mode
-    swapDisplays: false,
-    // Default: main→display1, hologram→display2
-    mainWidth: 1080,
-    mainHeight: 1920,
-    hologramWidth: 1080,
-    hologramHeight: 1920
-  },
-  demo: {
-    enabled: false,
-    // Default: demo mode disabled
-    videoPath: "./GD_PROTO_MACAU Fin_F.mov"
-    // Default demo video path
-  },
-  debug: {
-    enableLogging: true,
-    logLevel: "info"
-  }
-};
-class ConfigManager {
-  config = DEFAULT_CONFIG;
-  configPath = "";
-  loaded = false;
-  /**
-   * Get the config file path
-   */
-  getConfigPath() {
-    if (!this.configPath) {
-      const userDataPath = electron.app.getPath("userData");
-      this.configPath = path__namespace.join(userDataPath, "config.json");
-    }
-    return this.configPath;
-  }
-  /**
-   * Load configuration from file
-   * Creates default config file if it doesn't exist
-   */
-  load() {
-    if (this.loaded) {
-      return this.config;
-    }
-    const configPath = this.getConfigPath();
-    console.log(`📂 [Config] Loading configuration from: ${configPath}`);
-    try {
-      if (fs__namespace.existsSync(configPath)) {
-        const fileContent = fs__namespace.readFileSync(configPath, "utf-8");
-        const loadedConfig = JSON.parse(fileContent);
-        this.config = this.mergeWithDefaults(loadedConfig);
-        console.log("✅ [Config] Configuration loaded successfully");
-      } else {
-        console.log("📝 [Config] Config file not found, creating default...");
-        this.config = { ...DEFAULT_CONFIG };
-        this.save();
-        console.log("✅ [Config] Default configuration created");
-      }
-    } catch (error) {
-      console.error("❌ [Config] Failed to load config, using defaults:", error);
-      this.config = { ...DEFAULT_CONFIG };
-    }
-    this.loaded = true;
-    this.logConfig();
-    return this.config;
-  }
-  /**
-   * Save current configuration to file
-   */
-  save() {
-    const configPath = this.getConfigPath();
-    try {
-      const configDir = path__namespace.dirname(configPath);
-      if (!fs__namespace.existsSync(configDir)) {
-        fs__namespace.mkdirSync(configDir, { recursive: true });
-      }
-      const content = JSON.stringify(this.config, null, 2);
-      fs__namespace.writeFileSync(configPath, content, "utf-8");
-      console.log("💾 [Config] Configuration saved");
-      return true;
-    } catch (error) {
-      console.error("❌ [Config] Failed to save config:", error);
-      return false;
-    }
-  }
-  /**
-   * Get current configuration
-   */
-  get() {
-    if (!this.loaded) {
-      return this.load();
-    }
-    return this.config;
-  }
-  /**
-   * Update configuration
-   */
-  update(updates) {
-    this.config = this.mergeWithDefaults({ ...this.config, ...updates });
-    return this.save();
-  }
-  /**
-   * Update TL3600 settings
-   */
-  updateTL3600(updates) {
-    this.config.tl3600 = { ...this.config.tl3600, ...updates };
-    return this.save();
-  }
-  /**
-   * Update payment settings
-   */
-  updatePayment(updates) {
-    this.config.payment = { ...this.config.payment, ...updates };
-    return this.save();
-  }
-  /**
-   * Reset to default configuration
-   */
-  reset() {
-    this.config = { ...DEFAULT_CONFIG };
-    return this.save();
-  }
-  /**
-   * Update camera settings
-   */
-  updateCamera(updates) {
-    this.config.camera = { ...this.config.camera, ...updates };
-    return this.save();
-  }
-  /**
-   * Update display settings
-   */
-  updateDisplay(updates) {
-    this.config.display = { ...this.config.display, ...updates };
-    return this.save();
-  }
-  /**
-   * Merge loaded config with defaults
-   */
-  mergeWithDefaults(loaded) {
-    return {
-      tl3600: {
-        ...DEFAULT_CONFIG.tl3600,
-        ...loaded.tl3600 || {}
-      },
-      payment: {
-        ...DEFAULT_CONFIG.payment,
-        ...loaded.payment || {}
-      },
-      camera: {
-        ...DEFAULT_CONFIG.camera,
-        ...loaded.camera || {}
-      },
-      display: {
-        ...DEFAULT_CONFIG.display,
-        ...loaded.display || {}
-      },
-      demo: {
-        ...DEFAULT_CONFIG.demo,
-        ...loaded.demo || {}
-      },
-      debug: {
-        ...DEFAULT_CONFIG.debug,
-        ...loaded.debug || {}
-      }
-    };
-  }
-  /**
-   * Log current configuration (for debugging)
-   */
-  logConfig() {
-    console.log("📋 [Config] Current configuration:");
-    console.log(`   TL3600 Port: ${this.config.tl3600.port}`);
-    console.log(`   Payment Mock Mode: ${this.config.payment.useMockMode}`);
-    console.log(`   Camera: ${this.config.camera.useWebcam ? "Webcam" : "DSLR"} (mock: ${this.config.camera.mockMode})`);
-    console.log(`   Display: ${this.config.display.splitScreenMode ? "Split Screen" : "Dual Monitor"}${this.config.display.swapDisplays ? " (SWAPPED)" : ""}`);
-    console.log(`   Resolution: Main ${this.config.display.mainWidth}x${this.config.display.mainHeight}, Hologram ${this.config.display.hologramWidth}x${this.config.display.hologramHeight}`);
-    console.log(`   Demo Mode: ${this.config.demo.enabled ? "Enabled" : "Disabled"}${this.config.demo.enabled ? ` (${this.config.demo.videoPath})` : ""}`);
-  }
-}
-const appConfig = new ConfigManager();
-function getConfig() {
-  return appConfig.get();
-}
-function getTL3600Config() {
-  return appConfig.get().tl3600;
-}
-function getPaymentConfig() {
-  return appConfig.get().payment;
-}
-function getCameraConfig() {
-  return appConfig.get().camera;
-}
 let db = null;
 function initDatabase() {
   const dbPath = path__namespace.join(electron.app.getPath("userData"), "analytics.db");
@@ -3385,7 +3452,8 @@ electron.app.whenReady().then(async () => {
   } else {
     console.error("⚠️  Camera initialization failed:", cameraResult.error);
   }
-  printerController = new PrinterController({ mockMode: false });
+  const printerConfig = getPrinterConfig();
+  printerController = new PrinterController({ mockMode: printerConfig.mockMode });
   const printerResult = await printerController.connect();
   if (printerResult.success) {
     console.log("✅ Printer controller initialized");

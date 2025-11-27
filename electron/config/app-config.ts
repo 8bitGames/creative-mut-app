@@ -63,6 +63,8 @@ export interface AppConfig {
   debug: {
     enableLogging: boolean;
     logLevel: 'error' | 'warn' | 'info' | 'debug';
+    logToFile: boolean;       // Write logs to file for debugging
+    logFilePath: string;      // Log file path (relative to userData, or absolute)
   };
 }
 
@@ -104,6 +106,8 @@ const DEFAULT_CONFIG: AppConfig = {
   debug: {
     enableLogging: true,
     logLevel: 'info',
+    logToFile: false,         // Set to true to write logs to file
+    logFilePath: 'debug.log', // Relative to userData folder
   },
 };
 
@@ -365,4 +369,24 @@ export function getDemoConfig(): DemoConfig {
   }
 
   return demo;
+}
+
+/**
+ * Helper function to get debug config
+ * Resolves relative logFilePath to absolute path based on userData folder
+ */
+export function getDebugConfig(): AppConfig['debug'] & { resolvedLogPath: string } {
+  const debug = appConfig.get().debug;
+  const userDataPath = app.getPath('userData');
+
+  // Resolve log file path
+  let resolvedLogPath = debug.logFilePath;
+  if (debug.logFilePath && !path.isAbsolute(debug.logFilePath)) {
+    resolvedLogPath = path.join(userDataPath, debug.logFilePath.replace(/^\.\//, ''));
+  }
+
+  return {
+    ...debug,
+    resolvedLogPath,
+  };
 }
