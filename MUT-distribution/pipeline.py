@@ -119,7 +119,7 @@ def normalize_to_mp4(input_video):
         FFMPEG_PATH, '-y',
         '-i', input_video,
         '-c:v', 'libx264',       # Re-encode to H.264
-        '-preset', 'ultrafast',  # Fast encoding
+        '-preset', 'fast',       # Better quality than ultrafast (4K needs this)
         '-crf', '18',            # High quality
         '-pix_fmt', 'yuv420p',
         normalized_path
@@ -241,14 +241,14 @@ def composite_video(input_video, frame_image, output_path, enhance_faces=True):
     print(f"   Encoder: {encoder.value}")
 
     # --- FFmpeg Filter Chain ---
-    # 1. Scale Input Video to 1080x1920 (Vertical)
+    # 1. Scale Input Video to 4K Portrait (2160x3840)
     # 2. Mirror (flip horizontally) the video
-    # 3. Scale Frame to 1080x1920
+    # 3. Scale Frame to 4K Portrait (2160x3840)
     # 4. Overlay Frame on Video
 
     filter_chain = (
-        '[0:v]scale=1080:1920:flags=lanczos,hflip,setsar=1[video];'
-        '[1:v]scale=1080:1920:flags=lanczos[frame];'
+        '[0:v]scale=2160:3840:flags=lanczos,hflip,setsar=1[video];'
+        '[1:v]scale=2160:3840:flags=lanczos[frame];'
         '[video][frame]overlay=0:0:format=auto[final]'
     )
 
@@ -261,7 +261,7 @@ def composite_video(input_video, frame_image, output_path, enhance_faces=True):
         '-filter_complex', filter_chain,
         '-map', '[final]',
         '-c:v', encoder.value,      # Codec
-        '-b:v', '5M',               # Bitrate
+        '-b:v', '40M',              # 40 Mbps bitrate for 4K quality
         '-pix_fmt', 'yuv420p',      # Pixel format
     ]
 

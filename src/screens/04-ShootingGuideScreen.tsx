@@ -186,11 +186,12 @@ export function ShootingGuideScreen() {
             return;
           }
 
+          // Request 4K resolution for high-quality output
           const stream = await navigator.mediaDevices.getUserMedia({
             video: {
               deviceId: deviceId ? { exact: deviceId } : undefined,
-              width: { ideal: 1920 },
-              height: { ideal: 1080 }
+              width: { ideal: 3840 },
+              height: { ideal: 2160 }
             },
             audio: false
           });

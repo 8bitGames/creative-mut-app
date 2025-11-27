@@ -102,20 +102,21 @@ def stitch_images_to_video(image_paths, output_path, duration_per_image=3.0, enh
     # Use concat demuxer with explicit duration for each image
     # This ensures smooth transitions and exact timing
 
+    # Output 4K portrait (2160x3840) for high quality
     ffmpeg_cmd = [
         FFMPEG_PATH, '-y',
         '-loop', '1', '-t', str(duration_per_image), '-i', image_paths[0],
         '-loop', '1', '-t', str(duration_per_image), '-i', image_paths[1],
         '-loop', '1', '-t', str(duration_per_image), '-i', image_paths[2],
         '-filter_complex',
-        '[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v0];'
-        '[1:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v1];'
-        '[2:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v2];'
+        '[0:v]scale=2160:3840:force_original_aspect_ratio=decrease,pad=2160:3840:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v0];'
+        '[1:v]scale=2160:3840:force_original_aspect_ratio=decrease,pad=2160:3840:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v1];'
+        '[2:v]scale=2160:3840:force_original_aspect_ratio=decrease,pad=2160:3840:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v2];'
         '[v0][v1][v2]concat=n=3:v=1:a=0[outv]',
         '-map', '[outv]',
         '-c:v', 'libx264',
         '-preset', 'medium',
-        '-crf', '23',
+        '-crf', '18',            # High quality for 4K
         '-pix_fmt', 'yuv420p',
         output_path
     ]

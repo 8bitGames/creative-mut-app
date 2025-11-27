@@ -99,11 +99,12 @@ export function StartScreen() {
         }
 
         // Start camera stream and KEEP IT RUNNING in background
+        // Request 4K resolution for high-quality output (3840x2160 landscape, rotated to 2160x3840 portrait)
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             deviceId: deviceId ? { exact: deviceId } : undefined,
-            width: { ideal: 1920 },
-            height: { ideal: 1080 }
+            width: { ideal: 3840 },
+            height: { ideal: 2160 }
           }
         });
 
