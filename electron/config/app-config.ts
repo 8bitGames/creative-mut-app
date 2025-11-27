@@ -35,6 +35,10 @@ export interface CameraConfig {
   mockMode: boolean;      // Force mock camera (no actual capture)
 }
 
+export interface PrinterConfig {
+  mockMode: boolean;      // true: Skip actual printing (for testing)
+}
+
 export interface DisplayConfig {
   splitScreenMode: boolean;  // true: Single window split, false: Dual monitor
   swapDisplays: boolean;     // true: Swap main/hologram displays (main→display2, hologram→display1)
@@ -53,6 +57,7 @@ export interface AppConfig {
   tl3600: TL3600Config;
   payment: PaymentConfig;
   camera: CameraConfig;
+  printer: PrinterConfig;
   display: DisplayConfig;
   demo: DemoConfig;
   debug: {
@@ -80,6 +85,9 @@ const DEFAULT_CONFIG: AppConfig = {
   camera: {
     useWebcam: true,     // Default to webcam for easier testing
     mockMode: false,
+  },
+  printer: {
+    mockMode: false,     // Default to real printer
   },
   display: {
     splitScreenMode: false,  // Default to dual-monitor mode
@@ -257,6 +265,10 @@ class ConfigManager {
         ...DEFAULT_CONFIG.camera,
         ...(loaded.camera || {}),
       },
+      printer: {
+        ...DEFAULT_CONFIG.printer,
+        ...(loaded.printer || {}),
+      },
       display: {
         ...DEFAULT_CONFIG.display,
         ...(loaded.display || {}),
@@ -280,6 +292,7 @@ class ConfigManager {
     console.log(`   TL3600 Port: ${this.config.tl3600.port}`);
     console.log(`   Payment Mock Mode: ${this.config.payment.useMockMode}`);
     console.log(`   Camera: ${this.config.camera.useWebcam ? 'Webcam' : 'DSLR'} (mock: ${this.config.camera.mockMode})`);
+    console.log(`   Printer: ${this.config.printer.mockMode ? 'Mock (skip printing)' : 'Real printer'}`);
     console.log(`   Display: ${this.config.display.splitScreenMode ? 'Split Screen' : 'Dual Monitor'}${this.config.display.swapDisplays ? ' (SWAPPED)' : ''}`);
     console.log(`   Resolution: Main ${this.config.display.mainWidth}x${this.config.display.mainHeight}, Hologram ${this.config.display.hologramWidth}x${this.config.display.hologramHeight}`);
     console.log(`   Demo Mode: ${this.config.demo.enabled ? 'Enabled' : 'Disabled'}${this.config.demo.enabled ? ` (${this.config.demo.videoPath})` : ''}`);
@@ -318,6 +331,13 @@ export function getPaymentConfig(): PaymentConfig {
  */
 export function getCameraConfig(): CameraConfig {
   return appConfig.get().camera;
+}
+
+/**
+ * Helper function to get printer config
+ */
+export function getPrinterConfig(): PrinterConfig {
+  return appConfig.get().printer;
 }
 
 /**

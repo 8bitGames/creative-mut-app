@@ -17,7 +17,7 @@ import { PythonBridge } from './python/bridge';
 import { CameraController } from './hardware/camera';
 import { PrinterController } from './hardware/printer';
 import { CardReaderController } from './hardware/card-reader';
-import { appConfig, getConfig, getPaymentConfig, getTL3600Config, getCameraConfig } from './config';
+import { appConfig, getConfig, getPaymentConfig, getTL3600Config, getCameraConfig, getPrinterConfig } from './config';
 import {
   initDatabase,
   closeDatabase,
@@ -241,8 +241,9 @@ app.whenReady().then(async () => {
     console.error('⚠️  Camera initialization failed:', cameraResult.error);
   }
 
-  // Initialize printer controller (use actual printer)
-  printerController = new PrinterController({ mockMode: false });
+  // Initialize printer controller
+  const printerConfig = getPrinterConfig();
+  printerController = new PrinterController({ mockMode: printerConfig.mockMode });
   const printerResult = await printerController.connect();
   if (printerResult.success) {
     console.log('✅ Printer controller initialized');

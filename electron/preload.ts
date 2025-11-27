@@ -243,6 +243,9 @@ const configAPI = {
       useWebcam?: boolean;
       mockMode?: boolean;
     };
+    printer?: {
+      mockMode?: boolean;
+    };
     display?: {
       splitScreenMode?: boolean;
       mainWidth?: number;

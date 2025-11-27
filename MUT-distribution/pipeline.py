@@ -23,10 +23,25 @@ from dotenv import load_dotenv
 # CONFIGURATION & PATH SETUP
 # ============================================================================
 
-# 1. SETUP ABSOLUTE PATHS BASED ON SCRIPT LOCATION
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# 1. SETUP ABSOLUTE PATHS BASED ON SCRIPT/EXE LOCATION
+# For PyInstaller onefile builds, __file__ points to temp extraction directory
+# which gets deleted after process exits. Use sys.executable instead.
+if getattr(sys, 'frozen', False):
+    # Running as compiled exe - use exe directory for persistent output
+    SCRIPT_DIR = os.path.dirname(sys.executable)
+else:
+    # Running as script - use script directory
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 DEFAULT_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
+
+# For .env file, check multiple locations (exe directory and bundled location)
 ENV_PATH = os.path.join(SCRIPT_DIR, ".env")
+if not os.path.exists(ENV_PATH) and getattr(sys, 'frozen', False):
+    # Fallback to PyInstaller extraction directory for bundled .env
+    bundled_env = os.path.join(getattr(sys, '_MEIPASS', SCRIPT_DIR), ".env")
+    if os.path.exists(bundled_env):
+        ENV_PATH = bundled_env
 
 # Load AWS credentials
 load_dotenv(ENV_PATH)
