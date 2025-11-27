@@ -59,6 +59,7 @@ class PythonBridge extends events.EventEmitter {
   stitcherScriptPath;
   stitcherWorkingDir;
   pipelineWorkingDir;
+  ffmpegPath;
   constructor() {
     super();
     this.isProd = electron.app.isPackaged;
@@ -70,9 +71,11 @@ class PythonBridge extends events.EventEmitter {
       this.stitcherScriptPath = "";
       this.stitcherWorkingDir = path.join(process.resourcesPath, "python");
       this.pipelineWorkingDir = path.join(process.resourcesPath, "python");
+      this.ffmpegPath = path.join(process.resourcesPath, "ffmpeg", "ffmpeg.exe");
       console.log("🎬 [PythonBridge] Initialized (Production - Bundled EXE)");
       console.log(`   Pipeline EXE: ${this.pipelineExePath}`);
       console.log(`   Stitcher EXE: ${this.stitcherExePath}`);
+      console.log(`   FFmpeg: ${this.ffmpegPath}`);
     } else {
       this.pythonPath = process.platform === "win32" ? "python" : "python3";
       this.pipelineExePath = "";
@@ -81,6 +84,7 @@ class PythonBridge extends events.EventEmitter {
       this.stitcherScriptPath = path.join(electron.app.getAppPath(), "python", "stitch_images.py");
       this.stitcherWorkingDir = path.join(electron.app.getAppPath(), "python");
       this.pipelineWorkingDir = path.join(electron.app.getAppPath(), "MUT-distribution");
+      this.ffmpegPath = "ffmpeg";
       console.log("🐍 [PythonBridge] Initialized (Development - Python Scripts)");
       console.log(`   Python: ${this.pythonPath}`);
       console.log(`   Pipeline: ${this.pipelineScriptPath}`);
@@ -367,7 +371,7 @@ ${"=".repeat(70)}`);
             framePath
           ];
           await new Promise((resolveFrame, rejectFrame) => {
-            const ffmpegProcess = child_process.spawn("ffmpeg", args);
+            const ffmpegProcess = child_process.spawn(this.ffmpegPath, args);
             let stderr = "";
             ffmpegProcess.stderr?.on("data", (data) => {
               stderr += data.toString();
@@ -2563,10 +2567,18 @@ const DEFAULT_CONFIG = {
   display: {
     splitScreenMode: false,
     // Default to dual-monitor mode
+    swapDisplays: false,
+    // Default: main→display1, hologram→display2
     mainWidth: 1080,
     mainHeight: 1920,
     hologramWidth: 1080,
     hologramHeight: 1920
+  },
+  demo: {
+    enabled: false,
+    // Default: demo mode disabled
+    videoPath: "./GD_PROTO_MACAU Fin_F.mov"
+    // Default demo video path
   },
   debug: {
     enableLogging: true,
@@ -2708,6 +2720,10 @@ class ConfigManager {
         ...DEFAULT_CONFIG.display,
         ...loaded.display || {}
       },
+      demo: {
+        ...DEFAULT_CONFIG.demo,
+        ...loaded.demo || {}
+      },
       debug: {
         ...DEFAULT_CONFIG.debug,
         ...loaded.debug || {}
@@ -2722,8 +2738,9 @@ class ConfigManager {
     console.log(`   TL3600 Port: ${this.config.tl3600.port}`);
     console.log(`   Payment Mock Mode: ${this.config.payment.useMockMode}`);
     console.log(`   Camera: ${this.config.camera.useWebcam ? "Webcam" : "DSLR"} (mock: ${this.config.camera.mockMode})`);
-    console.log(`   Display: ${this.config.display.splitScreenMode ? "Split Screen" : "Dual Monitor"}`);
+    console.log(`   Display: ${this.config.display.splitScreenMode ? "Split Screen" : "Dual Monitor"}${this.config.display.swapDisplays ? " (SWAPPED)" : ""}`);
     console.log(`   Resolution: Main ${this.config.display.mainWidth}x${this.config.display.mainHeight}, Hologram ${this.config.display.hologramWidth}x${this.config.display.hologramHeight}`);
+    console.log(`   Demo Mode: ${this.config.demo.enabled ? "Enabled" : "Disabled"}${this.config.demo.enabled ? ` (${this.config.demo.videoPath})` : ""}`);
   }
 }
 const appConfig = new ConfigManager();
@@ -3230,6 +3247,7 @@ let hologramState = {
 const isDevelopment = !electron.app.isPackaged;
 let displaySettings = {
   splitScreenMode: false,
+  swapDisplays: false,
   mainWidth: 1080,
   mainHeight: 1920,
   hologramWidth: 1080,
@@ -3240,8 +3258,10 @@ function getHologramTargetWindow() {
 }
 function createWindow() {
   const displays = electron.screen.getAllDisplays();
-  const primaryDisplay = displays[0];
-  const { x, y } = primaryDisplay.bounds;
+  const mainDisplayIndex = displaySettings.swapDisplays && displays.length > 1 ? 1 : 0;
+  const mainDisplay = displays[mainDisplayIndex];
+  const { x, y } = mainDisplay.bounds;
+  console.log(`📺 Main window will be on display ${mainDisplayIndex + 1}${displaySettings.swapDisplays ? " (swapped)" : ""}`);
   mainWindow = new electron.BrowserWindow({
     x,
     y,
@@ -3274,8 +3294,10 @@ function createWindow() {
 }
 function createHologramWindow() {
   const displays = electron.screen.getAllDisplays();
-  const secondDisplay = displays.length > 1 ? displays[1] : displays[0];
-  const { x, y, width, height } = secondDisplay.bounds;
+  const hologramDisplayIndex = displaySettings.swapDisplays ? 0 : displays.length > 1 ? 1 : 0;
+  const hologramDisplay = displays[hologramDisplayIndex];
+  const { x, y, width, height } = hologramDisplay.bounds;
+  console.log(`📺 Hologram window will be on display ${hologramDisplayIndex + 1}${displaySettings.swapDisplays ? " (swapped)" : ""}`);
   hologramWindow = new electron.BrowserWindow({
     x,
     y,
@@ -3305,7 +3327,7 @@ function createHologramWindow() {
   hologramWindow.on("closed", () => {
     hologramWindow = null;
   });
-  console.log(`📺 Hologram window: ${displaySettings.hologramWidth}x${displaySettings.hologramHeight} at (${x}, ${y}) on display ${displays.length > 1 ? 2 : 1}`);
+  console.log(`📺 Hologram window: ${displaySettings.hologramWidth}x${displaySettings.hologramHeight} at (${x}, ${y}) on display ${hologramDisplayIndex + 1}`);
 }
 electron.app.whenReady().then(async () => {
   console.log("🚀 Initializing MUT Hologram Studio...");
@@ -3327,12 +3349,13 @@ electron.app.whenReady().then(async () => {
   const config = appConfig.load();
   displaySettings = {
     splitScreenMode: config.display.splitScreenMode,
+    swapDisplays: config.display.swapDisplays,
     mainWidth: config.display.mainWidth,
     mainHeight: config.display.mainHeight,
     hologramWidth: config.display.hologramWidth,
     hologramHeight: config.display.hologramHeight
   };
-  console.log(`📺 Display mode: ${displaySettings.splitScreenMode ? "Split Screen" : "Dual Monitor"}`);
+  console.log(`📺 Display mode: ${displaySettings.splitScreenMode ? "Split Screen" : "Dual Monitor"}${displaySettings.swapDisplays ? " (displays swapped)" : ""}`);
   try {
     initDatabase();
   } catch (error) {
