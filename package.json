@@ -9,9 +9,13 @@
     "preview": "vite preview",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "build:python": "scripts\\build-python.bat",
+    "setup:ffmpeg": "powershell -ExecutionPolicy Bypass -File scripts/setup-ffmpeg.ps1",
+    "setup:python-embedded": "powershell -ExecutionPolicy Bypass -File scripts/setup-python-embedded.ps1",
     "dist": "npm run build && electron-builder --win",
     "dist:full": "npm run build:python && npm run build && electron-builder --win",
-    "dist:dir": "npm run build && electron-builder --win --dir"
+    "dist:dir": "npm run build && electron-builder --win --dir",
+    "dist:portable": "npm run build && electron-builder --win portable",
+    "dist:minimal": "npm run build && electron-builder --win --dir"
   },
   "build": {
     "appId": "com.mut.hologram-studio",
@@ -21,7 +25,38 @@
     },
     "files": [
       "dist/**/*",
-      "dist-electron/**/*"
+      "dist-electron/**/*",
+      "!**/*.map",
+      "!**/*.md",
+      "!**/*.txt",
+      "!**/*.bak*",
+      "!**/test*/**",
+      "!**/tests/**",
+      "!**/__tests__/**",
+      "!**/spec/**",
+      "!**/specs/**",
+      "!**/docs/**",
+      "!**/doc/**",
+      "!**/example*/**",
+      "!**/pics/**",
+      "!**/captures/**",
+      "!**/MUT-distribution/**",
+      "!**/python/**",
+      "!**/scripts/**",
+      "!**/*.pyc",
+      "!**/__pycache__/**",
+      "!**/node_modules/**/{CHANGELOG.md,README.md,readme.md,README,readme}",
+      "!**/node_modules/**/{test,tests,__tests__,testing,spec,specs}/**",
+      "!**/node_modules/**/*.d.ts",
+      "!**/node_modules/**/{.travis.yml,.eslintrc*,.prettier*,tsconfig.json,jest.config.*}",
+      "!**/node_modules/**/example*/**",
+      "!**/node_modules/**/doc*/**",
+      "!**/node_modules/**/*.md",
+      "!**/node_modules/**/LICENSE*",
+      "!**/node_modules/**/license*",
+      "!**/node_modules/**/.github/**",
+      "!**/node_modules/**/coverage/**",
+      "!**/node_modules/**/.nyc_output/**"
     ],
     "asar": true,
     "asarUnpack": [
@@ -29,17 +64,25 @@
     ],
     "extraResources": [
       {
+        "from": ".env",
+        "to": ".env"
+      },
+      {
         "from": "resources/python",
         "to": "python",
         "filter": [
-          "**/*"
+          "**/*",
+          "!**/*.pyc",
+          "!**/__pycache__/**",
+          "!**/test*/**"
         ]
       },
       {
         "from": "resources/ffmpeg",
         "to": "ffmpeg",
         "filter": [
-          "**/*"
+          "ffmpeg.exe",
+          "ffprobe.exe"
         ]
       },
       {
@@ -51,12 +94,24 @@
       }
     ],
     "win": {
-      "target": "nsis",
-      "icon": "public/icon.ico"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/icon.ico",
+      "compression": "maximum"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.exe"
     }
   },
   "dependencies": {
@@ -87,13 +142,13 @@
     "@types/react-dom": "^18.2.17",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.22",
-    "electron": "^28.3.3",
+    "electron": "^30.5.1",
     "electron-builder": "^24.13.3",
     "electron-vite": "^4.0.1",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.18",
     "typescript": "^5.9.3",
-    "vite": "^7.2.4",
+    "vite": "^5.4.21",
     "vite-plugin-electron": "^0.29.0"
   }
 }

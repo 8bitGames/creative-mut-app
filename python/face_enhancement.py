@@ -1,20 +1,55 @@
 """
 Face Enhancement Module for MUT App
-Provides face and image enhancement using OpenCV and PIL
+Provides face and image enhancement using PIL (no OpenCV dependency)
 
 This module enhances photos before they're stitched into video.
-Uses proven image processing techniques for skin smoothing, color correction, and detail enhancement.
+Uses PIL image processing techniques for skin smoothing, color correction, and detail enhancement.
+
+OPTIMIZATION NOTE (2025-11-28):
+Removed OpenCV and NumPy dependencies - using PIL-only implementation.
+This saves ~150-200MB in the final build while maintaining quality.
 """
 
-import cv2
-import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
 import os
+import sys
+
+
+def get_ffmpeg_path():
+    """Get the path to ffmpeg executable, checking env var, bundled and common locations"""
+    # 1. Check environment variable (set by Electron in production)
+    env_ffmpeg = os.environ.get('FFMPEG_PATH')
+    if env_ffmpeg and os.path.exists(env_ffmpeg):
+        return env_ffmpeg
+
+    # 2. Check relative to script location (for embedded Python)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    embedded_ffmpeg = os.path.join(script_dir, '..', '..', 'ffmpeg', 'ffmpeg.exe')
+    if os.path.exists(embedded_ffmpeg):
+        return os.path.abspath(embedded_ffmpeg)
+
+    # 3. Check common Windows locations
+    if sys.platform == 'win32':
+        ffmpeg_locations = [
+            r'C:\ffmpeg\ffmpeg-8.0.1-essentials_build\bin\ffmpeg.exe',
+            r'C:\ffmpeg\bin\ffmpeg.exe',
+            r'C:\Program Files\ffmpeg\bin\ffmpeg.exe',
+        ]
+        for fpath in ffmpeg_locations:
+            if os.path.exists(fpath):
+                return fpath
+
+    # Fallback to system PATH
+    return 'ffmpeg'
+
+
+FFMPEG_PATH = get_ffmpeg_path()
 
 
 class FaceEnhancer:
     """
-    Enhances faces in images using image processing techniques.
+    Enhances faces in images using PIL image processing techniques.
+    Uses edge-preserving smoothing via PIL filters instead of OpenCV bilateral filter.
     """
 
     def __init__(self, enhancement_level='medium'):
@@ -53,6 +88,22 @@ class FaceEnhancer:
 
         self.current_params = self.params.get(enhancement_level, self.params['medium'])
 
+    def _edge_preserving_smooth(self, img, iterations=1):
+        """
+        Apply edge-preserving smoothing using PIL filters.
+        This approximates bilateral filtering behavior without OpenCV.
+
+        Uses a combination of:
+        1. MedianFilter - removes noise while preserving edges
+        2. SMOOTH_MORE - gentle smoothing for skin texture
+        """
+        for _ in range(iterations):
+            # MedianFilter preserves edges better than Gaussian blur
+            img = img.filter(ImageFilter.MedianFilter(size=3))
+            # Light smoothing pass
+            img = img.filter(ImageFilter.SMOOTH)
+        return img
+
     def enhance_image(self, image_path, output_path=None):
         """
         Enhance a single image.
@@ -64,10 +115,14 @@ class FaceEnhancer:
         Returns:
             Path to enhanced image
         """
-        print(f"\n✨ Enhancing image: {os.path.basename(image_path)}")
+        print(f"\n   Enhancing image: {os.path.basename(image_path)}")
 
         # Load image with PIL
         img = Image.open(image_path)
+
+        # Ensure RGB mode
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
 
         # Step 1: Brightness enhancement
         enhancer = ImageEnhance.Brightness(img)
@@ -81,17 +136,9 @@ class FaceEnhancer:
         enhancer = ImageEnhance.Color(img)
         img = enhancer.enhance(self.current_params['saturation'])
 
-        # Step 4: Skin smoothing using bilateral filter (OpenCV)
-        # Convert PIL to OpenCV format
-        img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-
-        # Apply bilateral filter for skin smoothing (preserves edges)
+        # Step 4: Edge-preserving skin smoothing (PIL-based, replaces OpenCV bilateral)
         smoothing_iterations = self.current_params['smoothing']
-        for _ in range(smoothing_iterations):
-            img_cv = cv2.bilateralFilter(img_cv, 9, 75, 75)
-
-        # Convert back to PIL
-        img = Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB))
+        img = self._edge_preserving_smooth(img, smoothing_iterations)
 
         # Step 5: Subtle sharpening (after smoothing)
         enhancer = ImageEnhance.Sharpness(img)
@@ -103,7 +150,7 @@ class FaceEnhancer:
 
         img.save(output_path, quality=95)
 
-        print(f"   ✓ Enhanced: {os.path.basename(output_path)}")
+        print(f"   Enhanced: {os.path.basename(output_path)}")
         return output_path
 
     def enhance_batch(self, image_paths, output_dir=None):
@@ -203,7 +250,7 @@ def enhance_video_with_ffmpeg(input_video, output_video, enhancement_level='medi
 
     # Build FFmpeg command
     cmd = [
-        'ffmpeg', '-y',
+        FFMPEG_PATH, '-y',
         '-i', input_video,
         '-vf', filter_chain,
         '-c:v', 'libx264',

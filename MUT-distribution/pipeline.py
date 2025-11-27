@@ -46,18 +46,31 @@ if not os.path.exists(ENV_PATH) and getattr(sys, 'frozen', False):
 # Load AWS credentials
 load_dotenv(ENV_PATH)
 
-# FFmpeg path - check bundled location first, then common locations
+# FFmpeg path - check environment variable first, then bundled location, then common locations
 def get_ffmpeg_path():
-    """Get the path to ffmpeg executable, checking bundled and common locations"""
-    # Check if running as PyInstaller bundle - look for bundled FFmpeg
+    """Get the path to ffmpeg executable, checking env var, bundled and common locations"""
+    # 1. Check environment variable (set by Electron in production)
+    env_ffmpeg = os.environ.get('FFMPEG_PATH')
+    if env_ffmpeg and os.path.exists(env_ffmpeg):
+        print(f"   Using FFmpeg from env: {env_ffmpeg}")
+        return env_ffmpeg
+
+    # 2. Check if running as PyInstaller bundle - look for bundled FFmpeg
     if getattr(sys, 'frozen', False):
-        # Running as compiled exe
         exe_dir = os.path.dirname(sys.executable)
         bundled_ffmpeg = os.path.join(exe_dir, '..', 'ffmpeg', 'ffmpeg.exe')
         if os.path.exists(bundled_ffmpeg):
             bundled_ffmpeg = os.path.abspath(bundled_ffmpeg)
             print(f"   Using bundled FFmpeg: {bundled_ffmpeg}")
             return bundled_ffmpeg
+
+    # 3. Check relative to script location (for embedded Python)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    embedded_ffmpeg = os.path.join(script_dir, '..', '..', 'ffmpeg', 'ffmpeg.exe')
+    if os.path.exists(embedded_ffmpeg):
+        embedded_ffmpeg = os.path.abspath(embedded_ffmpeg)
+        print(f"   Using embedded FFmpeg: {embedded_ffmpeg}")
+        return embedded_ffmpeg
 
     if sys.platform == 'win32':
         # Check common Windows FFmpeg locations
@@ -387,9 +400,11 @@ def extract_frames(video_path, timestamps, output_dir):
     for i, timestamp in enumerate(timestamps):
         frame_path = os.path.join(output_dir, f"frame_{timestamp}s.jpg")
 
-        cmd = [
+        # Two extraction methods: fast (input seeking) and accurate (output seeking)
+        # Fast method: -ss before -i (seeks in input, may be inaccurate but fast)
+        cmd_fast = [
             FFMPEG_PATH,
-            '-ss', str(timestamp),  # Seek to timestamp
+            '-ss', str(timestamp),  # Seek to timestamp (input seeking - fast)
             '-i', video_path,       # Input video
             '-frames:v', '1',       # Extract 1 frame
             '-q:v', '2',            # High quality (1-31, lower is better)
@@ -397,32 +412,49 @@ def extract_frames(video_path, timestamps, output_dir):
             frame_path
         ]
 
-        # Try extraction with retry logic (up to 3 attempts)
+        # Accurate method: -ss after -i (decodes all frames up to timestamp - slower but accurate)
+        cmd_accurate = [
+            FFMPEG_PATH,
+            '-i', video_path,       # Input video
+            '-ss', str(timestamp),  # Seek to timestamp (output seeking - accurate)
+            '-frames:v', '1',       # Extract 1 frame
+            '-q:v', '2',            # High quality
+            '-y',                   # Overwrite
+            frame_path
+        ]
+
+        # Try extraction with retry logic
         max_attempts = 3
         success = False
 
         for attempt in range(max_attempts):
+            # Use fast method first, then accurate method on retry
+            cmd = cmd_fast if attempt == 0 else cmd_accurate
+            method = "fast" if attempt == 0 else "accurate"
+
             try:
-                subprocess.run(cmd, check=True, capture_output=True, timeout=10)
+                result = subprocess.run(cmd, check=True, capture_output=True, timeout=30)
 
                 # Verify file was actually created and has content
                 if os.path.exists(frame_path) and os.path.getsize(frame_path) > 0:
                     frame_paths.append(frame_path)
-                    print(f"   [OK] Frame {i+1}/{len(timestamps)} extracted at {timestamp}s")
+                    print(f"   [OK] Frame {i+1}/{len(timestamps)} extracted at {timestamp}s ({method} method)")
                     success = True
                     break
                 else:
-                    print(f"   [WARN] Attempt {attempt+1}: Frame file empty or missing")
+                    print(f"   [WARN] Attempt {attempt+1} ({method}): Frame file empty or missing")
 
             except subprocess.CalledProcessError as e:
                 error_msg = e.stderr.decode() if e.stderr else str(e)
-                print(f"   [WARN] Attempt {attempt+1}: Failed to extract frame at {timestamp}s: {error_msg}")
+                # Only print first 200 chars of error to avoid log spam
+                error_msg = error_msg[:200] if len(error_msg) > 200 else error_msg
+                print(f"   [WARN] Attempt {attempt+1} ({method}): Failed at {timestamp}s: {error_msg}")
             except subprocess.TimeoutExpired:
-                print(f"   [WARN] Attempt {attempt+1}: Timeout extracting frame at {timestamp}s")
+                print(f"   [WARN] Attempt {attempt+1} ({method}): Timeout at {timestamp}s")
 
             # Wait before retry
             if attempt < max_attempts - 1:
-                time.sleep(0.5)
+                time.sleep(0.3)
 
         if not success:
             failed_extractions.append(timestamp)
@@ -534,6 +566,10 @@ def cleanup_output_directory(current_session_timestamp, output_dir=None):
 # ============================================================================
 
 def main():
+    print("\n" + "=" * 80)
+    print("🎬 MUT HOLOGRAM PIPELINE - STARTING")
+    print("=" * 80)
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--input', required=True)
     parser.add_argument('--frame', required=True)
@@ -550,23 +586,54 @@ def main():
 
     # Use provided output directory or fall back to default
     output_dir = args.output_dir if args.output_dir else DEFAULT_OUTPUT_DIR
-    print(f"📁 Output directory: {output_dir}")
+
+    print("\n[CONFIG] Pipeline Configuration:")
+    print(f"   Input video:    {args.input}")
+    print(f"   Frame overlay:  {frame_path}")
+    print(f"   S3 folder:      {args.s3_folder}")
+    print(f"   Output dir:     {output_dir}")
+    print(f"   JSON output:    {args.json}")
+
+    # Verify input files exist
+    print("\n[VERIFY] Checking input files...")
+    if os.path.exists(args.input):
+        input_size = os.path.getsize(args.input) / (1024 * 1024)
+        print(f"   ✅ Input video exists: {input_size:.2f} MB")
+    else:
+        print(f"   ❌ Input video NOT FOUND: {args.input}")
+
+    if os.path.exists(frame_path):
+        frame_size = os.path.getsize(frame_path) / 1024
+        print(f"   ✅ Frame overlay exists: {frame_size:.2f} KB")
+    else:
+        print(f"   ❌ Frame overlay NOT FOUND: {frame_path}")
 
     start_total = time.time()
 
     # 1. Prepare Paths FIRST (before cleanup to avoid race condition)
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     session_dir = os.path.join(output_dir, timestamp)
+
+    print(f"\n[SESSION] Creating session: {timestamp}")
+    print(f"   Session directory: {session_dir}")
+
     os.makedirs(session_dir, exist_ok=True)
+    print(f"   ✅ Session directory created")
 
     # 2. Create lock file to prevent other processes from cleaning up this session
     create_session_lock(session_dir)
+    print(f"   ✅ Session lock created")
 
     # 3. Clean up previous outputs (but preserve current session and any in-use sessions)
+    print(f"\n[CLEANUP] Cleaning previous sessions...")
     cleanup_output_directory(timestamp, output_dir)
 
     output_video_path = os.path.join(session_dir, f"final_{timestamp}.mp4")
     qr_path = os.path.join(session_dir, f"qr_{timestamp}.png")
+
+    print(f"\n[OUTPUTS] Output paths:")
+    print(f"   Video:    {output_video_path}")
+    print(f"   QR Code:  {qr_path}")
 
     results = {
         "success": False,
@@ -578,56 +645,191 @@ def main():
     }
 
     try:
-        # Step 1: Process Video (composition with frame overlay)
+        # ================================================================
+        # STEP 1: VIDEO COMPOSITION
+        # ================================================================
+        print("\n" + "=" * 80)
+        print("📹 STEP 1/4: VIDEO COMPOSITION")
+        print("=" * 80)
+        print(f"   Input:  {args.input}")
+        print(f"   Frame:  {frame_path}")
+        print(f"   Output: {output_video_path}")
+
+        step1_start = time.time()
         comp_time = composite_video(
             input_video=args.input,
             frame_image=frame_path,
             output_path=output_video_path
         )
+        step1_time = time.time() - step1_start
         results['compositionTime'] = comp_time
 
-        # Step 2: Extract frames at 5s, 10s, 15s for photo printing
-        frame_timestamps = [5, 10, 15]
+        # Verify output
+        if os.path.exists(output_video_path):
+            output_size = os.path.getsize(output_video_path) / (1024 * 1024)
+            print(f"   ✅ STEP 1 COMPLETE in {step1_time:.1f}s")
+            print(f"   Output video size: {output_size:.2f} MB")
+        else:
+            print(f"   ❌ STEP 1 FAILED - Output video not created!")
+
+        # ================================================================
+        # STEP 2: FRAME EXTRACTION
+        # ================================================================
+        print("\n" + "=" * 80)
+        print("🖼️  STEP 2/4: FRAME EXTRACTION")
+        print("=" * 80)
+
+        step2_start = time.time()
+
+        # Get video duration and adjust timestamps accordingly
+        video_duration = get_video_duration(output_video_path)
+        print(f"   Video duration: {video_duration:.2f}s" if video_duration else "   Video duration: UNKNOWN")
+
+        # ALWAYS adjust timestamps based on actual video duration to avoid extraction failures
+        # Default timestamps we'd like to use
+        desired_timestamps = [5, 10, 15]
+        margin = 0.5  # Safety margin from video end
+
+        if video_duration:
+            max_safe_timestamp = video_duration - margin
+
+            if max_safe_timestamp < desired_timestamps[-1]:
+                # Video is too short for default timestamps - need to adjust
+                print(f"   ⚠️  Video ({video_duration:.1f}s) too short for default timestamps {desired_timestamps}s")
+
+                if max_safe_timestamp >= 10:
+                    # Can use first two, adjust last one
+                    frame_timestamps = [5, 10, round(max_safe_timestamp, 1)]
+                    print(f"   Adjusted last timestamp to {frame_timestamps[-1]}s (video ends at {video_duration:.1f}s)")
+                elif max_safe_timestamp >= 5:
+                    # Distribute evenly in available duration
+                    usable_duration = max_safe_timestamp - margin
+                    interval = usable_duration / 3
+                    frame_timestamps = [
+                        round(margin + interval, 1),
+                        round(margin + interval * 2, 1),
+                        round(max_safe_timestamp, 1)
+                    ]
+                    print(f"   Using evenly spaced timestamps for short video")
+                else:
+                    # Very short video - use what we can
+                    interval = max_safe_timestamp / 4
+                    frame_timestamps = [
+                        round(interval, 1),
+                        round(interval * 2, 1),
+                        round(interval * 3, 1)
+                    ]
+                    print(f"   Video very short - using minimal spacing")
+
+                print(f"   Final timestamps: {frame_timestamps}s")
+            else:
+                frame_timestamps = desired_timestamps
+                print(f"   Using default timestamps: {frame_timestamps}s")
+        else:
+            # No duration info - use safe defaults
+            frame_timestamps = [3, 7, 12]
+            print(f"   ⚠️  Could not get video duration, using safe timestamps: {frame_timestamps}s")
+
         frame_paths = extract_frames(output_video_path, frame_timestamps, session_dir)
+        step2_time = time.time() - step2_start
         results['framePaths'] = frame_paths
 
-        # Step 3: Upload to S3
+        print(f"   ✅ STEP 2 COMPLETE in {step2_time:.1f}s")
+        print(f"   Extracted {len(frame_paths)} frames:")
+        for i, fp in enumerate(frame_paths):
+            if os.path.exists(fp):
+                fsize = os.path.getsize(fp) / 1024
+                print(f"      Frame {i+1}: {os.path.basename(fp)} ({fsize:.1f} KB)")
+            else:
+                print(f"      Frame {i+1}: {os.path.basename(fp)} (NOT FOUND!)")
+
+        # ================================================================
+        # STEP 3: S3 UPLOAD
+        # ================================================================
+        print("\n" + "=" * 80)
+        print("☁️  STEP 3/4: S3 UPLOAD")
+        print("=" * 80)
+        print(f"   File: {output_video_path}")
+        print(f"   Folder: {args.s3_folder}")
+
+        step3_start = time.time()
         uploader = S3Uploader()
         s3_url, s3_key = uploader.upload(output_video_path, args.s3_folder)
+        step3_time = time.time() - step3_start
 
         if s3_url:
             results['s3Url'] = s3_url
             results['s3Key'] = s3_key
+            print(f"   ✅ STEP 3 COMPLETE in {step3_time:.1f}s")
+            print(f"   S3 URL: {s3_url}")
+            print(f"   S3 Key: {s3_key}")
 
-            # Step 4: Generate QR code
+            # ================================================================
+            # STEP 4: QR CODE GENERATION
+            # ================================================================
+            print("\n" + "=" * 80)
+            print("📱 STEP 4/4: QR CODE GENERATION")
+            print("=" * 80)
+            print(f"   URL to encode: {s3_url}")
+            print(f"   Output path: {qr_path}")
+
+            step4_start = time.time()
             generate_qr(s3_url, qr_path)
+            step4_time = time.time() - step4_start
             results['qrCodePath'] = qr_path
 
+            if os.path.exists(qr_path):
+                qr_size = os.path.getsize(qr_path) / 1024
+                print(f"   ✅ STEP 4 COMPLETE in {step4_time:.1f}s")
+                print(f"   QR Code size: {qr_size:.1f} KB")
+            else:
+                print(f"   ❌ STEP 4 FAILED - QR code not created!")
+
             # Keep local video file for playback (don't delete)
-            # The hologram display will use the S3 URL for playback
-            print(f"[OK] Local video preserved: {output_video_path}")
+            print(f"\n[OK] Local video preserved: {output_video_path}")
             results['videoDeleted'] = False
+        else:
+            print(f"   ❌ STEP 3 FAILED - S3 upload failed!")
 
         results['success'] = True
 
     except Exception as e:
+        import traceback
         results['error'] = str(e)
+        print(f"\n{'=' * 80}")
+        print(f"❌ PIPELINE ERROR")
+        print(f"{'=' * 80}")
+        print(f"   Error: {e}")
+        print(f"   Traceback:")
+        traceback.print_exc()
         if not args.json:
-            print(f"[ERROR] Critical Failure: {e}")
             sys.exit(1)
     finally:
         # Always remove the session lock when done (success or failure)
         remove_session_lock(session_dir)
+        print(f"\n   🔓 Session lock removed")
 
     results['totalTime'] = time.time() - start_total
+
+    # ================================================================
+    # FINAL SUMMARY
+    # ================================================================
+    print("\n" + "=" * 80)
+    print("🏁 PIPELINE COMPLETE" if results['success'] else "❌ PIPELINE FAILED")
+    print("=" * 80)
+    print(f"   Success:     {results['success']}")
+    print(f"   Total time:  {results['totalTime']:.2f}s")
+    print(f"   Video:       {results['videoPath']}")
+    print(f"   S3 URL:      {results['s3Url']}")
+    print(f"   QR Code:     {results['qrCodePath']}")
+    print(f"   Frames:      {len(results['framePaths'])} extracted")
+    if 'error' in results:
+        print(f"   Error:       {results['error']}")
+    print("=" * 80 + "\n")
 
     # Output for Electron
     if args.json:
         print(json.dumps(results))
-    else:
-        print("\n[DONE] Processing complete!")
-        print(f"Video: {results['videoPath']}")
-        print(f"URL: {results['s3Url']}")
 
 if __name__ == "__main__":
     main()

@@ -38,9 +38,7 @@ export interface ProcessingProgress {
 export class PythonBridge extends EventEmitter {
   private isProd: boolean;
   private pythonPath: string;
-  private pipelineExePath: string;
   private pipelineScriptPath: string;
-  private stitcherExePath: string;
   private stitcherScriptPath: string;
   private stitcherWorkingDir: string;
   private pipelineWorkingDir: string;
@@ -53,30 +51,27 @@ export class PythonBridge extends EventEmitter {
     this.isProd = app.isPackaged;
 
     if (this.isProd) {
-      // Production: Use PyInstaller-built executables (no Python installation needed!)
-      this.pythonPath = ''; // Not used in production
-      this.pipelineExePath = path.join(process.resourcesPath, 'python', 'pipeline.exe');
-      this.pipelineScriptPath = ''; // Not used in production
-      this.stitcherExePath = path.join(process.resourcesPath, 'python', 'stitch_images.exe');
-      this.stitcherScriptPath = ''; // Not used in production
-      this.stitcherWorkingDir = path.join(process.resourcesPath, 'python');
-      this.pipelineWorkingDir = path.join(process.resourcesPath, 'python');
+      // Production: Use embedded Python with .py scripts
+      this.pythonPath = path.join(process.resourcesPath, 'python', 'python.exe');
+      this.pipelineScriptPath = path.join(process.resourcesPath, 'python', 'scripts', 'pipeline.py');
+      this.stitcherScriptPath = path.join(process.resourcesPath, 'python', 'scripts', 'stitch_images.py');
+      this.stitcherWorkingDir = path.join(process.resourcesPath, 'python', 'scripts');
+      this.pipelineWorkingDir = path.join(process.resourcesPath, 'python', 'scripts');
       this.ffmpegPath = path.join(process.resourcesPath, 'ffmpeg', 'ffmpeg.exe');
       // Use userData folder for output (has write permissions on all systems)
       this.outputDir = path.join(app.getPath('userData'), 'output');
 
-      console.log('🎬 [PythonBridge] Initialized (Production - Bundled EXE)');
-      console.log(`   Pipeline EXE: ${this.pipelineExePath}`);
-      console.log(`   Stitcher EXE: ${this.stitcherExePath}`);
+      console.log('🎬 [PythonBridge] Initialized (Production - Embedded Python)');
+      console.log(`   Python: ${this.pythonPath}`);
+      console.log(`   Pipeline: ${this.pipelineScriptPath}`);
+      console.log(`   Stitcher: ${this.stitcherScriptPath}`);
       console.log(`   FFmpeg: ${this.ffmpegPath}`);
       console.log(`   Output dir: ${this.outputDir}`);
     } else {
       // Development: Use system Python and script files
       // Windows uses 'python', Unix uses 'python3'
       this.pythonPath = process.platform === 'win32' ? 'python' : 'python3';
-      this.pipelineExePath = ''; // Not used in development
       this.pipelineScriptPath = path.join(app.getAppPath(), 'MUT-distribution', 'pipeline.py');
-      this.stitcherExePath = ''; // Not used in development
       this.stitcherScriptPath = path.join(app.getAppPath(), 'python', 'stitch_images.py');
       this.stitcherWorkingDir = path.join(app.getAppPath(), 'python');
       this.pipelineWorkingDir = path.join(app.getAppPath(), 'MUT-distribution');
@@ -99,25 +94,17 @@ export class PythonBridge extends EventEmitter {
    */
   async processVideo(options: VideoProcessingOptions): Promise<VideoProcessingResult> {
     return new Promise((resolve, reject) => {
-      let executable: string;
-      let args: string[];
+      // Always use Python with script (both dev and prod)
+      const executable = this.pythonPath;
+      const args = [
+        this.pipelineScriptPath,
+        '--input', options.inputVideo,
+        '--frame', options.frameOverlay,
+      ];
 
+      // In production, specify output dir for write permissions
       if (this.isProd) {
-        // Production: Use standalone exe (no Python needed)
-        executable = this.pipelineExePath;
-        args = [
-          '--input', options.inputVideo,
-          '--frame', options.frameOverlay,
-          '--output-dir', this.outputDir, // Use userData folder for write permissions
-        ];
-      } else {
-        // Development: Use Python with script
-        executable = this.pythonPath;
-        args = [
-          this.pipelineScriptPath,
-          '--input', options.inputVideo,
-          '--frame', options.frameOverlay,
-        ];
+        args.push('--output-dir', this.outputDir);
       }
 
       if (options.subtitleText) {
@@ -146,7 +133,16 @@ export class PythonBridge extends EventEmitter {
           ...process.env,
           PYTHONIOENCODING: 'utf-8',
           PYTHONUTF8: '1',
+          // Pass FFmpeg path to Python scripts
+          FFMPEG_PATH: this.ffmpegPath,
+          // Pass AWS credentials (loaded from .env in main process)
+          AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID || '',
+          AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY || '',
+          AWS_REGION: process.env.AWS_REGION || 'ap-northeast-2',
+          AWS_S3_BUCKET: process.env.AWS_S3_BUCKET || 'mut-demo-2025',
         },
+        // Hide console window on Windows
+        windowsHide: true,
       });
 
       let stdoutData = '';
@@ -231,14 +227,24 @@ export class PythonBridge extends EventEmitter {
     }
 
     // Convert URL path to filesystem path
-    // URL path like "/frame1.png" -> "/Users/.../MUTUI/public/frame1.png"
+    // URL path like "/frame1.png" -> filesystem path
     let frameFilesystemPath = options.frameTemplatePath;
     if (options.frameTemplatePath.startsWith('/')) {
       // This is a URL path from public directory
       // Remove leading slash before joining (path.join treats absolute paths specially)
       const relativePath = options.frameTemplatePath.substring(1);
-      frameFilesystemPath = path.join(app.getAppPath(), 'public', relativePath);
-      console.log(`   Frame template (filesystem): ${frameFilesystemPath}`);
+
+      if (this.isProd) {
+        // CRITICAL: In production, frame files are in extraResources (not asar)
+        // FFmpeg and Python cannot read from inside asar archives
+        const frameName = path.basename(relativePath);
+        frameFilesystemPath = path.join(process.resourcesPath, 'frames', frameName);
+        console.log(`   Frame template (production extraResources): ${frameFilesystemPath}`);
+      } else {
+        // Development: frames are in public directory
+        frameFilesystemPath = path.join(app.getAppPath(), 'public', relativePath);
+        console.log(`   Frame template (development): ${frameFilesystemPath}`);
+      }
     }
 
     this.emit('progress', {
@@ -315,27 +321,14 @@ export class PythonBridge extends EventEmitter {
         console.warn(`   Warning: Could not create output directory: ${err}`);
       }
 
-      let executable: string;
-      let args: string[];
-
-      if (this.isProd) {
-        // Production: Use standalone exe
-        executable = this.stitcherExePath;
-        args = [
-          '--images', ...imagePaths,
-          '--output', outputPath,
-          '--duration', '3.0',
-        ];
-      } else {
-        // Development: Use Python with script
-        executable = this.pythonPath;
-        args = [
-          this.stitcherScriptPath,
-          '--images', ...imagePaths,
-          '--output', outputPath,
-          '--duration', '3.0',
-        ];
-      }
+      // Always use Python with script (both dev and prod)
+      const executable = this.pythonPath;
+      const args = [
+        this.stitcherScriptPath,
+        '--images', ...imagePaths,
+        '--output', outputPath,
+        '--duration', '3.0',
+      ];
 
       console.log(`   Command: ${executable} ${args.join(' ')}`);
 
@@ -345,7 +338,11 @@ export class PythonBridge extends EventEmitter {
           ...process.env,
           PYTHONIOENCODING: 'utf-8',
           PYTHONUTF8: '1',
+          // Pass FFmpeg path to Python scripts
+          FFMPEG_PATH: this.ffmpegPath,
         },
+        // Hide console window on Windows
+        windowsHide: true,
       });
 
       let stdoutData = '';
@@ -476,24 +473,32 @@ export class PythonBridge extends EventEmitter {
    * Check if dependencies are available
    */
   async checkDependencies(): Promise<{ available: boolean; error?: string }> {
-    if (this.isProd) {
-      // Production: Check if exe files exist
-      const fs = await import('fs');
-      const pipelineExists = fs.existsSync(this.pipelineExePath);
-      const stitcherExists = fs.existsSync(this.stitcherExePath);
+    const fs = await import('fs');
 
-      if (pipelineExists && stitcherExists) {
-        console.log('Bundled executables found');
-        console.log(`   Pipeline: ${this.pipelineExePath}`);
-        console.log(`   Stitcher: ${this.stitcherExePath}`);
+    if (this.isProd) {
+      // Production: Check if embedded Python and scripts exist
+      const pythonExists = fs.existsSync(this.pythonPath);
+      const pipelineExists = fs.existsSync(this.pipelineScriptPath);
+      const stitcherExists = fs.existsSync(this.stitcherScriptPath);
+      const ffmpegExists = fs.existsSync(this.ffmpegPath);
+
+      const missing = [];
+      if (!pythonExists) missing.push('python.exe');
+      if (!pipelineExists) missing.push('pipeline.py');
+      if (!stitcherExists) missing.push('stitch_images.py');
+      if (!ffmpegExists) missing.push('ffmpeg.exe');
+
+      if (missing.length === 0) {
+        console.log('Bundled Python environment found');
+        console.log(`   Python: ${this.pythonPath}`);
+        console.log(`   Pipeline: ${this.pipelineScriptPath}`);
+        console.log(`   Stitcher: ${this.stitcherScriptPath}`);
+        console.log(`   FFmpeg: ${this.ffmpegPath}`);
         return { available: true };
       } else {
-        const missing = [];
-        if (!pipelineExists) missing.push('pipeline.exe');
-        if (!stitcherExists) missing.push('stitch_images.exe');
         return {
           available: false,
-          error: `Missing bundled executables: ${missing.join(', ')}`,
+          error: `Missing bundled files: ${missing.join(', ')}`,
         };
       }
     } else {

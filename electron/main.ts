@@ -2,15 +2,22 @@ import { app, BrowserWindow, ipcMain, screen, Menu, session } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 
-// Try to load .env file (may not exist in production packaged app)
+// Load .env file from correct location based on environment
+// In production: .env is bundled in extraResources
+// In development: .env is in project root
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 try {
+  const envPath = app.isPackaged
+    ? path.join(process.resourcesPath, '.env')
+    : path.join(__dirname, '../.env');
+
   require('dotenv').config({
-    path: path.join(__dirname, '../.env'),
+    path: envPath,
     override: true
   });
+  console.log(`Loaded .env from: ${envPath}`);
 } catch (e) {
-  // .env file not found in production - this is expected
+  console.warn('Could not load .env file:', e);
 }
 
 import { PythonBridge } from './python/bridge';
@@ -116,8 +123,26 @@ function createWindow() {
   });
 }
 
-function createHologramWindow() {
+// Promise that resolves when hologram window is ready
+let hologramWindowReadyPromise: Promise<void> | null = null;
+let hologramWindowReadyResolve: (() => void) | null = null;
+
+function createHologramWindow(): Promise<void> {
+  console.log('📺 [Hologram] Creating hologram window...');
+
+  // Check if window already exists
+  if (hologramWindow && !hologramWindow.isDestroyed()) {
+    console.log('📺 [Hologram] Window already exists, skipping creation');
+    return Promise.resolve();
+  }
+
+  // Create a new promise for this window creation
+  hologramWindowReadyPromise = new Promise((resolve) => {
+    hologramWindowReadyResolve = resolve;
+  });
+
   const displays = screen.getAllDisplays();
+  console.log(`📺 [Hologram] Available displays: ${displays.length}`);
 
   // Determine which display to use for hologram window
   // swapDisplays: false (default) → hologram on display 2 (or display 1 if only one)
@@ -126,42 +151,93 @@ function createHologramWindow() {
   const hologramDisplay = displays[hologramDisplayIndex];
   const { x, y, width, height } = hologramDisplay.bounds;
 
-  console.log(`📺 Hologram window will be on display ${hologramDisplayIndex + 1}${displaySettings.swapDisplays ? ' (swapped)' : ''}`);
+  console.log(`📺 [Hologram] Using display ${hologramDisplayIndex + 1}${displaySettings.swapDisplays ? ' (swapped)' : ''}`);
+  console.log(`📺 [Hologram] Display bounds: ${width}x${height} at (${x}, ${y})`);
 
-  hologramWindow = new BrowserWindow({
-    x: x,
-    y: y,
-    width: isDevelopment ? width : displaySettings.hologramWidth,
-    height: isDevelopment ? height : displaySettings.hologramHeight,
-    fullscreen: false,
-    frame: isDevelopment, // No frame in production
-    show: true,
-    alwaysOnTop: !isDevelopment, // Stay on top in production
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true,
-      webSecurity: false,
-    },
-  });
-
-  // Load hologram display page
-  if (isDevelopment) {
-    // In dev mode, load from Vite with hash route for hologram
-    hologramWindow.loadURL('http://localhost:5173/#/hologram');
-  } else {
-    // In production, load the built file with hash route
-    hologramWindow.loadFile(path.join(__dirname, '../dist/index.html'), {
-      hash: '/hologram'
+  try {
+    hologramWindow = new BrowserWindow({
+      x: x,
+      y: y,
+      width: isDevelopment ? width : displaySettings.hologramWidth,
+      height: isDevelopment ? height : displaySettings.hologramHeight,
+      fullscreen: false,
+      frame: isDevelopment, // No frame in production
+      show: true,
+      alwaysOnTop: !isDevelopment, // Stay on top in production
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        webSecurity: false,
+      },
     });
+
+    console.log('📺 [Hologram] BrowserWindow created successfully');
+
+    // Load hologram display page
+    if (isDevelopment) {
+      // In dev mode, load from Vite with hash route for hologram
+      const url = 'http://localhost:5173/#/hologram';
+      console.log(`📺 [Hologram] Loading URL (dev): ${url}`);
+      hologramWindow.loadURL(url);
+    } else {
+      // In production, load the built file with hash route
+      const filePath = path.join(__dirname, '../dist/index.html');
+      console.log(`📺 [Hologram] Loading file (prod): ${filePath}`);
+      hologramWindow.loadFile(filePath, {
+        hash: '/hologram'
+      });
+    }
+
+    // Resolve promise when page finishes loading
+    hologramWindow.webContents.on('did-finish-load', () => {
+      console.log('✅ [Hologram] Page finished loading');
+      // Add extra delay for React to mount and set up IPC listeners
+      setTimeout(() => {
+        console.log('✅ [Hologram] Window fully ready (React mounted)');
+        if (hologramWindowReadyResolve) {
+          hologramWindowReadyResolve();
+          hologramWindowReadyResolve = null;
+        }
+      }, 500);
+    });
+
+    // Log any load errors
+    hologramWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+      console.error(`❌ [Hologram] Page failed to load: ${errorDescription} (${errorCode})`);
+      // Still resolve to avoid hanging
+      if (hologramWindowReadyResolve) {
+        hologramWindowReadyResolve();
+        hologramWindowReadyResolve = null;
+      }
+    });
+
+    hologramWindow.on('closed', () => {
+      console.log('📺 [Hologram] Window closed');
+      hologramWindow = null;
+      hologramWindowReadyPromise = null;
+    });
+
+    console.log(`📺 [Hologram] Window configured: ${displaySettings.hologramWidth}x${displaySettings.hologramHeight} at (${x}, ${y}) on display ${hologramDisplayIndex + 1}`);
+  } catch (error) {
+    console.error('❌ [Hologram] Failed to create window:', error);
+    hologramWindow = null;
+    if (hologramWindowReadyResolve) {
+      hologramWindowReadyResolve();
+      hologramWindowReadyResolve = null;
+    }
   }
 
-  hologramWindow.on('closed', () => {
-    hologramWindow = null;
-  });
+  return hologramWindowReadyPromise || Promise.resolve();
+}
 
-  console.log(`📺 Hologram window: ${displaySettings.hologramWidth}x${displaySettings.hologramHeight} at (${x}, ${y}) on display ${hologramDisplayIndex + 1}`);
+// Helper to wait for hologram window to be ready
+async function waitForHologramWindow(): Promise<BrowserWindow | null> {
+  if (hologramWindowReadyPromise) {
+    await hologramWindowReadyPromise;
+  }
+  return hologramWindow;
 }
 
 app.whenReady().then(async () => {
@@ -428,12 +504,16 @@ ipcMain.handle('printer:print', async (_event, options) => {
   }
 
   try {
+    // Set up progress listener BEFORE printing starts
+    const progressHandler = (progressData: { jobId: string; progress: number }) => {
+      mainWindow?.webContents.send('printer:progress', progressData);
+    };
+    printerController.on('progress', progressHandler);
+
     const result = await printerController.print(options);
 
-    // Forward progress events
-    printerController.on('progress', (progressData) => {
-      mainWindow?.webContents.send('printer:progress', progressData);
-    });
+    // Clean up progress listener after print completes
+    printerController.off('progress', progressHandler);
 
     return result;
   } catch (error) {
@@ -486,12 +566,7 @@ ipcMain.handle('video:process', async (_event, params) => {
       s3Folder: params.s3Folder || 'mut-hologram',
     });
 
-    // Send completion event
-    mainWindow?.webContents.send('video:complete', {
-      success: true,
-      result: result
-    });
-
+    // Return result directly (no event - using invoke pattern)
     return {
       success: true,
       result: result
@@ -500,11 +575,6 @@ ipcMain.handle('video:process', async (_event, params) => {
     console.error('Video processing error:', error);
 
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
-    mainWindow?.webContents.send('video:complete', {
-      success: false,
-      error: errorMessage
-    });
 
     return {
       success: false,
@@ -563,12 +633,7 @@ ipcMain.handle('video:process-from-images', async (_event, params) => {
     console.log(`   QR Code: ${result.qrCodePath}`);
     console.log(`${'='.repeat(70)}\n`);
 
-    // Send completion event
-    mainWindow?.webContents.send('video:complete', {
-      success: true,
-      result: result
-    });
-
+    // Return result directly (no event - using invoke pattern)
     return {
       success: true,
       result: result
@@ -578,11 +643,6 @@ ipcMain.handle('video:process-from-images', async (_event, params) => {
     console.log(`${'='.repeat(70)}\n`);
 
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
-    mainWindow?.webContents.send('video:complete', {
-      success: false,
-      error: errorMessage
-    });
 
     return {
       success: false,
@@ -849,7 +909,7 @@ ipcMain.handle('payment:list-ports', async () => {
 
 // Hologram window control with persistent state
 ipcMain.handle('hologram:set-mode', async (_event, mode, data) => {
-  console.log('🎭 Hologram mode change requested:', mode);
+  console.log('🎭 [IPC] hologram:set-mode called:', mode);
 
   // Update persistent state
   hologramState = {
@@ -857,15 +917,26 @@ ipcMain.handle('hologram:set-mode', async (_event, mode, data) => {
     qrCodePath: data?.qrCodePath,
     videoPath: data?.videoPath,
   };
-  console.log('💾 Hologram state stored:', hologramState);
+  console.log('💾 [IPC] Hologram state stored:', hologramState);
 
-  const targetWindow = getHologramTargetWindow();
+  let targetWindow = getHologramTargetWindow();
+  const windowName = displaySettings.splitScreenMode ? 'main window' : 'hologram window';
+
+  // Auto-recreate hologram window if it's NULL and we're not in split-screen mode
+  if (!targetWindow && !displaySettings.splitScreenMode) {
+    console.warn(`⚠️ [IPC] ${windowName} is NULL - attempting to recreate...`);
+    await createHologramWindow(); // Wait for window to fully load
+    targetWindow = getHologramTargetWindow();
+  }
+
   if (!targetWindow) {
-    return { success: false, error: 'Target window not initialized' };
+    console.error(`❌ [IPC] ${windowName} is NULL - cannot send message!`);
+    return { success: false, error: `${windowName} not initialized` };
   }
 
   // Send mode change to appropriate window
   targetWindow.webContents.send('hologram:update', hologramState);
+  console.log(`✅ [IPC] hologram:update sent to ${windowName}`);
 
   return { success: true };
 });
@@ -883,11 +954,18 @@ ipcMain.handle('hologram:show-qr', async (_event, qrCodePath, videoPath) => {
   };
   console.log('💾 [IPC] Hologram state updated:', JSON.stringify(hologramState));
 
-  const targetWindow = getHologramTargetWindow();
+  let targetWindow = getHologramTargetWindow();
   const windowName = displaySettings.splitScreenMode ? 'main window' : 'hologram window';
 
+  // Auto-recreate hologram window if it's NULL and we're not in split-screen mode
+  if (!targetWindow && !displaySettings.splitScreenMode) {
+    console.warn(`⚠️ [IPC] ${windowName} is NULL - attempting to recreate...`);
+    await createHologramWindow(); // Wait for window to fully load
+    targetWindow = getHologramTargetWindow();
+  }
+
   if (!targetWindow) {
-    console.error(`❌ [IPC] ${windowName} is NULL - cannot send message!`);
+    console.error(`❌ [IPC] ${windowName} is still NULL after recreation attempt!`);
     return { success: false, error: `${windowName} not initialized` };
   }
 
@@ -909,20 +987,36 @@ ipcMain.handle('hologram:show-qr', async (_event, qrCodePath, videoPath) => {
 });
 
 ipcMain.handle('hologram:show-logo', async () => {
-  console.log('🎭 Hologram showing logo');
+  console.log('🎭 [IPC] hologram:show-logo called');
 
   // Update persistent state
   hologramState = {
     mode: 'logo',
   };
-  console.log('💾 Hologram state stored:', hologramState);
+  console.log('💾 [IPC] Hologram state stored:', hologramState);
 
-  const targetWindow = getHologramTargetWindow();
+  let targetWindow = getHologramTargetWindow();
+  const windowName = displaySettings.splitScreenMode ? 'main window' : 'hologram window';
+
+  // Auto-recreate hologram window if it's NULL and we're not in split-screen mode
+  if (!targetWindow && !displaySettings.splitScreenMode) {
+    console.warn(`⚠️ [IPC] ${windowName} is NULL - attempting to recreate...`);
+    await createHologramWindow(); // Wait for window to fully load
+    targetWindow = getHologramTargetWindow();
+  }
+
   if (!targetWindow) {
-    return { success: false, error: 'Target window not initialized' };
+    console.error(`❌ [IPC] ${windowName} is NULL - cannot send message!`);
+    return { success: false, error: `${windowName} not initialized` };
+  }
+
+  if (targetWindow.isDestroyed()) {
+    console.error(`❌ [IPC] ${windowName} is DESTROYED - cannot send message!`);
+    return { success: false, error: `${windowName} destroyed` };
   }
 
   targetWindow.webContents.send('hologram:update', hologramState);
+  console.log(`✅ [IPC] hologram:update sent to ${windowName}`);
 
   return { success: true };
 });

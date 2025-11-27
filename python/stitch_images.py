@@ -19,18 +19,31 @@ import time
 from pathlib import Path
 from face_enhancement import FaceEnhancer
 
-# FFmpeg path - check bundled location first, then common locations
+# FFmpeg path - check environment variable first, then bundled location, then common locations
 def get_ffmpeg_path():
-    """Get the path to ffmpeg executable, checking bundled and common locations"""
-    # Check if running as PyInstaller bundle - look for bundled FFmpeg
+    """Get the path to ffmpeg executable, checking env var, bundled and common locations"""
+    # 1. Check environment variable (set by Electron in production)
+    env_ffmpeg = os.environ.get('FFMPEG_PATH')
+    if env_ffmpeg and os.path.exists(env_ffmpeg):
+        print(f"   Using FFmpeg from env: {env_ffmpeg}")
+        return env_ffmpeg
+
+    # 2. Check if running as PyInstaller bundle - look for bundled FFmpeg
     if getattr(sys, 'frozen', False):
-        # Running as compiled exe
         exe_dir = os.path.dirname(sys.executable)
         bundled_ffmpeg = os.path.join(exe_dir, '..', 'ffmpeg', 'ffmpeg.exe')
         if os.path.exists(bundled_ffmpeg):
             bundled_ffmpeg = os.path.abspath(bundled_ffmpeg)
             print(f"   Using bundled FFmpeg: {bundled_ffmpeg}")
             return bundled_ffmpeg
+
+    # 3. Check relative to script location (for embedded Python)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    embedded_ffmpeg = os.path.join(script_dir, '..', '..', 'ffmpeg', 'ffmpeg.exe')
+    if os.path.exists(embedded_ffmpeg):
+        embedded_ffmpeg = os.path.abspath(embedded_ffmpeg)
+        print(f"   Using embedded FFmpeg: {embedded_ffmpeg}")
+        return embedded_ffmpeg
 
     if sys.platform == 'win32':
         ffmpeg_locations = [
