@@ -41,6 +41,13 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "frames",
+        "to": "frames",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {

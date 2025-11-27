@@ -470,6 +470,14 @@ ipcMain.handle('video:process', async (_event, params) => {
       console.log(`   Frame overlay converted: ${params.chromaVideo} -> ${frameOverlayPath}`);
     }
 
+    // CRITICAL: In production, frame files are in extraResources (not asar)
+    // FFmpeg and Python cannot read from inside asar archives
+    if (app.isPackaged) {
+      const frameName = path.basename(frameOverlayPath);
+      frameOverlayPath = path.join(process.resourcesPath, 'frames', frameName);
+      console.log(`   Production frame path (extraResources): ${frameOverlayPath}`);
+    }
+
     // Process video using Python pipeline
     const result = await pythonBridge.processVideo({
       inputVideo: params.inputVideo,
