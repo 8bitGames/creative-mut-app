@@ -189,54 +189,74 @@ export class PrinterController extends EventEmitter {
       let result: string;
 
       if (this.isWindows) {
-        // Windows printing using PowerShell with System.Drawing
+        // Windows printing - landscape, fit to height, centered, no stretching
         const imagePath = options.imagePath.replace(/\//g, '\\');
         const copies = options.copies || 1;
 
         // Get default printer name
         const printerName = this.printerName || (await this.getDefaultPrinter());
 
-        // Use System.Drawing.Printing for reliable printing
+        console.log(`🖨️  Printing to: ${printerName}`);
+        console.log(`🖨️  Image path: ${imagePath}`);
+
+        // Print image: landscape paper, fit to height, centered, maintain aspect ratio
         const psCommand = `
           Add-Type -AssemblyName System.Drawing
+          
           $imagePath = "${imagePath}"
           $printerName = "${printerName}"
           $copies = ${copies}
-
-          for ($i = 0; $i -lt $copies; $i++) {
-            $img = [System.Drawing.Image]::FromFile($imagePath)
-            $printDoc = New-Object System.Drawing.Printing.PrintDocument
-
-            if ($printerName) {
-              $printDoc.PrinterSettings.PrinterName = $printerName
-            }
-
-            $printDoc.add_PrintPage({
-              param($sender, $e)
-              $bounds = $e.MarginBounds
-              $imgRatio = $img.Width / $img.Height
-              $boundsRatio = $bounds.Width / $bounds.Height
-
-              if ($imgRatio -gt $boundsRatio) {
-                $newWidth = $bounds.Width
-                $newHeight = $bounds.Width / $imgRatio
-              } else {
-                $newHeight = $bounds.Height
-                $newWidth = $bounds.Height * $imgRatio
-              }
-
-              $x = $bounds.X + ($bounds.Width - $newWidth) / 2
-              $y = $bounds.Y + ($bounds.Height - $newHeight) / 2
-
-              $e.Graphics.DrawImage($img, $x, $y, $newWidth, $newHeight)
-              $e.HasMorePages = $false
-            })
-
-            $printDoc.Print()
-            $img.Dispose()
+          
+          $img = [System.Drawing.Image]::FromFile($imagePath)
+          Write-Output "Image size: $($img.Width) x $($img.Height)"
+          
+          $printDoc = New-Object System.Drawing.Printing.PrintDocument
+          
+          if ($printerName) {
+            $printDoc.PrinterSettings.PrinterName = $printerName
           }
-
-          Write-Output "Print job submitted to $printerName"
+          
+          # Landscape mode (horizontal paper)
+          $printDoc.DefaultPageSettings.Landscape = $true
+          
+          # Minimize margins
+          $printDoc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0)
+          
+          $printDoc.add_PrintPage({
+            param($sender, $e)
+            
+            # Use PageBounds for full page area
+            $pageWidth = $e.PageBounds.Width
+            $pageHeight = $e.PageBounds.Height
+            
+            Write-Output "Full page: $pageWidth x $pageHeight"
+            
+            # Fit to HEIGHT, maintain aspect ratio (no stretch)
+            $imgRatio = $img.Width / $img.Height
+            $drawHeight = $pageHeight
+            $drawWidth = $pageHeight * $imgRatio
+            
+            # Center both horizontally AND vertically
+            $x = ($pageWidth - $drawWidth) / 2
+            $y = ($pageHeight - $drawHeight) / 2
+            
+            Write-Output "Drawing: $drawWidth x $drawHeight centered at ($x, $y)"
+            
+            # High quality rendering
+            $e.Graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+            $e.Graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+            
+            $e.Graphics.DrawImage($img, $x, $y, $drawWidth, $drawHeight)
+            $e.HasMorePages = $false
+          })
+          
+          for ($i = 0; $i -lt $copies; $i++) {
+            Write-Output "Printing copy $($i + 1) of $copies..."
+            $printDoc.Print()
+          }
+          
+          $img.Dispose()
+          Write-Output "Print job completed"
         `;
 
         result = await this.executeWindowsCommand(psCommand);
