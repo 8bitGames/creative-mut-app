@@ -57,6 +57,7 @@ const isDevelopment = !app.isPackaged;
 // These are populated when config is loaded
 let displaySettings = {
   splitScreenMode: false,
+  swapDisplays: false,
   mainWidth: 1080,
   mainHeight: 1920,
   hologramWidth: 1080,
@@ -70,8 +71,15 @@ function getHologramTargetWindow() {
 
 function createWindow() {
   const displays = screen.getAllDisplays();
-  const primaryDisplay = displays[0];
-  const { x, y } = primaryDisplay.bounds;
+
+  // Determine which display to use for main window
+  // swapDisplays: false (default) → main on display 1, hologram on display 2
+  // swapDisplays: true → main on display 2, hologram on display 1
+  const mainDisplayIndex = displaySettings.swapDisplays && displays.length > 1 ? 1 : 0;
+  const mainDisplay = displays[mainDisplayIndex];
+  const { x, y } = mainDisplay.bounds;
+
+  console.log(`📺 Main window will be on display ${mainDisplayIndex + 1}${displaySettings.swapDisplays ? ' (swapped)' : ''}`);
 
   mainWindow = new BrowserWindow({
     x: x,
@@ -111,9 +119,14 @@ function createWindow() {
 function createHologramWindow() {
   const displays = screen.getAllDisplays();
 
-  // Find second display, or use primary if only one exists
-  const secondDisplay = displays.length > 1 ? displays[1] : displays[0];
-  const { x, y, width, height } = secondDisplay.bounds;
+  // Determine which display to use for hologram window
+  // swapDisplays: false (default) → hologram on display 2 (or display 1 if only one)
+  // swapDisplays: true → hologram on display 1
+  const hologramDisplayIndex = displaySettings.swapDisplays ? 0 : (displays.length > 1 ? 1 : 0);
+  const hologramDisplay = displays[hologramDisplayIndex];
+  const { x, y, width, height } = hologramDisplay.bounds;
+
+  console.log(`📺 Hologram window will be on display ${hologramDisplayIndex + 1}${displaySettings.swapDisplays ? ' (swapped)' : ''}`);
 
   hologramWindow = new BrowserWindow({
     x: x,
@@ -148,7 +161,7 @@ function createHologramWindow() {
     hologramWindow = null;
   });
 
-  console.log(`📺 Hologram window: ${displaySettings.hologramWidth}x${displaySettings.hologramHeight} at (${x}, ${y}) on display ${displays.length > 1 ? 2 : 1}`);
+  console.log(`📺 Hologram window: ${displaySettings.hologramWidth}x${displaySettings.hologramHeight} at (${x}, ${y}) on display ${hologramDisplayIndex + 1}`);
 }
 
 app.whenReady().then(async () => {
@@ -180,12 +193,13 @@ app.whenReady().then(async () => {
   // Apply display settings from config
   displaySettings = {
     splitScreenMode: config.display.splitScreenMode,
+    swapDisplays: config.display.swapDisplays,
     mainWidth: config.display.mainWidth,
     mainHeight: config.display.mainHeight,
     hologramWidth: config.display.hologramWidth,
     hologramHeight: config.display.hologramHeight,
   };
-  console.log(`📺 Display mode: ${displaySettings.splitScreenMode ? 'Split Screen' : 'Dual Monitor'}`);
+  console.log(`📺 Display mode: ${displaySettings.splitScreenMode ? 'Split Screen' : 'Dual Monitor'}${displaySettings.swapDisplays ? ' (displays swapped)' : ''}`);
 
   // Initialize analytics database (with error handling for native module issues)
   try {

@@ -250,6 +250,10 @@ const configAPI = {
       hologramWidth?: number;
       hologramHeight?: number;
     };
+    demo?: {
+      enabled?: boolean;
+      videoPath?: string;
+    };
     debug?: {
       enableLogging?: boolean;
       logLevel?: 'error' | 'warn' | 'info' | 'debug';

@@ -43,6 +43,7 @@ export class PythonBridge extends EventEmitter {
   private stitcherScriptPath: string;
   private stitcherWorkingDir: string;
   private pipelineWorkingDir: string;
+  private ffmpegPath: string;
 
   constructor() {
     super();
@@ -58,10 +59,12 @@ export class PythonBridge extends EventEmitter {
       this.stitcherScriptPath = ''; // Not used in production
       this.stitcherWorkingDir = path.join(process.resourcesPath, 'python');
       this.pipelineWorkingDir = path.join(process.resourcesPath, 'python');
+      this.ffmpegPath = path.join(process.resourcesPath, 'ffmpeg', 'ffmpeg.exe');
 
       console.log('🎬 [PythonBridge] Initialized (Production - Bundled EXE)');
       console.log(`   Pipeline EXE: ${this.pipelineExePath}`);
       console.log(`   Stitcher EXE: ${this.stitcherExePath}`);
+      console.log(`   FFmpeg: ${this.ffmpegPath}`);
     } else {
       // Development: Use system Python and script files
       // Windows uses 'python', Unix uses 'python3'
@@ -72,6 +75,7 @@ export class PythonBridge extends EventEmitter {
       this.stitcherScriptPath = path.join(app.getAppPath(), 'python', 'stitch_images.py');
       this.stitcherWorkingDir = path.join(app.getAppPath(), 'python');
       this.pipelineWorkingDir = path.join(app.getAppPath(), 'MUT-distribution');
+      this.ffmpegPath = 'ffmpeg'; // Use system FFmpeg
 
       console.log('🐍 [PythonBridge] Initialized (Development - Python Scripts)');
       console.log(`   Python: ${this.pythonPath}`);
@@ -404,7 +408,7 @@ export class PythonBridge extends EventEmitter {
           ];
 
           await new Promise<void>((resolveFrame, rejectFrame) => {
-            const ffmpegProcess = spawn('ffmpeg', args);
+            const ffmpegProcess = spawn(this.ffmpegPath, args);
 
             let stderr = '';
 

@@ -37,10 +37,16 @@ export interface CameraConfig {
 
 export interface DisplayConfig {
   splitScreenMode: boolean;  // true: Single window split, false: Dual monitor
+  swapDisplays: boolean;     // true: Swap main/hologram displays (main→display2, hologram→display1)
   mainWidth: number;         // Main screen width (default: 1080)
   mainHeight: number;        // Main screen height (default: 1920)
   hologramWidth: number;     // Hologram screen width (default: 1080)
   hologramHeight: number;    // Hologram screen height (default: 1920)
+}
+
+export interface DemoConfig {
+  enabled: boolean;          // true: Show demo video option in frame selection
+  videoPath: string;         // Path to demo video file (relative to public folder)
 }
 
 export interface AppConfig {
@@ -48,6 +54,7 @@ export interface AppConfig {
   payment: PaymentConfig;
   camera: CameraConfig;
   display: DisplayConfig;
+  demo: DemoConfig;
   debug: {
     enableLogging: boolean;
     logLevel: 'error' | 'warn' | 'info' | 'debug';
@@ -76,10 +83,15 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   display: {
     splitScreenMode: false,  // Default to dual-monitor mode
+    swapDisplays: false,     // Default: main→display1, hologram→display2
     mainWidth: 1080,
     mainHeight: 1920,
     hologramWidth: 1080,
     hologramHeight: 1920,
+  },
+  demo: {
+    enabled: false,          // Default: demo mode disabled
+    videoPath: './GD_PROTO_MACAU Fin_F.mov',  // Default demo video path
   },
   debug: {
     enableLogging: true,
@@ -249,6 +261,10 @@ class ConfigManager {
         ...DEFAULT_CONFIG.display,
         ...(loaded.display || {}),
       },
+      demo: {
+        ...DEFAULT_CONFIG.demo,
+        ...(loaded.demo || {}),
+      },
       debug: {
         ...DEFAULT_CONFIG.debug,
         ...(loaded.debug || {}),
@@ -264,8 +280,9 @@ class ConfigManager {
     console.log(`   TL3600 Port: ${this.config.tl3600.port}`);
     console.log(`   Payment Mock Mode: ${this.config.payment.useMockMode}`);
     console.log(`   Camera: ${this.config.camera.useWebcam ? 'Webcam' : 'DSLR'} (mock: ${this.config.camera.mockMode})`);
-    console.log(`   Display: ${this.config.display.splitScreenMode ? 'Split Screen' : 'Dual Monitor'}`);
+    console.log(`   Display: ${this.config.display.splitScreenMode ? 'Split Screen' : 'Dual Monitor'}${this.config.display.swapDisplays ? ' (SWAPPED)' : ''}`);
     console.log(`   Resolution: Main ${this.config.display.mainWidth}x${this.config.display.mainHeight}, Hologram ${this.config.display.hologramWidth}x${this.config.display.hologramHeight}`);
+    console.log(`   Demo Mode: ${this.config.demo.enabled ? 'Enabled' : 'Disabled'}${this.config.demo.enabled ? ` (${this.config.demo.videoPath})` : ''}`);
   }
 }
 
@@ -308,4 +325,11 @@ export function getCameraConfig(): CameraConfig {
  */
 export function getDisplayConfig(): DisplayConfig {
   return appConfig.get().display;
+}
+
+/**
+ * Helper function to get demo config
+ */
+export function getDemoConfig(): DemoConfig {
+  return appConfig.get().demo;
 }

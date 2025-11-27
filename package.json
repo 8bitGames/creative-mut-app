@@ -33,6 +33,11 @@
         "from": "resources/python",
         "to": "python",
         "filter": ["**/*"]
+      },
+      {
+        "from": "resources/ffmpeg",
+        "to": "ffmpeg",
+        "filter": ["**/*"]
       }
     ],
     "win": {

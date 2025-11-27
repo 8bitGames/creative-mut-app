@@ -40,3 +40,6 @@ out/
 resources/python/
 scripts/python/venv/
 scripts/python/build/
+
+# FFmpeg binaries (bundled)
+resources/ffmpeg/

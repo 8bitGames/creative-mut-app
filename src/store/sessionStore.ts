@@ -18,6 +18,9 @@ interface SessionState {
   lastPaymentResult: LastPaymentResult | null;
   sessionId: string;
   sessionStartTime: number;
+  // Demo mode - use video overlay instead of frame image
+  useDemoVideo: boolean;
+  demoVideoPath: string | null;
 
   // Actions
   addCapturedImage: (imagePath: string) => void;
@@ -27,6 +30,7 @@ interface SessionState {
   setProcessedResult: (result: ProcessingResult | null) => void;
   setSelectedPrintImage: (imagePath: string | null) => void;
   setLastPaymentResult: (result: LastPaymentResult | null) => void;
+  setDemoVideo: (enabled: boolean, videoPath?: string) => void;
   cleanupSessionFiles: () => Promise<void>;
   clearSession: () => void;
 }
@@ -54,6 +58,8 @@ export const useSessionStore = create<SessionState>()(
     lastPaymentResult: null,
     sessionId: generateSessionId(),
     sessionStartTime: Date.now(),
+    useDemoVideo: false,
+    demoVideoPath: null,
 
     // Add a single captured image to the list
     addCapturedImage: (imagePath) =>
@@ -96,6 +102,13 @@ export const useSessionStore = create<SessionState>()(
     setLastPaymentResult: (result) =>
       set((state) => {
         state.lastPaymentResult = result;
+      }),
+
+    // Set demo video mode (use video overlay instead of frame image)
+    setDemoVideo: (enabled, videoPath) =>
+      set((state) => {
+        state.useDemoVideo = enabled;
+        state.demoVideoPath = videoPath || null;
       }),
 
     // Cleanup all session files (videos, frames, QR codes)
@@ -157,6 +170,8 @@ export const useSessionStore = create<SessionState>()(
         state.lastPaymentResult = null;
         state.sessionId = generateSessionId();
         state.sessionStartTime = Date.now();
+        state.useDemoVideo = false;
+        state.demoVideoPath = null;
       }),
   }))
 );

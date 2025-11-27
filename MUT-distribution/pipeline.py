@@ -31,9 +31,19 @@ ENV_PATH = os.path.join(SCRIPT_DIR, ".env")
 # Load AWS credentials
 load_dotenv(ENV_PATH)
 
-# FFmpeg path - check common locations for Windows and macOS
+# FFmpeg path - check bundled location first, then common locations
 def get_ffmpeg_path():
-    """Get the path to ffmpeg executable, checking common locations"""
+    """Get the path to ffmpeg executable, checking bundled and common locations"""
+    # Check if running as PyInstaller bundle - look for bundled FFmpeg
+    if getattr(sys, 'frozen', False):
+        # Running as compiled exe
+        exe_dir = os.path.dirname(sys.executable)
+        bundled_ffmpeg = os.path.join(exe_dir, '..', 'ffmpeg', 'ffmpeg.exe')
+        if os.path.exists(bundled_ffmpeg):
+            bundled_ffmpeg = os.path.abspath(bundled_ffmpeg)
+            print(f"   Using bundled FFmpeg: {bundled_ffmpeg}")
+            return bundled_ffmpeg
+
     if sys.platform == 'win32':
         # Check common Windows FFmpeg locations
         ffmpeg_locations = [
@@ -82,10 +92,10 @@ def normalize_to_mp4(input_video):
     """
     # If already MP4, return as-is
     if input_video.endswith('.mp4'):
-        print(f"   ✓ Input is already MP4, skipping normalization")
+        print(f"   [OK] Input is already MP4, skipping normalization")
         return input_video
 
-    print(f"   🔄 Normalizing {os.path.basename(input_video)} to MP4...")
+    print(f"   [CONVERTING] Normalizing {os.path.basename(input_video)} to MP4...")
 
     # Create normalized MP4 in same directory
     normalized_path = input_video.rsplit('.', 1)[0] + '_normalized.mp4'
@@ -103,10 +113,10 @@ def normalize_to_mp4(input_video):
     try:
         subprocess.run(cmd, check=True, capture_output=True, timeout=30)
         file_size = os.path.getsize(normalized_path) / (1024 * 1024)
-        print(f"   ✓ Normalized to MP4: {file_size:.1f} MB")
+        print(f"   [OK] Normalized to MP4: {file_size:.1f} MB")
         return normalized_path
     except subprocess.CalledProcessError as e:
-        print(f"   ⚠️  Normalization failed, using original: {e.stderr.decode() if e.stderr else 'Unknown error'}")
+        print(f"   [WARN] Normalization failed, using original: {e.stderr.decode() if e.stderr else 'Unknown error'}")
         return input_video
 
 def enhance_video(input_video, enhancement_level='medium'):
@@ -121,7 +131,7 @@ def enhance_video(input_video, enhancement_level='medium'):
     Returns:
         Path to enhanced video
     """
-    print(f"\n✨ Applying face enhancement to video...")
+    print(f"\n[ENHANCE] Applying face enhancement to video...")
     print(f"   Level: {enhancement_level}")
 
     # Create enhanced video path
@@ -173,10 +183,10 @@ def enhance_video(input_video, enhancement_level='medium'):
     try:
         subprocess.run(cmd, check=True, capture_output=True, timeout=60)
         file_size = os.path.getsize(enhanced_path) / (1024 * 1024)
-        print(f"   ✓ Video enhanced: {file_size:.1f} MB")
+        print(f"   [OK] Video enhanced: {file_size:.1f} MB")
         return enhanced_path
     except subprocess.CalledProcessError as e:
-        print(f"   ⚠️  Enhancement failed, using original: {e.stderr.decode() if e.stderr else 'Unknown error'}")
+        print(f"   [WARN] Enhancement failed, using original: {e.stderr.decode() if e.stderr else 'Unknown error'}")
         return input_video
 
 def composite_video(input_video, frame_image, output_path, enhance_faces=True):
@@ -199,7 +209,7 @@ def composite_video(input_video, frame_image, output_path, enhance_faces=True):
     frame_image = os.path.abspath(frame_image)
     output_path = os.path.abspath(output_path)
 
-    print(f"\n🎬 Starting Composition")
+    print(f"\n[VIDEO] Starting Composition")
     print(f"   Input:  {input_video}")
     print(f"   Frame:  {frame_image}")
     print(f"   Output: {output_path}")
@@ -253,10 +263,10 @@ def composite_video(input_video, frame_image, output_path, enhance_faces=True):
         # Run FFmpeg
         subprocess.run(cmd, check=True, capture_output=True)
         duration = time.time() - start_time
-        print(f"✅ Composition finished in {duration:.2f}s")
+        print(f"[OK] Composition finished in {duration:.2f}s")
         return duration
     except subprocess.CalledProcessError as e:
-        print(f"❌ FFmpeg Failed with exit code {e.returncode}")
+        print(f"[ERROR] FFmpeg Failed with exit code {e.returncode}")
         print(f"   Error Log: {e.stderr.decode('utf-8') if e.stderr else 'No stderr'}")
         raise
 
@@ -276,7 +286,7 @@ class S3Uploader:
                 region_name=self.region
             )
         except Exception as e:
-            print(f"⚠️ AWS Client Init Failed: {e}")
+            print(f"[WARN] AWS Client Init Failed: {e}")
             self.client = None
 
     def upload(self, file_path, folder='videos'):
@@ -286,7 +296,7 @@ class S3Uploader:
         key = f"{folder}/{filename}"
         
         try:
-            print(f"☁️ Uploading to S3: {key}")
+            print(f"[S3] Uploading to S3: {key}")
             self.client.upload_file(
                 file_path,
                 self.bucket,
@@ -297,10 +307,10 @@ class S3Uploader:
                 }
             )
             url = f"https://{self.bucket}.s3.{self.region}.amazonaws.com/{key}"
-            print(f"✅ Upload successful! Public URL: {url}")
+            print(f"[OK] Upload successful! Public URL: {url}")
             return url, key
         except Exception as e:
-            print(f"❌ Upload Failed: {e}")
+            print(f"[ERROR] Upload Failed: {e}")
             return None, None
 
 def generate_qr(data, output_path):
@@ -325,7 +335,7 @@ def get_video_duration(video_path):
         duration = float(result.stdout.strip())
         return duration
     except Exception as e:
-        print(f"⚠️  Could not get video duration: {e}")
+        print(f"[WARN] Could not get video duration: {e}")
         return None
 
 
@@ -344,7 +354,7 @@ def extract_frames(video_path, timestamps, output_dir):
     Raises:
         Exception: If not all frames could be extracted
     """
-    print(f"\n📸 Extracting frames at {timestamps}s...")
+    print(f"\n[FRAMES] Extracting frames at {timestamps}s...")
 
     # Check video duration first
     duration = get_video_duration(video_path)
@@ -352,7 +362,7 @@ def extract_frames(video_path, timestamps, output_dir):
         print(f"   Video duration: {duration:.1f}s")
         max_timestamp = max(timestamps)
         if duration < max_timestamp:
-            print(f"⚠️  WARNING: Video duration ({duration:.1f}s) is less than max timestamp ({max_timestamp}s)")
+            print(f"[WARN] WARNING: Video duration ({duration:.1f}s) is less than max timestamp ({max_timestamp}s)")
             print(f"   This may cause frame extraction to fail!")
 
     os.makedirs(output_dir, exist_ok=True)
@@ -383,17 +393,17 @@ def extract_frames(video_path, timestamps, output_dir):
                 # Verify file was actually created and has content
                 if os.path.exists(frame_path) and os.path.getsize(frame_path) > 0:
                     frame_paths.append(frame_path)
-                    print(f"   ✓ Frame {i+1}/{len(timestamps)} extracted at {timestamp}s")
+                    print(f"   [OK] Frame {i+1}/{len(timestamps)} extracted at {timestamp}s")
                     success = True
                     break
                 else:
-                    print(f"   ⚠️  Attempt {attempt+1}: Frame file empty or missing")
+                    print(f"   [WARN] Attempt {attempt+1}: Frame file empty or missing")
 
             except subprocess.CalledProcessError as e:
                 error_msg = e.stderr.decode() if e.stderr else str(e)
-                print(f"   ⚠️  Attempt {attempt+1}: Failed to extract frame at {timestamp}s: {error_msg}")
+                print(f"   [WARN] Attempt {attempt+1}: Failed to extract frame at {timestamp}s: {error_msg}")
             except subprocess.TimeoutExpired:
-                print(f"   ⚠️  Attempt {attempt+1}: Timeout extracting frame at {timestamp}s")
+                print(f"   [WARN] Attempt {attempt+1}: Timeout extracting frame at {timestamp}s")
 
             # Wait before retry
             if attempt < max_attempts - 1:
@@ -401,19 +411,19 @@ def extract_frames(video_path, timestamps, output_dir):
 
         if not success:
             failed_extractions.append(timestamp)
-            print(f"   ✗ Failed to extract frame at {timestamp}s after {max_attempts} attempts")
+            print(f"   [FAIL] Failed to extract frame at {timestamp}s after {max_attempts} attempts")
 
-    print(f"📊 Extraction Summary: {len(frame_paths)}/{len(timestamps)} frames extracted")
+    print(f"[SUMMARY] Extraction Summary: {len(frame_paths)}/{len(timestamps)} frames extracted")
 
     # CRITICAL: Ensure we got exactly the expected number of frames
     if len(frame_paths) != len(timestamps):
         error_msg = f"Frame extraction failed: Expected {len(timestamps)} frames, got {len(frame_paths)}"
         if failed_extractions:
             error_msg += f". Failed at timestamps: {failed_extractions}s"
-        print(f"❌ {error_msg}")
+        print(f"[ERROR] {error_msg}")
         raise Exception(error_msg)
 
-    print(f"✅ All {len(frame_paths)} frames extracted successfully")
+    print(f"[OK] All {len(frame_paths)} frames extracted successfully")
     return frame_paths
 
 # ============================================================================
@@ -469,7 +479,7 @@ def cleanup_output_directory(current_session_timestamp):
     import shutil
 
     if os.path.exists(DEFAULT_OUTPUT_DIR):
-        print(f"\n🧹 Cleaning up previous outputs...")
+        print(f"\n[CLEANUP] Cleaning up previous outputs...")
         try:
             # Remove all subdirectories EXCEPT the current session and any in-use sessions
             for item in os.listdir(DEFAULT_OUTPUT_DIR):
@@ -491,15 +501,15 @@ def cleanup_output_directory(current_session_timestamp):
 
                 try:
                     shutil.rmtree(item_path)
-                    print(f"   ✓ Removed: {item}")
+                    print(f"   [OK] Removed: {item}")
                 except Exception as e:
-                    print(f"   ⚠️  Could not remove {item}: {e}")
+                    print(f"   [WARN] Could not remove {item}: {e}")
 
-            print(f"✅ Output directory cleaned")
+            print(f"[OK] Output directory cleaned")
         except Exception as e:
-            print(f"⚠️  Cleanup warning: {e}")
+            print(f"[WARN] Cleanup warning: {e}")
     else:
-        print(f"📁 Output directory does not exist yet, skipping cleanup")
+        print(f"[INFO] Output directory does not exist yet, skipping cleanup")
 
 # ============================================================================
 # MAIN PIPELINE
@@ -571,7 +581,7 @@ def main():
 
             # Keep local video file for playback (don't delete)
             # The hologram display will use the S3 URL for playback
-            print(f"✅ Local video preserved: {output_video_path}")
+            print(f"[OK] Local video preserved: {output_video_path}")
             results['videoDeleted'] = False
 
         results['success'] = True
@@ -579,7 +589,7 @@ def main():
     except Exception as e:
         results['error'] = str(e)
         if not args.json:
-            print(f"❌ Critical Failure: {e}")
+            print(f"[ERROR] Critical Failure: {e}")
             sys.exit(1)
     finally:
         # Always remove the session lock when done (success or failure)
@@ -591,7 +601,7 @@ def main():
     if args.json:
         print(json.dumps(results))
     else:
-        print("\n✅ Done!")
+        print("\n[DONE] Processing complete!")
         print(f"Video: {results['videoPath']}")
         print(f"URL: {results['s3Url']}")
 

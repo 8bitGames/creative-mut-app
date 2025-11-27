@@ -1,5 +1,5 @@
 // src/screens/04-ShootingGuideScreen.tsx
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
 import { useSessionStore } from '@/store/sessionStore';
@@ -53,10 +53,16 @@ export function ShootingGuideScreen() {
   const cameraStream = useAppStore((state) => state.cameraStream);
   const setCameraStream = useAppStore((state) => state.setCameraStream);
   const selectedFrame = useSessionStore((state) => state.selectedFrame);
+  const useDemoVideo = useSessionStore((state) => state.useDemoVideo);
+  const demoVideoPath = useSessionStore((state) => state.demoVideoPath);
   const [countdown, setCountdown] = useState<number | null>(10);
   const [showInstructions, setShowInstructions] = useState(true);
   const [videoReady, setVideoReady] = useState(false); // Track when video is ready
+  const [demoVideoReady, setDemoVideoReady] = useState(false); // Track demo video ready state
   const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const demoVideoRef = useRef<HTMLVideoElement>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
   // Monitor 2 stays on logo - ensure it's set to logo mode
   useEffect(() => {
@@ -77,19 +83,73 @@ export function ShootingGuideScreen() {
     };
   }, []);
 
-  // Initialize camera for Monitor 1 - use GLOBAL stream from appStore
+  // Initialize camera for Monitor 1 with canvas rotation (16:9 → 9:16)
   useEffect(() => {
-    console.log('📷 [ShootingGuideScreen] Setting up camera display for Monitor 1...');
+    console.log('📷 [ShootingGuideScreen] Setting up camera display with rotation...');
+
+    const setupCameraWithRotation = (stream: MediaStream) => {
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+
+        // Wait for video metadata to load
+        videoRef.current.onloadedmetadata = () => {
+          const video = videoRef.current!;
+          const canvas = canvasRef.current!;
+          const ctx = canvas.getContext('2d')!;
+
+          // Get actual video dimensions
+          const videoWidth = video.videoWidth;
+          const videoHeight = video.videoHeight;
+
+          console.log(`📐 [ShootingGuideScreen] Video dimensions: ${videoWidth}x${videoHeight}`);
+
+          // Canvas size = rotated dimensions (swap width/height for 90° rotation)
+          canvas.width = videoHeight;  // 1080 → canvas width
+          canvas.height = videoWidth;  // 1920 → canvas height
+
+          console.log(`🔄 [ShootingGuideScreen] Canvas dimensions (rotated): ${canvas.width}x${canvas.height}`);
+
+          // Draw rotated frames to canvas
+          const drawRotatedFrame = () => {
+            if (!video.paused && !video.ended) {
+              // Save context state
+              ctx.save();
+
+              // Move to center of canvas
+              ctx.translate(canvas.width / 2, canvas.height / 2);
+
+              // Rotate 90 degrees clockwise
+              ctx.rotate(90 * Math.PI / 180);
+
+              // Mirror horizontally (for selfie mode) and draw
+              ctx.scale(-1, 1);
+
+              // Draw video centered (note: dimensions are swapped due to rotation)
+              ctx.drawImage(video, -videoWidth / 2, -videoHeight / 2, videoWidth, videoHeight);
+
+              // Restore context state
+              ctx.restore();
+            }
+
+            // Continue animation loop
+            animationFrameRef.current = requestAnimationFrame(drawRotatedFrame);
+          };
+
+          // Start drawing loop
+          drawRotatedFrame();
+          setVideoReady(true);
+          console.log('🎬 [ShootingGuideScreen] Canvas rotation started');
+        };
+
+        console.log('📺 [ShootingGuideScreen] Stream assigned to video element');
+      }
+    };
 
     // Use global camera stream from StartScreen (already running!)
     if (cameraStream && cameraStream.active) {
       console.log('✅ [ShootingGuideScreen] Using GLOBAL camera stream (instant connection!)');
       console.log(`   Active tracks: ${cameraStream.getVideoTracks().length}`);
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = cameraStream;
-        console.log('📺 [ShootingGuideScreen] Camera stream assigned to video element');
-      }
+      setupCameraWithRotation(cameraStream);
     } else {
       // Fallback: Start new camera if global stream not available
       console.warn('⚠️ [ShootingGuideScreen] Global camera stream not available, starting new...');
@@ -140,10 +200,7 @@ export function ShootingGuideScreen() {
           // Store in global store for persistence
           setCameraStream(stream);
 
-          if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-            console.log('📺 [ShootingGuideScreen] Camera stream assigned to video element');
-          }
+          setupCameraWithRotation(stream);
         } catch (error) {
           console.error('❌ [ShootingGuideScreen] Failed to access camera:', error);
           // Still show UI even if camera fails (for testing)
@@ -154,15 +211,14 @@ export function ShootingGuideScreen() {
       startCamera();
     }
 
-    // NO CLEANUP - stream persists in global store!
-    // Camera will be stopped when app resets to idle
+    // Cleanup: Stop animation frame but NOT the global camera stream
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
   }, [cameraStream, setCameraStream]);
 
-  // Handle video ready event
-  const handleVideoReady = () => {
-    console.log('✅ [ShootingGuideScreen] Video is ready to play');
-    setVideoReady(true);
-  };
 
   useEffect(() => {
     // Auto-start 10-second countdown
@@ -201,37 +257,65 @@ export function ShootingGuideScreen() {
       animate="visible"
       exit="exit"
     >
-      {/* Live Camera Feed - Full Screen Background */}
-      {/* CSS Filter matches Python face enhancement: brightness +5%, contrast +12%, saturation +10% */}
+      {/* Hidden video element - source for canvas rotation */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted
-        onLoadedData={handleVideoReady}
-        onCanPlay={handleVideoReady}
+        className="hidden"
+      />
+
+      {/* Live Camera Feed - Rotated Canvas (9:16 portrait) */}
+      <canvas
+        ref={canvasRef}
         className="absolute inset-0 w-full h-full object-cover"
         style={{
-          transform: 'scaleX(-1)', // Mirror the video
-          opacity: videoReady ? 1 : 0, // Hide until ready
+          opacity: videoReady ? 1 : 0,
           transition: 'opacity 0.3s ease-in'
-          // No live filter - enhancement applied by Python pipeline during video processing
         }}
       />
 
-      {/* Frame Overlay - Show only when video is ready */}
-      {selectedFrame && videoReady && (
+      {/* Frame Overlay - Show frame image OR demo video when camera is ready */}
+      {videoReady && (
         <motion.div
           className="absolute inset-0 flex items-center justify-center pointer-events-none"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.3 }}
         >
-          <img
-            src={selectedFrame.templatePath}
-            alt="Frame Overlay"
-            className="w-full h-full object-contain opacity-100"
-          />
+          {/* Demo Video Overlay - Alpha channel video plays on top of camera */}
+          {useDemoVideo && demoVideoPath ? (
+            <video
+              ref={demoVideoRef}
+              src={demoVideoPath}
+              className="w-full h-full object-contain"
+              style={{
+                // Transparent background for alpha channel support
+                backgroundColor: 'transparent',
+              }}
+              autoPlay
+              loop
+              muted
+              playsInline
+              onLoadedData={() => {
+                console.log('🎬 [ShootingGuideScreen] Demo video loaded and ready');
+                setDemoVideoReady(true);
+              }}
+              onError={(e) => {
+                console.error('❌ [ShootingGuideScreen] Demo video error:', e);
+              }}
+            />
+          ) : (
+            /* Regular Frame Image Overlay */
+            selectedFrame && (
+              <img
+                src={selectedFrame.templatePath}
+                alt="Frame Overlay"
+                className="w-full h-full object-contain opacity-100"
+              />
+            )
+          )}
         </motion.div>
       )}
 

@@ -11,15 +11,18 @@ MUT_DISTRIBUTION = os.path.join(PROJECT_ROOT, 'MUT-distribution')
 
 block_cipher = None
 
+# Prepare datas - only include .env if it exists
+datas_list = []
+env_file = os.path.join(MUT_DISTRIBUTION, '.env')
+if os.path.exists(env_file):
+    datas_list.append((env_file, '.'))
+
 # Pipeline executable
 pipeline_a = Analysis(
     [os.path.join(MUT_DISTRIBUTION, 'pipeline.py')],
     pathex=[MUT_DISTRIBUTION],
     binaries=[],
-    datas=[
-        # Include .env file if exists
-        (os.path.join(MUT_DISTRIBUTION, '.env'), '.') if os.path.exists(os.path.join(MUT_DISTRIBUTION, '.env')) else (None, None),
-    ],
+    datas=datas_list,
     hiddenimports=[
         'boto3',
         'botocore',
@@ -38,9 +41,6 @@ pipeline_a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
-
-# Filter out None entries from datas
-pipeline_a.datas = [d for d in pipeline_a.datas if d[0] is not None]
 
 pipeline_pyz = PYZ(pipeline_a.pure, pipeline_a.zipped_data, cipher=block_cipher)
 

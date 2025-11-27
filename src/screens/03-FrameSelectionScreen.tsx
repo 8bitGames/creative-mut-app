@@ -5,6 +5,12 @@ import { useAppStore } from '@/store/appStore';
 import { useSessionStore } from '@/store/sessionStore';
 import type { Frame } from '@/store/types';
 
+// Demo config interface
+interface DemoConfig {
+  enabled: boolean;
+  videoPath: string;
+}
+
 // Inactivity timeout in seconds - return to idle if no selection
 const INACTIVITY_TIMEOUT = 30;
 
@@ -72,7 +78,41 @@ export function FrameSelectionScreen() {
   const resetSession = useSessionStore((state) => state.resetSession);
   const selectedFrame = useSessionStore((state) => state.selectedFrame);
   const setSelectedFrame = useSessionStore((state) => state.setSelectedFrame);
+  const setDemoVideo = useSessionStore((state) => state.setDemoVideo);
   const [timeRemaining, setTimeRemaining] = useState(INACTIVITY_TIMEOUT);
+  const [demoConfig, setDemoConfig] = useState<DemoConfig | null>(null);
+
+  // Load demo config on mount
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const config = await (window as any).electron?.config?.get();
+        if (config?.demo) {
+          console.log('🎬 [FrameSelectionScreen] Demo config loaded:', config.demo);
+          setDemoConfig(config.demo);
+        }
+      } catch (error) {
+        console.error('❌ [FrameSelectionScreen] Failed to load demo config:', error);
+      }
+    };
+    loadConfig();
+  }, []);
+
+  // Handle demo video shooting - set demo mode and go to recording
+  const handleDemoShoot = useCallback(() => {
+    if (demoConfig) {
+      console.log('🎬 [FrameSelectionScreen] Starting demo video shooting:', demoConfig.videoPath);
+      // Set demo video mode in session
+      setDemoVideo(true, demoConfig.videoPath);
+      // Auto-select first frame (needed for the flow)
+      if (frames.length > 0) {
+        setSelectedFrame(frames[0] as Frame);
+      }
+      // Go to recording guide screen
+      setScreen('recording-guide');
+    }
+  }, [demoConfig, setDemoVideo, setSelectedFrame, setScreen]);
 
   // Auto-select first frame if none is selected
   useEffect(() => {
@@ -104,6 +144,8 @@ export function FrameSelectionScreen() {
   }, [setScreen, resetSession]);
 
   const handleFrameSelect = (frame: Frame) => {
+    // Disable demo mode when selecting a regular frame
+    setDemoVideo(false);
     setSelectedFrame(frame);
     setScreen('recording-guide');
   };
@@ -166,6 +208,23 @@ export function FrameSelectionScreen() {
           ))}
         </div>
       </div>
+
+      {/* Demo Video Shooting Button - Only shown when demo.enabled is true */}
+      {demoConfig?.enabled && (
+        <motion.div
+          className="mt-4"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
+        >
+          <button
+            onClick={handleDemoShoot}
+            className="px-8 py-4 bg-gradient-to-r from-purple-600 to-blue-600 text-white text-xl font-bold rounded-full shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95"
+          >
+            🎬 데모 영상으로 촬영하기
+          </button>
+        </motion.div>
+      )}
 
       <div className="h-8"></div>
     </motion.div>

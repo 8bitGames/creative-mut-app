@@ -19,9 +19,19 @@ import time
 from pathlib import Path
 from face_enhancement import FaceEnhancer
 
-# FFmpeg path - check common Windows locations
+# FFmpeg path - check bundled location first, then common locations
 def get_ffmpeg_path():
-    """Get the path to ffmpeg executable, checking common Windows locations"""
+    """Get the path to ffmpeg executable, checking bundled and common locations"""
+    # Check if running as PyInstaller bundle - look for bundled FFmpeg
+    if getattr(sys, 'frozen', False):
+        # Running as compiled exe
+        exe_dir = os.path.dirname(sys.executable)
+        bundled_ffmpeg = os.path.join(exe_dir, '..', 'ffmpeg', 'ffmpeg.exe')
+        if os.path.exists(bundled_ffmpeg):
+            bundled_ffmpeg = os.path.abspath(bundled_ffmpeg)
+            print(f"   Using bundled FFmpeg: {bundled_ffmpeg}")
+            return bundled_ffmpeg
+
     if sys.platform == 'win32':
         ffmpeg_locations = [
             r'C:\ffmpeg\ffmpeg-8.0.1-essentials_build\bin\ffmpeg.exe',
