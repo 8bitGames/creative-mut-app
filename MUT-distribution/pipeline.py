@@ -482,7 +482,7 @@ def remove_session_lock(session_dir):
         pass
 
 
-def cleanup_output_directory(current_session_timestamp):
+def cleanup_output_directory(current_session_timestamp, output_dir=None):
     """
     Clean up previous outputs to prevent disk space accumulation.
     Called at the start of each new pipeline run.
@@ -490,15 +490,18 @@ def cleanup_output_directory(current_session_timestamp):
 
     Args:
         current_session_timestamp: The timestamp of the current session to preserve
+        output_dir: The output directory to clean (uses DEFAULT_OUTPUT_DIR if not specified)
     """
     import shutil
 
-    if os.path.exists(DEFAULT_OUTPUT_DIR):
-        print(f"\n[CLEANUP] Cleaning up previous outputs...")
+    target_dir = output_dir if output_dir else DEFAULT_OUTPUT_DIR
+
+    if os.path.exists(target_dir):
+        print(f"\n🧹 Cleaning up previous outputs in: {target_dir}")
         try:
             # Remove all subdirectories EXCEPT the current session and any in-use sessions
-            for item in os.listdir(DEFAULT_OUTPUT_DIR):
-                item_path = os.path.join(DEFAULT_OUTPUT_DIR, item)
+            for item in os.listdir(target_dir):
+                item_path = os.path.join(target_dir, item)
 
                 # Skip current session directory
                 if item == current_session_timestamp:
@@ -537,24 +540,30 @@ def main():
     parser.add_argument('--chroma', help="Alias for --frame", required=False)
     parser.add_argument('--subtitle', default="", help="Kept for compatibility, not used")
     parser.add_argument('--s3-folder', default='mut-hologram')
+    parser.add_argument('--output-dir', help="Output directory (uses default if not specified)")
+    parser.add_argument('--log-file', help="Log file path for debug output")
     parser.add_argument('--json', action='store_true')
     args = parser.parse_args()
 
     # Map chroma to frame if frame is missing
     frame_path = args.frame if args.frame else args.chroma
 
+    # Use provided output directory or fall back to default
+    output_dir = args.output_dir if args.output_dir else DEFAULT_OUTPUT_DIR
+    print(f"📁 Output directory: {output_dir}")
+
     start_total = time.time()
 
     # 1. Prepare Paths FIRST (before cleanup to avoid race condition)
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    session_dir = os.path.join(DEFAULT_OUTPUT_DIR, timestamp)
+    session_dir = os.path.join(output_dir, timestamp)
     os.makedirs(session_dir, exist_ok=True)
 
     # 2. Create lock file to prevent other processes from cleaning up this session
     create_session_lock(session_dir)
 
     # 3. Clean up previous outputs (but preserve current session and any in-use sessions)
-    cleanup_output_directory(timestamp)
+    cleanup_output_directory(timestamp, output_dir)
 
     output_video_path = os.path.join(session_dir, f"final_{timestamp}.mp4")
     qr_path = os.path.join(session_dir, f"qr_{timestamp}.png")
