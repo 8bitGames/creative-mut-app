@@ -1,0 +1,36 @@
+{
+  "tl3600": {
+    "port": "COM3",
+    "terminalId": "0000000000000000",
+    "timeout": 3000,
+    "retryCount": 3
+  },
+  "payment": {
+    "useMockMode": false,
+    "defaultAmount": 5000,
+    "mockApprovalRate": 0.8
+  },
+  "camera": {
+    "useWebcam": true,
+    "mockMode": false
+  },
+  "printer": {
+    "mockMode": false
+  },
+  "display": {
+    "splitScreenMode": false,
+    "swapDisplays": false,
+    "mainWidth": 1080,
+    "mainHeight": 1920,
+    "hologramWidth": 1080,
+    "hologramHeight": 1920
+  },
+  "demo": {
+    "enabled": false,
+    "videoPath": "demo.mov"
+  },
+  "debug": {
+    "enableLogging": true,
+    "logLevel": "info"
+  }
+}

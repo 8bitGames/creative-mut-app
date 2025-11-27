@@ -99,7 +99,7 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   demo: {
     enabled: false,          // Default: demo mode disabled
-    videoPath: './GD_PROTO_MACAU Fin_F.mov',  // Default demo video path
+    videoPath: 'demo.mov',   // Relative path auto-resolved to userData folder
   },
   debug: {
     enableLogging: true,
@@ -349,7 +349,20 @@ export function getDisplayConfig(): DisplayConfig {
 
 /**
  * Helper function to get demo config
+ * Resolves relative videoPath to absolute path based on userData folder
  */
 export function getDemoConfig(): DemoConfig {
-  return appConfig.get().demo;
+  const demo = appConfig.get().demo;
+
+  // If videoPath is relative (starts with ./ or just filename), resolve to userData folder
+  if (demo.videoPath && !path.isAbsolute(demo.videoPath)) {
+    const userDataPath = app.getPath('userData');
+    const resolvedPath = path.join(userDataPath, demo.videoPath.replace(/^\.\//, ''));
+    return {
+      ...demo,
+      videoPath: resolvedPath,
+    };
+  }
+
+  return demo;
 }
