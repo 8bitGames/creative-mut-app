@@ -4,9 +4,9 @@
  * This allows changing settings without rebuilding the application.
  *
  * Config file location:
- * - Windows: %APPDATA%/MUT Hologram Studio/config.json
- * - macOS: ~/Library/Application Support/MUT Hologram Studio/config.json
- * - Linux: ~/.config/MUT Hologram Studio/config.json
+ * - Windows: %APPDATA%/MUT-Hologram-Studio/config.json
+ * - macOS: ~/Library/Application Support/MUT-Hologram-Studio/config.json
+ * - Linux: ~/.config/MUT-Hologram-Studio/config.json
  */
 
 import { app } from 'electron';

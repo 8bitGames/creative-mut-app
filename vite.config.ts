@@ -13,6 +13,7 @@ const nativeModules = [
   'serialport',
   '@serialport/bindings-cpp',
   '@serialport/parser-byte-length',
+  'electron-store',
 ];
 
 export default defineConfig({
@@ -20,6 +21,7 @@ export default defineConfig({
   base: './',
   plugins: [
     react(),
+    // Electron plugin
     electron([
       {
         entry: 'electron/main.ts',

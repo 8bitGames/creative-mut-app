@@ -87,13 +87,13 @@ export function FrameSelectionScreen() {
     const loadConfig = async () => {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const config = await (window as any).electron?.config?.get();
-        if (config?.demo) {
-          console.log('🎬 [FrameSelectionScreen] Demo config loaded:', config.demo);
-          setDemoConfig(config.demo);
+        const result = await (window as any).electron?.config?.get();
+        if (result?.success && result?.config?.demo) {
+          console.log('[FrameSelectionScreen] Demo config loaded:', result.config.demo);
+          setDemoConfig(result.config.demo);
         }
       } catch (error) {
-        console.error('❌ [FrameSelectionScreen] Failed to load demo config:', error);
+        console.error('[FrameSelectionScreen] Failed to load demo config:', error);
       }
     };
     loadConfig();
