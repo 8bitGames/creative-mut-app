@@ -128,7 +128,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^16.4.7",
-    "electron-store": "^11.0.2",
+    "electron-store": "^8.2.0",
     "framer-motion": "^11.18.2",
     "immer": "^10.2.0",
     "lucide-react": "^0.300.0",
