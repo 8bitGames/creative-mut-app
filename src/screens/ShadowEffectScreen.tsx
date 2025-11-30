@@ -150,13 +150,12 @@ export function ShadowEffectScreen() {
     //   4. Draw mask directly (person=white) to erase shadow under person
     //   5. Apply final shadow with multiply blend to video
 
-    // NEW APPROACH: Draw shadow first, then person on top
-    // This ensures person is ALWAYS above the shadow
-    //
+    // CLEANER APPROACH: Create shadow, cut out person area, then composite
     // Strategy:
-    // 1. Draw video (background + person)
-    // 2. Draw shadow with alpha
-    // 3. Draw person AGAIN on top (extracted using mask) to cover shadow
+    // 1. Create shadow shape on shadowCanvas
+    // 2. Use destination-out to remove person area from shadow
+    // 3. Draw video on main canvas
+    // 4. Draw shadow (with person hole) on top of video
 
     if (config.enabled) {
       // Debug: Check mask type
@@ -172,6 +171,7 @@ export function ShadowEffectScreen() {
       const spreadOffsetY = (canvas.height * (spreadScale - 1)) / 2;
 
       // STEP 1: Create shadow shape on temp canvas
+      tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
       tempCtx.fillStyle = '#ffffff';
       tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
 
@@ -189,7 +189,7 @@ export function ShadowEffectScreen() {
       tempCtx.filter = 'none';
       tempCtx.restore();
 
-      // STEP 2: Convert shadow to alpha-based
+      // STEP 2: Convert shadow to alpha-based on shadowCanvas
       const shadowImageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
       const shadowData = shadowImageData.data;
 
@@ -201,41 +201,28 @@ export function ShadowEffectScreen() {
         shadowData[i + 2] = 0;
         shadowData[i + 3] = alpha;
       }
+
+      shadowCtx.clearRect(0, 0, shadowCanvas.width, shadowCanvas.height);
       shadowCtx.putImageData(shadowImageData, 0, 0);
 
-      // STEP 3: Draw video as base
-      ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-
-      // STEP 4: Draw shadow on top of video
-      ctx.drawImage(shadowCanvas, 0, 0);
-
-      // STEP 5: Extract person from video and draw on top of shadow
-      // Get video image data
-      tempCtx.drawImage(results.image, 0, 0, tempCanvas.width, tempCanvas.height);
-      const videoImageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-      const videoData = videoImageData.data;
-
-      // Get mask image data
-      shadowCtx.filter = 'grayscale(1)';
+      // STEP 3: Cut out person area from shadow using destination-out
+      // This ensures shadow NEVER appears on top of person
+      // Use blur(5px) to slightly expand the cutout for clean edges
+      shadowCtx.globalCompositeOperation = 'destination-out';
+      shadowCtx.filter = 'grayscale(1) blur(5px)';
       shadowCtx.drawImage(results.segmentationMask, 0, 0, shadowCanvas.width, shadowCanvas.height);
       shadowCtx.filter = 'none';
-      const maskImageData = shadowCtx.getImageData(0, 0, shadowCanvas.width, shadowCanvas.height);
-      const maskData = maskImageData.data;
+      shadowCtx.globalCompositeOperation = 'source-over';
 
-      // Make background transparent, keep person opaque
-      for (let i = 0; i < videoData.length; i += 4) {
-        const maskBrightness = (maskData[i] + maskData[i + 1] + maskData[i + 2]) / 3;
-        // Person (bright mask) = keep alpha 255, Background (dark mask) = alpha 0
-        videoData[i + 3] = maskBrightness > 50 ? 255 : 0;
-      }
+      // STEP 4: Draw video on main canvas
+      ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
 
-      // Draw person-only layer on top
-      tempCtx.putImageData(videoImageData, 0, 0);
-      ctx.drawImage(tempCanvas, 0, 0);
+      // STEP 5: Draw shadow (with person hole) on top of video
+      ctx.drawImage(shadowCanvas, 0, 0);
 
       // Debug: Log success on first frames
       if (frameCountRef.current <= 5) {
-        console.log('[ShadowEffect] Shadow created, person drawn on top');
+        console.log('[ShadowEffect] Shadow created with person cutout');
       }
     } else {
       // No shadow - just draw video
