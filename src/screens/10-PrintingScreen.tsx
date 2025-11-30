@@ -1,5 +1,5 @@
 // src/screens/10-PrintingScreen.tsx
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Printer, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
@@ -65,6 +65,10 @@ export function PrintingScreen() {
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('인쇄 준비 중...');
 
+  // Ref to track if we're transitioning (to stop hologram polling)
+  const isTransitioningRef = useRef(false);
+  const hologramIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
   // CRITICAL: Maintain hologram display during printing
   useEffect(() => {
     console.log('🎭 [PrintingScreen] Setting up hologram persistence during printing');
@@ -75,6 +79,11 @@ export function PrintingScreen() {
     }
 
     const maintainHologram = () => {
+      // Don't update hologram if we're transitioning out
+      if (isTransitioningRef.current) {
+        return;
+      }
+
       // @ts-ignore - Electron API
       if (window.electron?.hologram) {
         // @ts-ignore
@@ -89,11 +98,14 @@ export function PrintingScreen() {
     maintainHologram();
 
     // Poll every 500ms to ensure state persists
-    const interval = setInterval(maintainHologram, 500);
+    hologramIntervalRef.current = setInterval(maintainHologram, 500);
 
     return () => {
       console.log('🛑 [PrintingScreen] Stopping hologram polling');
-      clearInterval(interval);
+      if (hologramIntervalRef.current) {
+        clearInterval(hologramIntervalRef.current);
+        hologramIntervalRef.current = null;
+      }
     };
   }, [processedResult]);
 
@@ -164,6 +176,14 @@ export function PrintingScreen() {
 
       // Clear session, reset hologram to logo, and return to start
       setTimeout(async () => {
+        // CRITICAL: Stop hologram polling BEFORE resetting to logo
+        isTransitioningRef.current = true;
+        if (hologramIntervalRef.current) {
+          clearInterval(hologramIntervalRef.current);
+          hologramIntervalRef.current = null;
+          console.log('🛑 [PrintingScreen] Hologram polling stopped before transition');
+        }
+
         // Reset hologram window back to logo
         // @ts-ignore
         if (window.electron?.hologram) {
@@ -175,7 +195,7 @@ export function PrintingScreen() {
         // Cleanup session files before clearing session
         await cleanupSessionFiles();
         clearSession();
-        setScreen('start');
+        setScreen('idle');
       }, 2000);
 
     } catch (error) {
@@ -186,6 +206,14 @@ export function PrintingScreen() {
       alert('인쇄 중 오류가 발생했습니다: ' + (error instanceof Error ? error.message : 'Unknown error'));
 
       setTimeout(async () => {
+        // CRITICAL: Stop hologram polling BEFORE resetting to logo
+        isTransitioningRef.current = true;
+        if (hologramIntervalRef.current) {
+          clearInterval(hologramIntervalRef.current);
+          hologramIntervalRef.current = null;
+          console.log('🛑 [PrintingScreen] Hologram polling stopped before transition (error)');
+        }
+
         // Reset hologram window back to logo
         // @ts-ignore
         if (window.electron?.hologram) {
@@ -197,7 +225,7 @@ export function PrintingScreen() {
         // Cleanup session files before clearing session
         await cleanupSessionFiles();
         clearSession();
-        setScreen('start');
+        setScreen('idle');
       }, 2000);
     }
   };
@@ -219,6 +247,14 @@ export function PrintingScreen() {
         clearInterval(interval);
 
         setTimeout(async () => {
+          // CRITICAL: Stop hologram polling BEFORE resetting to logo
+          isTransitioningRef.current = true;
+          if (hologramIntervalRef.current) {
+            clearInterval(hologramIntervalRef.current);
+            hologramIntervalRef.current = null;
+            console.log('🛑 [PrintingScreen] Hologram polling stopped before transition (simulated)');
+          }
+
           // Reset hologram window back to logo
           // @ts-ignore
           if (window.electron?.hologram) {
@@ -229,7 +265,7 @@ export function PrintingScreen() {
           // Cleanup session files before clearing session
           await cleanupSessionFiles();
           clearSession();
-          setScreen('start');
+          setScreen('idle');
         }, 1500);
       }
     }, 500);

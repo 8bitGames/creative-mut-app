@@ -1,9 +1,12 @@
 // src/screens/01-StartScreen.tsx
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
 import { Button } from '@/components/ui/button';
 import { Logo } from '@/components/Logo';
+
+// Auto-return timeout in milliseconds (10 seconds)
+const AUTO_RETURN_TIMEOUT = 10000;
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -126,6 +129,22 @@ export function StartScreen() {
 
     // NO CLEANUP - stream persists in global store!
   }, [cameraStream, setCameraStream]);
+
+  // Auto-return to idle screen after 10 seconds of inactivity
+  useEffect(() => {
+    console.log('⏱️ [StartScreen] Starting 10-second auto-return timer');
+
+    const timeoutId = setTimeout(() => {
+      console.log('⏱️ [StartScreen] Auto-return timeout reached - returning to idle');
+      setScreen('idle');
+    }, AUTO_RETURN_TIMEOUT);
+
+    // Cleanup on unmount or when user interacts
+    return () => {
+      console.log('⏱️ [StartScreen] Auto-return timer cancelled');
+      clearTimeout(timeoutId);
+    };
+  }, [setScreen]);
 
   return (
     <motion.div

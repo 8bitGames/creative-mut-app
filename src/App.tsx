@@ -14,6 +14,7 @@ import { PrintingScreen } from '@/screens/10-PrintingScreen';
 import { HologramPage } from '@/pages/HologramPage';
 import { DevDualMonitor } from '@/pages/DevDualMonitor';
 import { AdminDashboard } from '@/pages/AdminDashboard';
+import { ShadowEffectScreen } from '@/screens/ShadowEffectScreen';
 
 function App() {
   const currentScreen = useAppStore((state) => state.currentScreen);
@@ -25,7 +26,7 @@ function App() {
   // Check if this is the hologram window (Monitor 2)
   const isHologramWindow = window.location.hash === '#/hologram';
 
-  // F12 shortcut for admin dashboard
+  // F12 shortcut for admin dashboard, F11 for shadow effect demo
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'F12') {
@@ -36,8 +37,17 @@ function App() {
           setScreen('admin-dashboard');
         }
       }
-      // ESC to return to idle from dashboard
-      if (e.key === 'Escape' && currentScreen === 'admin-dashboard') {
+      // F11 for shadow effect demo
+      if (e.key === 'F11') {
+        e.preventDefault();
+        if (currentScreen === 'shadow-effect') {
+          setScreen('idle');
+        } else {
+          setScreen('shadow-effect');
+        }
+      }
+      // ESC to return to idle from dashboard or shadow effect
+      if (e.key === 'Escape' && (currentScreen === 'admin-dashboard' || currentScreen === 'shadow-effect')) {
         setScreen('idle');
       }
     };
@@ -100,6 +110,7 @@ function App() {
         {currentScreen === 'payment' && <PaymentScreen key="payment" />}
         {currentScreen === 'printing' && <PrintingScreen key="printing" />}
         {currentScreen === 'admin-dashboard' && <AdminDashboard key="admin-dashboard" />}
+        {currentScreen === 'shadow-effect' && <ShadowEffectScreen key="shadow-effect" />}
       </AnimatePresence>
     </div>
   );

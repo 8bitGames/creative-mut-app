@@ -1,16 +1,35 @@
 import { EventEmitter } from 'events';
-import Store from 'electron-store';
 import { CloudConfig, MachineRegistration, ApiResponse, MachineConfig, Command, HeartbeatStatus, SessionData, SessionUpdate, LogEntry } from './types';
 
-const store = new Store<{
+// Lazy-load electron-store to avoid initialization before Electron app is ready
+type StoreType = {
   machineToken: string | null;
   machineId: string | null;
   tokenExpiresAt: string | null;
   hardwareId: string | null;
   hardwareInfo: object | null;
-}>({
-  name: 'cloud-credentials',
-});
+};
+
+let _store: import('electron-store').default<StoreType> | null = null;
+
+function getStore(): import('electron-store').default<StoreType> {
+  if (!_store) {
+    const Store = require('electron-store');
+    _store = new Store<StoreType>({
+      name: 'cloud-credentials',
+    });
+  }
+  return _store;
+}
+
+// Helper to access store (lazy initialization wrapper)
+const store = {
+  get: <K extends keyof StoreType>(key: K): StoreType[K] => getStore().get(key),
+  set: <K extends keyof StoreType>(key: K, value: StoreType[K]): void => getStore().set(key, value),
+  delete: <K extends keyof StoreType>(key: K): void => getStore().delete(key),
+  clear: (): void => getStore().clear(),
+};
+
 
 // Error codes that indicate invalid/expired token requiring re-registration
 const INVALID_TOKEN_ERRORS = ['INVALID_TOKEN', 'TOKEN_EXPIRED', 'MACHINE_NOT_FOUND', 'UNAUTHORIZED'];

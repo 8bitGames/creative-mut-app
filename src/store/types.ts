@@ -18,7 +18,8 @@ export type Screen =
   | 'image-selection'   // Screen 7
   | 'payment'           // Screen 8
   | 'printing'          // Screen 9
-  | 'admin-dashboard';  // Admin Dashboard
+  | 'admin-dashboard'   // Admin Dashboard
+  | 'shadow-effect';    // Shadow Effect Demo (F11)
 
 // ============================================
 // Frame Types
