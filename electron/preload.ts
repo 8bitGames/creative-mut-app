@@ -323,6 +323,53 @@ const ipcRendererAPI = {
   },
 };
 
+// App API - for screen state communication and live config updates
+const appAPI = {
+  // Notify main process when screen changes (for live config application)
+  notifyScreenChange: (screen: string) => {
+    ipcRenderer.send('app:screen-changed', screen);
+  },
+
+  // Listen for config updates from cloud (main → renderer)
+  onConfigUpdated: (callback: (config: {
+    camera?: { useWebcam?: boolean; mockMode?: boolean };
+    payment?: { useMockMode?: boolean; defaultAmount?: number };
+    tl3600?: { port?: string; terminalId?: string };
+    display?: {
+      splitScreenMode?: boolean;
+      swapDisplays?: boolean;
+      mainWidth?: number;
+      mainHeight?: number;
+      hologramWidth?: number;
+      hologramHeight?: number;
+    };
+    printer?: { mockMode?: boolean };
+    demo?: { enabled?: boolean; videoPath?: string };
+    debug?: { enableLogging?: boolean; logLevel?: string };
+  }) => void) => {
+    const listener = (_event: IpcRendererEvent, config: any) => callback(config);
+    ipcRenderer.on('app:config-updated', listener);
+    return () => ipcRenderer.removeListener('app:config-updated', listener);
+  },
+
+  // Listen for config apply notification (when config is about to be applied)
+  onConfigApplying: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('app:config-applying', listener);
+    return () => ipcRenderer.removeListener('app:config-applying', listener);
+  },
+
+  // Listen for config applied notification (when config has been applied)
+  onConfigApplied: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('app:config-applied', listener);
+    return () => ipcRenderer.removeListener('app:config-applied', listener);
+  },
+
+  // Get current screen state (for debugging)
+  getCurrentScreen: () => ipcRenderer.invoke('app:get-current-screen'),
+};
+
 // Expose protected APIs to renderer process
 contextBridge.exposeInMainWorld('electron', {
   camera: cameraAPI,
@@ -335,4 +382,5 @@ contextBridge.exposeInMainWorld('electron', {
   config: configAPI,
   hologram: hologramAPI,
   ipcRenderer: ipcRendererAPI,
+  app: appAPI,
 });

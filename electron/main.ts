@@ -68,6 +68,16 @@ const isCloudEnabled = !!(
   process.env.CLOUD_API_KEY
 );
 
+// =========================================
+// Live Config State Management
+// =========================================
+// Track current renderer screen for config application timing
+let currentRendererScreen: string = 'idle';
+// Queue pending config changes for application at idle screen
+let pendingConfigChanges: { newConfig: any; oldConfig: any } | null = null;
+// Prevent concurrent config applications
+let isApplyingConfig = false;
+
 // Persistent hologram state - survives screen transitions
 let hologramState: {
   mode: 'logo' | 'result';
@@ -182,6 +192,31 @@ async function initializeCloudIntegration(): Promise<void> {
     heartbeatManager.start();
     logger.info('system', 'Heartbeat manager started');
 
+    // =========================================
+    // Live Config Change Listener
+    // =========================================
+    // Listen for config changes and apply them based on current screen state
+    configSync.onChange(async (newConfig, oldConfig) => {
+      console.log('\n☁️ ═══════════════════════════════════════════════════');
+      console.log('☁️  CLOUD CONFIG CHANGE DETECTED');
+      console.log('☁️ ═══════════════════════════════════════════════════');
+      console.log(`   Current screen: ${currentRendererScreen}`);
+
+      if (currentRendererScreen === 'idle' && !isApplyingConfig) {
+        // At idle screen - apply immediately
+        console.log('   → Applying immediately (at idle screen)');
+        await applyConfigChanges(newConfig, oldConfig);
+      } else {
+        // Not at idle screen - queue for later
+        console.log('   → Queuing for later (not at idle screen)');
+        pendingConfigChanges = { newConfig, oldConfig };
+        console.log('   Pending config stored - will apply when returning to idle');
+      }
+
+      console.log('☁️ ═══════════════════════════════════════════════════\n');
+    });
+    logger.info('system', 'Live config change listener registered');
+
     // Listen for automatic re-registration events
     cloudClient.onReregistered(async (data) => {
       logger.info('system', 'Machine was automatically re-registered', {
@@ -234,6 +269,321 @@ function updatePeripheralStatus(): void {
   if (cardReader) {
     const readerStatus = cardReader.getStatus();
     heartbeatManager.setCardReaderStatus(readerStatus.connected ? 'ok' : 'offline');
+  }
+}
+
+// =========================================
+// Live Config Application Functions
+// =========================================
+
+/**
+ * Reinitialize camera controller with new config
+ */
+async function reinitializeCamera(newCameraConfig: { useWebcam: boolean; mockMode: boolean }): Promise<void> {
+  console.log('\n📷 ═══════════════════════════════════════════════════');
+  console.log('📷  REINITIALIZING CAMERA');
+  console.log('📷 ═══════════════════════════════════════════════════');
+  console.log(`   useWebcam: ${newCameraConfig.useWebcam}`);
+  console.log(`   mockMode: ${newCameraConfig.mockMode}`);
+
+  try {
+    // Disconnect existing camera
+    if (cameraController) {
+      console.log('   Disconnecting existing camera...');
+      await cameraController.disconnect();
+      cameraController = null;
+    }
+
+    // Create new camera controller with updated config
+    cameraController = new CameraController({
+      useWebcam: newCameraConfig.useWebcam,
+      mockMode: newCameraConfig.mockMode && !newCameraConfig.useWebcam,
+    });
+
+    // Connect to camera
+    const result = await cameraController.connect();
+    if (result.success) {
+      console.log('✅ Camera reinitialized successfully');
+    } else {
+      console.error('⚠️  Camera reinitialization failed:', result.error);
+    }
+
+    // Update peripheral status for heartbeat
+    updatePeripheralStatus();
+  } catch (error) {
+    console.error('❌ Camera reinitialization error:', error);
+  }
+
+  console.log('📷 ═══════════════════════════════════════════════════\n');
+}
+
+/**
+ * Reinitialize card reader controller with new config
+ */
+async function reinitializeCardReader(config: {
+  payment: { useMockMode: boolean; mockApprovalRate: number };
+  tl3600: { port: string; terminalId: string };
+}): Promise<void> {
+  console.log('\n💳 ═══════════════════════════════════════════════════');
+  console.log('💳  REINITIALIZING CARD READER');
+  console.log('💳 ═══════════════════════════════════════════════════');
+  console.log(`   mockMode: ${config.payment.useMockMode}`);
+  console.log(`   port: ${config.tl3600.port}`);
+  console.log(`   terminalId: ${config.tl3600.terminalId}`);
+
+  try {
+    // Disconnect existing card reader
+    if (cardReader) {
+      console.log('   Disconnecting existing card reader...');
+      await cardReader.disconnect();
+      cardReader = null;
+    }
+
+    // Determine mock mode: config forces mock, or development mode uses mock
+    const useMockCardReader = config.payment.useMockMode || isDevelopment;
+
+    // Create new card reader controller
+    cardReader = new CardReaderController({
+      mockMode: useMockCardReader,
+      mockApprovalRate: config.payment.mockApprovalRate,
+      readerPort: config.tl3600.port,
+      terminalId: config.tl3600.terminalId,
+    });
+
+    // Connect to card reader
+    const result = await cardReader.connect();
+    if (result.success) {
+      const mode = useMockCardReader ? 'mock mode' : `TL3600 on ${config.tl3600.port}`;
+      console.log(`✅ Card reader reinitialized (${mode})`);
+
+      // Re-setup event forwarding
+      cardReader.on('status', (statusUpdate) => {
+        mainWindow?.webContents.send('payment:status', statusUpdate);
+      });
+
+      if (!useMockCardReader) {
+        cardReader.on('cardRemoved', () => {
+          mainWindow?.webContents.send('payment:card-removed');
+        });
+
+        cardReader.on('paymentComplete', (result) => {
+          mainWindow?.webContents.send('payment:complete', result);
+        });
+
+        cardReader.on('error', (error) => {
+          mainWindow?.webContents.send('payment:error', {
+            message: error instanceof Error ? error.message : 'Unknown error',
+          });
+        });
+
+        cardReader.on('disconnected', () => {
+          mainWindow?.webContents.send('payment:disconnected');
+        });
+      }
+    } else {
+      console.error('⚠️  Card reader reinitialization failed:', result.error);
+    }
+
+    // Update peripheral status for heartbeat
+    updatePeripheralStatus();
+  } catch (error) {
+    console.error('❌ Card reader reinitialization error:', error);
+  }
+
+  console.log('💳 ═══════════════════════════════════════════════════\n');
+}
+
+/**
+ * Reconfigure windows with new display settings
+ */
+async function reconfigureWindows(newDisplayConfig: {
+  splitScreenMode: boolean;
+  swapDisplays: boolean;
+  mainWidth: number;
+  mainHeight: number;
+  hologramWidth: number;
+  hologramHeight: number;
+}): Promise<void> {
+  console.log('\n🖥️  ═══════════════════════════════════════════════════');
+  console.log('🖥️   RECONFIGURING WINDOWS');
+  console.log('🖥️  ═══════════════════════════════════════════════════');
+  console.log(`   splitScreenMode: ${newDisplayConfig.splitScreenMode}`);
+  console.log(`   swapDisplays: ${newDisplayConfig.swapDisplays}`);
+  console.log(`   mainSize: ${newDisplayConfig.mainWidth}x${newDisplayConfig.mainHeight}`);
+  console.log(`   hologramSize: ${newDisplayConfig.hologramWidth}x${newDisplayConfig.hologramHeight}`);
+
+  const displays = screen.getAllDisplays();
+  const oldSplitScreenMode = displaySettings.splitScreenMode;
+
+  // Update display settings
+  displaySettings = {
+    splitScreenMode: newDisplayConfig.splitScreenMode,
+    swapDisplays: newDisplayConfig.swapDisplays,
+    mainWidth: newDisplayConfig.mainWidth,
+    mainHeight: newDisplayConfig.mainHeight,
+    hologramWidth: newDisplayConfig.hologramWidth,
+    hologramHeight: newDisplayConfig.hologramHeight,
+  };
+
+  if (newDisplayConfig.splitScreenMode) {
+    // Switching to split-screen mode - hide hologram window
+    console.log('   Switching to split-screen mode...');
+    if (hologramWindow && !hologramWindow.isDestroyed()) {
+      hologramWindow.hide();
+      console.log('   Hologram window hidden');
+    }
+
+    // Resize main window for split view (if not in dev mode)
+    if (mainWindow && !mainWindow.isDestroyed() && !isDevelopment) {
+      mainWindow.setSize(newDisplayConfig.mainWidth, newDisplayConfig.mainHeight);
+      console.log(`   Main window resized to ${newDisplayConfig.mainWidth}x${newDisplayConfig.mainHeight}`);
+    }
+  } else {
+    // Switching to dual-monitor mode
+    console.log('   Switching to dual-monitor mode...');
+
+    // Determine display assignments
+    const mainDisplayIndex = newDisplayConfig.swapDisplays && displays.length > 1 ? 1 : 0;
+    const hologramDisplayIndex = newDisplayConfig.swapDisplays ? 0 : (displays.length > 1 ? 1 : 0);
+
+    const mainDisplay = displays[mainDisplayIndex];
+    const hologramDisplay = displays[hologramDisplayIndex];
+
+    // Reposition and resize main window (if not in dev mode)
+    if (mainWindow && !mainWindow.isDestroyed() && !isDevelopment && mainDisplay) {
+      mainWindow.setBounds({
+        x: mainDisplay.bounds.x,
+        y: mainDisplay.bounds.y,
+        width: newDisplayConfig.mainWidth,
+        height: newDisplayConfig.mainHeight,
+      });
+      console.log(`   Main window: ${newDisplayConfig.mainWidth}x${newDisplayConfig.mainHeight} on display ${mainDisplayIndex + 1}`);
+    }
+
+    // Handle hologram window
+    if (hologramWindow && !hologramWindow.isDestroyed()) {
+      // Reposition and resize existing hologram window
+      if (!isDevelopment && hologramDisplay) {
+        hologramWindow.setBounds({
+          x: hologramDisplay.bounds.x,
+          y: hologramDisplay.bounds.y,
+          width: newDisplayConfig.hologramWidth,
+          height: newDisplayConfig.hologramHeight,
+        });
+      }
+      hologramWindow.show();
+      console.log(`   Hologram window: ${newDisplayConfig.hologramWidth}x${newDisplayConfig.hologramHeight} on display ${hologramDisplayIndex + 1}`);
+    } else if (!oldSplitScreenMode === false) {
+      // Need to create hologram window (was in split-screen mode before)
+      console.log('   Creating hologram window...');
+      await createHologramWindow();
+    }
+  }
+
+  console.log('✅ Windows reconfigured successfully');
+  console.log('🖥️  ═══════════════════════════════════════════════════\n');
+}
+
+/**
+ * Apply config changes - called when at idle screen or config sync detects changes
+ */
+async function applyConfigChanges(newConfig: any, oldConfig: any): Promise<void> {
+  console.log('\n' + '═'.repeat(70));
+  console.log('⚡ APPLYING LIVE CONFIG CHANGES');
+  console.log('═'.repeat(70));
+  console.log(`   Current screen: ${currentRendererScreen}`);
+  console.log(`   Time: ${new Date().toLocaleString()}`);
+
+  // Notify renderer that config is being applied
+  mainWindow?.webContents.send('app:config-applying');
+
+  try {
+    // Check for camera changes
+    const cameraChanged =
+      newConfig.camera?.useWebcam !== oldConfig.camera?.useWebcam ||
+      newConfig.camera?.mockMode !== oldConfig.camera?.mockMode;
+
+    if (cameraChanged) {
+      console.log('\n📷 Camera config changed');
+      await reinitializeCamera({
+        useWebcam: newConfig.camera?.useWebcam ?? oldConfig.camera?.useWebcam,
+        mockMode: newConfig.camera?.mockMode ?? oldConfig.camera?.mockMode,
+      });
+    }
+
+    // Check for card reader changes
+    const cardReaderChanged =
+      newConfig.tl3600?.port !== oldConfig.tl3600?.port ||
+      newConfig.tl3600?.terminalId !== oldConfig.tl3600?.terminalId ||
+      newConfig.payment?.useMockMode !== oldConfig.payment?.useMockMode;
+
+    if (cardReaderChanged) {
+      console.log('\n💳 Card reader config changed');
+      await reinitializeCardReader({
+        payment: {
+          useMockMode: newConfig.payment?.useMockMode ?? oldConfig.payment?.useMockMode,
+          mockApprovalRate: newConfig.payment?.mockApprovalRate ?? oldConfig.payment?.mockApprovalRate ?? 0.8,
+        },
+        tl3600: {
+          port: newConfig.tl3600?.port ?? oldConfig.tl3600?.port,
+          terminalId: newConfig.tl3600?.terminalId ?? oldConfig.tl3600?.terminalId,
+        },
+      });
+    }
+
+    // Check for display changes
+    const displayChanged =
+      newConfig.display?.splitScreenMode !== oldConfig.display?.splitScreenMode ||
+      newConfig.display?.swapDisplays !== oldConfig.display?.swapDisplays ||
+      newConfig.display?.mainWidth !== oldConfig.display?.mainWidth ||
+      newConfig.display?.mainHeight !== oldConfig.display?.mainHeight ||
+      newConfig.display?.hologramWidth !== oldConfig.display?.hologramWidth ||
+      newConfig.display?.hologramHeight !== oldConfig.display?.hologramHeight;
+
+    if (displayChanged) {
+      console.log('\n🖥️  Display config changed');
+      await reconfigureWindows({
+        splitScreenMode: newConfig.display?.splitScreenMode ?? oldConfig.display?.splitScreenMode,
+        swapDisplays: newConfig.display?.swapDisplays ?? oldConfig.display?.swapDisplays,
+        mainWidth: newConfig.display?.mainWidth ?? oldConfig.display?.mainWidth,
+        mainHeight: newConfig.display?.mainHeight ?? oldConfig.display?.mainHeight,
+        hologramWidth: newConfig.display?.hologramWidth ?? oldConfig.display?.hologramWidth,
+        hologramHeight: newConfig.display?.hologramHeight ?? oldConfig.display?.hologramHeight,
+      });
+    }
+
+    // Notify renderer that config has been applied
+    mainWindow?.webContents.send('app:config-applied');
+    mainWindow?.webContents.send('app:config-updated', newConfig);
+
+    console.log('\n' + '═'.repeat(70));
+    console.log('✅ LIVE CONFIG CHANGES APPLIED SUCCESSFULLY');
+    console.log('═'.repeat(70) + '\n');
+  } catch (error) {
+    console.error('❌ Error applying config changes:', error);
+  }
+}
+
+/**
+ * Apply pending config changes - called when returning to idle screen
+ */
+async function applyPendingConfig(): Promise<void> {
+  if (!pendingConfigChanges || isApplyingConfig) {
+    return;
+  }
+
+  isApplyingConfig = true;
+  console.log('\n📋 ═══════════════════════════════════════════════════');
+  console.log('📋  APPLYING PENDING CONFIG CHANGES');
+  console.log('📋 ═══════════════════════════════════════════════════\n');
+
+  try {
+    await applyConfigChanges(pendingConfigChanges.newConfig, pendingConfigChanges.oldConfig);
+    pendingConfigChanges = null;
+  } catch (error) {
+    console.error('❌ Failed to apply pending config:', error);
+  } finally {
+    isApplyingConfig = false;
   }
 }
 
@@ -1466,6 +1816,29 @@ ipcMain.handle('config:get-path', async () => {
     success: true,
     path: appConfig.getConfigPath(),
   };
+});
+
+// =========================================
+// App Screen State IPC Handlers
+// =========================================
+
+// Handle screen change notifications from renderer
+ipcMain.on('app:screen-changed', (_event, screen: string) => {
+  const previousScreen = currentRendererScreen;
+  currentRendererScreen = screen;
+
+  console.log(`📱 [App] Screen changed: ${previousScreen} → ${screen}`);
+
+  // If we just arrived at idle and have pending config, apply it
+  if (screen === 'idle' && pendingConfigChanges && !isApplyingConfig) {
+    console.log('📱 [App] At idle screen with pending config - applying...');
+    applyPendingConfig();
+  }
+});
+
+// Get current screen state (for debugging)
+ipcMain.handle('app:get-current-screen', async () => {
+  return { screen: currentRendererScreen };
 });
 
 // Close database on app quit

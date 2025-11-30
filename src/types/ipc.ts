@@ -198,6 +198,42 @@ export interface ConfigAPI {
   getPath: () => Promise<{ success: boolean; path: string }>;
 }
 
+// Live Config Update Types
+export interface LiveConfigUpdate {
+  camera?: { useWebcam?: boolean; mockMode?: boolean };
+  payment?: { useMockMode?: boolean; defaultAmount?: number; mockApprovalRate?: number };
+  tl3600?: { port?: string; terminalId?: string; timeout?: number; retryCount?: number };
+  display?: {
+    splitScreenMode?: boolean;
+    swapDisplays?: boolean;
+    mainWidth?: number;
+    mainHeight?: number;
+    hologramWidth?: number;
+    hologramHeight?: number;
+  };
+  printer?: { mockMode?: boolean };
+  demo?: { enabled?: boolean; videoPath?: string };
+  debug?: { enableLogging?: boolean; logLevel?: string; logToFile?: boolean; logFilePath?: string };
+}
+
+// App API Types - for screen state communication and live config updates
+export interface AppAPI {
+  // Notify main process when screen changes (for live config application)
+  notifyScreenChange: (screen: string) => void;
+
+  // Listen for config updates from cloud (main → renderer)
+  onConfigUpdated: (callback: (config: LiveConfigUpdate) => void) => () => void;
+
+  // Listen for config apply notification (when config is about to be applied)
+  onConfigApplying: (callback: () => void) => () => void;
+
+  // Listen for config applied notification (when config has been applied)
+  onConfigApplied: (callback: () => void) => () => void;
+
+  // Get current screen state (for debugging)
+  getCurrentScreen: () => Promise<{ screen: string }>;
+}
+
 // Main Electron API Interface
 export interface ElectronAPI {
   camera: CameraAPI;
@@ -205,6 +241,7 @@ export interface ElectronAPI {
   video: VideoAPI;
   payment: PaymentAPI;
   config: ConfigAPI;
+  app: AppAPI;
 }
 
 // Extend Window interface

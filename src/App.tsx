@@ -46,6 +46,26 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [currentScreen, setScreen]);
 
+  // Notify main process when screen changes (for live config application)
+  useEffect(() => {
+    // Only notify for main window (not hologram window)
+    if (!isHologramWindow && window.electron?.app?.notifyScreenChange) {
+      console.log(`📱 [App] Notifying main process of screen change: ${currentScreen}`);
+      window.electron.app.notifyScreenChange(currentScreen);
+    }
+  }, [currentScreen, isHologramWindow]);
+
+  // Listen for config updates from cloud (optional - for UI awareness)
+  useEffect(() => {
+    if (!isHologramWindow && window.electron?.app?.onConfigUpdated) {
+      const unsubscribe = window.electron.app.onConfigUpdated((config) => {
+        console.log('☁️ [App] Config updated from cloud:', config);
+        // UI could react to config changes here if needed
+      });
+      return unsubscribe;
+    }
+  }, [isHologramWindow]);
+
   console.log('🚀 [App] Rendering App component');
   console.log(`   Split-screen mode: ${isSplitScreenMode}`);
   console.log(`   Current screen: ${currentScreen}`);
