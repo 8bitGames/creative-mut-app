@@ -39,12 +39,34 @@ import {
   insertSampleData,
 } from './database/analytics';
 
+// Cloud integration imports
+import { CloudClient } from './cloud/client';
+import { ConfigSyncManager } from './cloud/config-sync';
+import { initializeLogger, getLogger, LogStreamer } from './cloud/log-streamer';
+import { SessionSyncManager } from './cloud/session-sync';
+import { CommandHandler } from './cloud/command-handler';
+import { HeartbeatManager } from './cloud/heartbeat-manager';
+import { getHardwareId, getHardwareInfo } from './cloud/hardware-id';
+
 let mainWindow: BrowserWindow | null = null;
 let hologramWindow: BrowserWindow | null = null;
 let pythonBridge: PythonBridge | null = null;
 let cameraController: CameraController | null = null;
 let printerController: PrinterController | null = null;
 let cardReader: CardReaderController | null = null;
+
+// Cloud integration globals
+let cloudClient: CloudClient | null = null;
+let configSync: ConfigSyncManager | null = null;
+let sessionSync: SessionSyncManager | null = null;
+let commandHandler: CommandHandler | null = null;
+let heartbeatManager: HeartbeatManager | null = null;
+
+// Check if cloud integration is enabled
+const isCloudEnabled = !!(
+  process.env.CLOUD_API_URL &&
+  process.env.CLOUD_API_KEY
+);
 
 // Persistent hologram state - survives screen transitions
 let hologramState: {
@@ -74,6 +96,169 @@ let displaySettings = {
 // Helper function to get the target window for hologram updates
 function getHologramTargetWindow() {
   return displaySettings.splitScreenMode ? mainWindow : hologramWindow;
+}
+
+// Cloud integration initialization
+async function initializeCloudIntegration(): Promise<void> {
+  if (!isCloudEnabled) {
+    console.log('☁️ Cloud integration disabled (no CLOUD_API_URL or CLOUD_API_KEY)');
+    return;
+  }
+
+  console.log('☁️ Initializing cloud integration...');
+
+  try {
+    // Initialize cloud client
+    cloudClient = CloudClient.initialize({
+      apiUrl: process.env.CLOUD_API_URL!,
+      apiKey: process.env.CLOUD_API_KEY!,
+      organizationId: process.env.CLOUD_ORG_ID || '',
+    });
+
+    // Initialize logger
+    initializeLogger(cloudClient, {
+      minLevel: (process.env.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error') || 'info',
+      consoleOutput: true,
+    });
+
+    const logger = getLogger();
+    logger.info('system', 'Cloud client initialized');
+
+    // Get or register machine
+    const hardwareId = await getHardwareId();
+    const hardwareInfo = await getHardwareInfo();
+
+    logger.info('system', 'Hardware ID generated', { hardwareId });
+
+    if (!cloudClient.isRegistered()) {
+      logger.info('system', 'Registering machine with cloud...');
+      const result = await cloudClient.register(hardwareId, hardwareInfo);
+
+      if (result.success) {
+        logger.info('system', 'Machine registered successfully', {
+          machineId: result.data?.machineId,
+        });
+      } else {
+        logger.error('system', 'Machine registration failed', {
+          error: result.error,
+        });
+        // Continue without cloud - will retry on next startup
+        return;
+      }
+    }
+
+    // Initialize config sync manager
+    configSync = new ConfigSyncManager(cloudClient);
+    await configSync.initialize();
+    logger.info('system', 'Config sync manager initialized', {
+      version: configSync.getCloudVersion(),
+    });
+
+    // Initialize session sync manager
+    sessionSync = new SessionSyncManager(cloudClient);
+    await sessionSync.initialize();
+    logger.info('system', 'Session sync manager initialized');
+
+    // Initialize command handler
+    commandHandler = new CommandHandler(cloudClient, logger);
+
+    // Register custom command handlers
+    commandHandler.setConfigUpdateHandler(async () => {
+      return await configSync!.sync();
+    });
+
+    commandHandler.setDiagnosticsHandler(async (tests) => {
+      return await runDiagnostics(tests);
+    });
+
+    commandHandler.startPolling();
+    logger.info('system', 'Command handler started');
+
+    // Initialize heartbeat manager
+    heartbeatManager = new HeartbeatManager(cloudClient, configSync, logger);
+    heartbeatManager.onConfigUpdate(() => {
+      configSync?.sync();
+    });
+    heartbeatManager.start();
+    logger.info('system', 'Heartbeat manager started');
+
+    // Listen for automatic re-registration events
+    cloudClient.onReregistered(async (data) => {
+      logger.info('system', 'Machine was automatically re-registered', {
+        machineId: data.machineId,
+      });
+
+      // Re-initialize config sync with new machine context
+      if (configSync) {
+        await configSync.sync();
+      }
+
+      // Update peripheral status
+      updatePeripheralStatus();
+    });
+
+    // Update peripheral status based on current hardware state
+    updatePeripheralStatus();
+
+    console.log('✅ Cloud integration initialized successfully');
+  } catch (error) {
+    console.error('❌ Cloud integration failed:', error);
+  }
+}
+
+// Update heartbeat peripheral status based on current hardware state
+function updatePeripheralStatus(): void {
+  if (!heartbeatManager) return;
+
+  // Camera status
+  if (cameraController) {
+    const cameraStatus = cameraController.getStatus();
+    heartbeatManager.setCameraStatus(cameraStatus.connected ? 'ok' : 'offline');
+  }
+
+  // Printer status
+  if (printerController) {
+    printerController.getStatus().then((status) => {
+      if (!heartbeatManager) return;
+      if (!status.available) {
+        heartbeatManager.setPrinterStatus('offline');
+      } else if (status.paperLevel < 10) {
+        heartbeatManager.setPrinterStatus('paper_low');
+      } else {
+        heartbeatManager.setPrinterStatus('ok');
+      }
+    });
+  }
+
+  // Card reader status
+  if (cardReader) {
+    const readerStatus = cardReader.getStatus();
+    heartbeatManager.setCardReaderStatus(readerStatus.connected ? 'ok' : 'offline');
+  }
+}
+
+// Run diagnostics for cloud commands
+async function runDiagnostics(tests: string[]): Promise<Record<string, unknown>> {
+  const results: Record<string, unknown> = {};
+
+  if (tests.includes('all') || tests.includes('camera')) {
+    results.camera = {
+      connected: cameraController?.getStatus().connected || false,
+    };
+  }
+
+  if (tests.includes('all') || tests.includes('printer')) {
+    const printerStatus = await printerController?.getStatus();
+    results.printer = printerStatus;
+  }
+
+  if (tests.includes('all') || tests.includes('payment')) {
+    results.payment = {
+      connected: cardReader?.getStatus()?.connected || false,
+    };
+  }
+
+  return results;
 }
 
 function createWindow() {
@@ -380,6 +565,9 @@ app.whenReady().then(async () => {
   }
 
   console.log('✅ All systems initialized\n');
+
+  // Initialize cloud integration (if configured)
+  await initializeCloudIntegration();
 
   createWindow();
 
@@ -1281,6 +1469,33 @@ ipcMain.handle('config:get-path', async () => {
 });
 
 // Close database on app quit
-app.on('before-quit', () => {
+app.on('before-quit', async () => {
+  // Cleanup cloud integration
+  if (heartbeatManager) {
+    heartbeatManager.stop();
+  }
+
+  if (commandHandler) {
+    commandHandler.stopPolling();
+  }
+
+  if (sessionSync) {
+    sessionSync.close();
+  }
+
+  if (configSync) {
+    configSync.stopPeriodicSync();
+  }
+
+  // Flush remaining logs
+  try {
+    const logger = getLogger();
+    if (logger) {
+      await logger.shutdown();
+    }
+  } catch {
+    // Logger may not be initialized
+  }
+
   closeDatabase();
 });
