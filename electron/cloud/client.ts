@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import { CloudConfig, MachineRegistration, ApiResponse, MachineConfig, Command, HeartbeatStatus, SessionData, SessionUpdate, LogEntry } from './types';
 
-// Lazy-load electron-store to avoid initialization before Electron app is ready
+// Lazy-load electron-store using dynamic import for ESM compatibility (v11+)
 type StoreType = {
   machineToken: string | null;
   machineId: string | null;
@@ -10,24 +10,56 @@ type StoreType = {
   hardwareInfo: object | null;
 };
 
-let _store: import('electron-store').default<StoreType> | null = null;
+// Store instance and initialization promise
+let _store: any = null;
+let _storePromise: Promise<any> | null = null;
 
-function getStore(): import('electron-store').default<StoreType> {
-  if (!_store) {
-    const Store = require('electron-store');
-    _store = new Store<StoreType>({
-      name: 'cloud-credentials',
-    });
+/**
+ * Get the electron-store instance using dynamic import (ESM compatible)
+ * This is async because electron-store v11+ is ESM-only
+ */
+async function getStore(): Promise<any> {
+  if (_store) {
+    return _store;
   }
-  return _store;
+
+  if (!_storePromise) {
+    _storePromise = (async () => {
+      try {
+        // Dynamic import for ESM module
+        const { default: Store } = await import('electron-store');
+        _store = new Store<StoreType>({
+          name: 'cloud-credentials',
+        });
+        return _store;
+      } catch (error) {
+        console.error('[CloudClient] Failed to initialize electron-store:', error);
+        throw error;
+      }
+    })();
+  }
+
+  return _storePromise;
 }
 
-// Helper to access store (lazy initialization wrapper)
+// Helper to access store (async wrapper for ESM compatibility)
 const store = {
-  get: <K extends keyof StoreType>(key: K): StoreType[K] => getStore().get(key),
-  set: <K extends keyof StoreType>(key: K, value: StoreType[K]): void => getStore().set(key, value),
-  delete: <K extends keyof StoreType>(key: K): void => getStore().delete(key),
-  clear: (): void => getStore().clear(),
+  get: async <K extends keyof StoreType>(key: K): Promise<StoreType[K]> => {
+    const s = await getStore();
+    return s.get(key);
+  },
+  set: async <K extends keyof StoreType>(key: K, value: StoreType[K]): Promise<void> => {
+    const s = await getStore();
+    s.set(key, value);
+  },
+  delete: async <K extends keyof StoreType>(key: K): Promise<void> => {
+    const s = await getStore();
+    s.delete(key);
+  },
+  clear: async (): Promise<void> => {
+    const s = await getStore();
+    s.clear();
+  },
 };
 
 
@@ -62,12 +94,12 @@ export class CloudClient extends EventEmitter {
   }
 
   // =========================================
-  // Token Management
+  // Token Management (async for ESM electron-store)
   // =========================================
 
-  private getStoredToken(): string | null {
-    const token = store.get('machineToken');
-    const expiresAt = store.get('tokenExpiresAt');
+  private async getStoredToken(): Promise<string | null> {
+    const token = await store.get('machineToken');
+    const expiresAt = await store.get('tokenExpiresAt');
 
     if (!token || !expiresAt) return null;
 
@@ -79,24 +111,25 @@ export class CloudClient extends EventEmitter {
     return token;
   }
 
-  private storeToken(token: string, machineId: string, expiresAt: string): void {
-    store.set('machineToken', token);
-    store.set('machineId', machineId);
-    store.set('tokenExpiresAt', expiresAt);
+  private async storeToken(token: string, machineId: string, expiresAt: string): Promise<void> {
+    await store.set('machineToken', token);
+    await store.set('machineId', machineId);
+    await store.set('tokenExpiresAt', expiresAt);
   }
 
-  getMachineId(): string | null {
+  async getMachineId(): Promise<string | null> {
     return store.get('machineId');
   }
 
-  isRegistered(): boolean {
-    return !!this.getStoredToken();
+  async isRegistered(): Promise<boolean> {
+    const token = await this.getStoredToken();
+    return !!token;
   }
 
-  clearCredentials(): void {
-    store.delete('machineToken');
-    store.delete('machineId');
-    store.delete('tokenExpiresAt');
+  async clearCredentials(): Promise<void> {
+    await store.delete('machineToken');
+    await store.delete('machineId');
+    await store.delete('tokenExpiresAt');
     // Note: We preserve hardwareId and hardwareInfo for re-registration
   }
 
@@ -104,27 +137,27 @@ export class CloudClient extends EventEmitter {
    * Clear all stored data including hardware info
    * Use this for complete reset
    */
-  clearAllData(): void {
-    store.clear();
+  async clearAllData(): Promise<void> {
+    await store.clear();
   }
 
   /**
    * Get stored hardware info for re-registration
    */
-  getStoredHardwareInfo(): { hardwareId: string | null; hardwareInfo: object | null } {
+  async getStoredHardwareInfo(): Promise<{ hardwareId: string | null; hardwareInfo: object | null }> {
     return {
-      hardwareId: store.get('hardwareId'),
-      hardwareInfo: store.get('hardwareInfo'),
+      hardwareId: await store.get('hardwareId'),
+      hardwareInfo: await store.get('hardwareInfo'),
     };
   }
 
   /**
    * Store hardware info for future re-registration
    */
-  storeHardwareInfo(hardwareId: string, hardwareInfo?: object): void {
-    store.set('hardwareId', hardwareId);
+  async storeHardwareInfo(hardwareId: string, hardwareInfo?: object): Promise<void> {
+    await store.set('hardwareId', hardwareId);
     if (hardwareInfo) {
-      store.set('hardwareInfo', hardwareInfo);
+      await store.set('hardwareInfo', hardwareInfo);
     }
   }
 
@@ -145,7 +178,7 @@ export class CloudClient extends EventEmitter {
     };
 
     if (requiresAuth) {
-      const token = this.getStoredToken();
+      const token = await this.getStoredToken();
       if (!token) {
         // Try to re-register if we have stored hardware info
         if (!isRetryAfterReregister) {
@@ -230,7 +263,7 @@ export class CloudClient extends EventEmitter {
         const checkInterval = setInterval(() => {
           if (!this.isReregistering) {
             clearInterval(checkInterval);
-            resolve(this.isRegistered());
+            this.isRegistered().then(resolve);
           }
         }, 100);
         // Timeout after 10 seconds
@@ -244,7 +277,7 @@ export class CloudClient extends EventEmitter {
     this.isReregistering = true;
 
     try {
-      const { hardwareId, hardwareInfo } = this.getStoredHardwareInfo();
+      const { hardwareId, hardwareInfo } = await this.getStoredHardwareInfo();
 
       if (!hardwareId) {
         console.log('[CloudClient] No stored hardware info for re-registration');
@@ -252,7 +285,7 @@ export class CloudClient extends EventEmitter {
       }
 
       console.log('[CloudClient] Clearing old credentials...');
-      this.clearCredentials();
+      await this.clearCredentials();
 
       console.log('[CloudClient] Re-registering with stored hardware info...');
       const result = await this.register(hardwareId, hardwareInfo || undefined);
@@ -326,7 +359,7 @@ export class CloudClient extends EventEmitter {
     hardwareInfo?: object
   ): Promise<ApiResponse<MachineRegistration>> {
     // Store hardware info for future re-registration (before making request)
-    this.storeHardwareInfo(hardwareId, hardwareInfo);
+    await this.storeHardwareInfo(hardwareId, hardwareInfo);
 
     const response = await this.request<MachineRegistration>(
       'POST',
@@ -340,7 +373,7 @@ export class CloudClient extends EventEmitter {
     );
 
     if (response.success && response.data) {
-      this.storeToken(
+      await this.storeToken(
         response.data.machineToken,
         response.data.machineId,
         response.data.expiresAt
@@ -356,7 +389,7 @@ export class CloudClient extends EventEmitter {
     changed: boolean;
     updatedAt?: string;
   }>> {
-    const machineId = this.getMachineId();
+    const machineId = await this.getMachineId();
     if (!machineId) {
       return { success: false, error: { code: 'NOT_REGISTERED', message: 'Machine not registered' } };
     }
@@ -366,7 +399,7 @@ export class CloudClient extends EventEmitter {
   }
 
   async sendLogs(logs: LogEntry[]): Promise<ApiResponse<{ received: number; dropped: number }>> {
-    const machineId = this.getMachineId();
+    const machineId = await this.getMachineId();
     if (!machineId) {
       return { success: false, error: { code: 'NOT_REGISTERED', message: 'Machine not registered' } };
     }
@@ -379,7 +412,7 @@ export class CloudClient extends EventEmitter {
     serverTime: string;
     configUpdateAvailable?: boolean;
   }>> {
-    const machineId = this.getMachineId();
+    const machineId = await this.getMachineId();
     if (!machineId) {
       return { success: false, error: { code: 'NOT_REGISTERED', message: 'Machine not registered' } };
     }
@@ -390,7 +423,7 @@ export class CloudClient extends EventEmitter {
   async getPendingCommands(): Promise<ApiResponse<{
     commands: Command[];
   }>> {
-    const machineId = this.getMachineId();
+    const machineId = await this.getMachineId();
     if (!machineId) {
       return { success: false, error: { code: 'NOT_REGISTERED', message: 'Machine not registered' } };
     }
@@ -406,7 +439,7 @@ export class CloudClient extends EventEmitter {
       errorMessage?: string;
     }
   ): Promise<ApiResponse<{ acknowledged: boolean }>> {
-    const machineId = this.getMachineId();
+    const machineId = await this.getMachineId();
     if (!machineId) {
       return { success: false, error: { code: 'NOT_REGISTERED', message: 'Machine not registered' } };
     }
@@ -415,7 +448,7 @@ export class CloudClient extends EventEmitter {
   }
 
   async createSession(session: SessionData): Promise<ApiResponse<{ sessionId: string; sessionCode: string }>> {
-    const machineId = this.getMachineId();
+    const machineId = await this.getMachineId();
     if (!machineId) {
       return { success: false, error: { code: 'NOT_REGISTERED', message: 'Machine not registered' } };
     }
@@ -427,7 +460,7 @@ export class CloudClient extends EventEmitter {
     sessionId: string,
     update: SessionUpdate
   ): Promise<ApiResponse<{ sessionId: string; updated: boolean }>> {
-    const machineId = this.getMachineId();
+    const machineId = await this.getMachineId();
     if (!machineId) {
       return { success: false, error: { code: 'NOT_REGISTERED', message: 'Machine not registered' } };
     }

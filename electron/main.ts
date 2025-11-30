@@ -140,7 +140,7 @@ async function initializeCloudIntegration(): Promise<void> {
 
     logger.info('system', 'Hardware ID generated', { hardwareId });
 
-    if (!cloudClient.isRegistered()) {
+    if (!(await cloudClient.isRegistered())) {
       logger.info('system', 'Registering machine with cloud...');
       const result = await cloudClient.register(hardwareId, hardwareInfo);
 
