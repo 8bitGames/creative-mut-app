@@ -43,3 +43,29 @@ scripts/python/build/
 
 # FFmpeg binaries (bundled)
 resources/ffmpeg/
+
+# Windows reserved device names (accidental outputs)
+nul
+**/nul
+
+# Project-specific exclusions
+MUT-distribution/output/
+MUT-distribution/test/
+cloud-dashboard/
+
+# Build artifacts and large files
+release/
+dist-electron/
+
+# Video files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.flv
+*.wmv
+*.m4v
+test_*.webm
+test_*.mp4
+*_decoded.webm

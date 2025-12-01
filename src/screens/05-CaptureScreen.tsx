@@ -277,31 +277,31 @@ export function CaptureScreen() {
       recordedChunksRef.current = [];
 
       // Try different codecs in order of preference (MP4 first for better compatibility)
-      // Use high bitrate (40 Mbps) for 4K quality preservation
-      const videoBitrate = 40000000; // 40 Mbps for 4K quality
+      // Use very high bitrate (100 Mbps) for maximum quality preservation
+      const videoBitrate = 100000000; // 100 Mbps for near-lossless capture
       let options: MediaRecorderOptions;
       let mimeType = 'video/webm'; // fallback
 
       if (MediaRecorder.isTypeSupported('video/mp4')) {
         mimeType = 'video/mp4';
         options = { mimeType: 'video/mp4', videoBitsPerSecond: videoBitrate };
-        console.log('   Using codec: MP4 @ 40 Mbps');
+        console.log('   Using codec: MP4 @ 100 Mbps');
       } else if (MediaRecorder.isTypeSupported('video/mp4;codecs=avc1')) {
         mimeType = 'video/mp4';
         options = { mimeType: 'video/mp4;codecs=avc1', videoBitsPerSecond: videoBitrate };
-        console.log('   Using codec: MP4 (H.264/AVC1) @ 40 Mbps');
+        console.log('   Using codec: MP4 (H.264/AVC1) @ 100 Mbps');
       } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
         mimeType = 'video/webm';
         options = { mimeType: 'video/webm;codecs=vp9', videoBitsPerSecond: videoBitrate };
-        console.log('   Using codec: WebM (VP9) @ 40 Mbps');
+        console.log('   Using codec: WebM (VP9) @ 100 Mbps');
       } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
         mimeType = 'video/webm';
         options = { mimeType: 'video/webm;codecs=vp8', videoBitsPerSecond: videoBitrate };
-        console.log('   Using codec: WebM (VP8) @ 40 Mbps');
+        console.log('   Using codec: WebM (VP8) @ 100 Mbps');
       } else {
         mimeType = 'video/webm';
         options = { mimeType: 'video/webm', videoBitsPerSecond: videoBitrate };
-        console.log('   Using codec: WebM (default) @ 40 Mbps');
+        console.log('   Using codec: WebM (default) @ 100 Mbps');
       }
 
       // Record from canvas stream (rotated 9:16 video)

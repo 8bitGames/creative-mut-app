@@ -13,6 +13,10 @@ Pillow>=10.0.0
 opencv-python>=4.8.0
 numpy>=1.24.0
 
+# Person Segmentation for Shadow Effect
+mediapipe>=0.10.0
+scipy>=1.10.0
+
 # Note: FFmpeg and FFprobe must be installed separately on your system
 # macOS: brew install ffmpeg
 # Ubuntu: sudo apt-get install ffmpeg

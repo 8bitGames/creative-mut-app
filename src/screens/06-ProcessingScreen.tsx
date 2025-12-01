@@ -68,6 +68,10 @@ export function ProcessingScreen() {
   // Removed: currentMessage state (showing only progress bar now)
 
   useEffect(() => {
+    console.log(`\n${'='.repeat(70)}`);
+    console.log(`🎬 [ProcessingScreen] useEffect MOUNTING - Setting up listeners`);
+    console.log(`${'='.repeat(70)}`);
+
     // Check if running in Electron
     // @ts-ignore
     if (!window.electron?.video) {
@@ -96,59 +100,100 @@ export function ProcessingScreen() {
       return () => clearInterval(interval);
     }
 
+    console.log(`   ✓ window.electron.video is available`);
+    console.log(`   → Calling startProcessing() (async, not awaited)`);
     startProcessing();
 
     // Set up progress listener
+    console.log(`   → Setting up onProgress listener...`);
     // @ts-ignore
     const removeProgressListener = window.electron.video.onProgress((progressData) => {
       setProgress(progressData.progress);
       // Progress message removed - only showing progress bar
     });
+    console.log(`   ✓ onProgress listener set up`);
 
     // Set up completion listener
+    console.log(`   → Setting up onComplete listener...`);
     // @ts-ignore
     const removeCompleteListener = window.electron.video.onComplete((result) => {
-      if (result.success && result.result) {
-        // Save the processing result to session store
-        setProcessedResult(result.result);
+      console.log(`\n${'='.repeat(70)}`);
+      console.log(`📥 [ProcessingScreen] RECEIVED video:complete EVENT`);
+      console.log(`${'='.repeat(70)}`);
+      console.log(`   result object:`, JSON.stringify(result, null, 2));
+      console.log(`   result.success: ${result.success}`);
+      console.log(`   result.result exists: ${!!result.result}`);
+      console.log(`   result.error: ${result.error || 'none'}`);
 
-        // CRITICAL: Validate that exactly 3 frames were extracted
-        const REQUIRED_FRAMES = 3;
-        if (result.result.framePaths && result.result.framePaths.length === REQUIRED_FRAMES) {
-          console.log(`✅ [ProcessingScreen] Received ${result.result.framePaths.length} extracted frames from pipeline`);
-          console.log(`   Frame paths:`, result.result.framePaths);
-          setCapturedImages(result.result.framePaths);
+      try {
+        if (result.success && result.result) {
+          console.log(`   ✓ Success path - result.result:`, result.result);
+          console.log(`   ✓ framePaths: ${JSON.stringify(result.result.framePaths)}`);
+          console.log(`   ✓ framePaths.length: ${result.result.framePaths?.length}`);
 
-          // Navigate to result screen
-          setTimeout(() => {
-            setScreen('result');
-          }, 500);
-        } else {
-          // Frame extraction failed - show error
-          const frameCount = result.result.framePaths ? result.result.framePaths.length : 0;
-          const errorMsg = `프레임 추출 오류: ${REQUIRED_FRAMES}개의 사진이 필요하지만 ${frameCount}개만 추출되었습니다.`;
-          console.error(`❌ [ProcessingScreen] ${errorMsg}`);
-          console.error(`   Expected ${REQUIRED_FRAMES} frames, got ${frameCount}`);
-          if (result.result.framePaths) {
-            console.error(`   Received frames:`, result.result.framePaths);
+          // Save the processing result to session store
+          setProcessedResult(result.result);
+
+          // CRITICAL: Validate that exactly 3 frames were extracted
+          const REQUIRED_FRAMES = 3;
+          if (result.result.framePaths && result.result.framePaths.length === REQUIRED_FRAMES) {
+            console.log(`✅ [ProcessingScreen] Received ${result.result.framePaths.length} extracted frames from pipeline`);
+            console.log(`   Frame paths:`, result.result.framePaths);
+            setCapturedImages(result.result.framePaths);
+
+            // Navigate to result screen
+            console.log(`   → Navigating to 'result' screen in 500ms...`);
+            setTimeout(() => {
+              console.log(`   → NOW calling setScreen('result')`);
+              setScreen('result');
+            }, 500);
+          } else {
+            // Frame extraction failed - show error
+            const frameCount = result.result.framePaths ? result.result.framePaths.length : 0;
+            const errorMsg = `프레임 추출 오류: ${REQUIRED_FRAMES}개의 사진이 필요하지만 ${frameCount}개만 추출되었습니다.`;
+            console.error(`❌ [ProcessingScreen] ${errorMsg}`);
+            console.error(`   Expected ${REQUIRED_FRAMES} frames, got ${frameCount}`);
+            if (result.result.framePaths) {
+              console.error(`   Received frames:`, result.result.framePaths);
+            }
+
+            alert(errorMsg + '\n처음부터 다시 시도해주세요.');
+            setTimeout(() => {
+              // Reset hologram to logo before going to idle
+              // @ts-ignore
+              if (window.electron?.hologram) {
+                // @ts-ignore
+                window.electron.hologram.showLogo();
+              }
+              setScreen('idle');
+            }, 2000);
           }
-
-          alert(errorMsg + '\n처음부터 다시 시도해주세요.');
+        } else {
+          console.error('❌ [ProcessingScreen] Video processing failed:', result.error);
+          console.error('   Full result:', result);
+          // Show error and return to idle
+          alert('비디오 처리 중 오류가 발생했습니다: ' + result.error);
           setTimeout(() => {
+            // Reset hologram to logo before going to idle
+            // @ts-ignore
+            if (window.electron?.hologram) {
+              // @ts-ignore
+              window.electron.hologram.showLogo();
+            }
             setScreen('idle');
           }, 2000);
         }
-      } else {
-        console.error('Video processing failed:', result.error);
-        // Show error and return to idle
-        alert('비디오 처리 중 오류가 발생했습니다: ' + result.error);
-        setTimeout(() => {
-          setScreen('idle');
-        }, 2000);
+      } catch (handlerError) {
+        console.error(`❌ [ProcessingScreen] EXCEPTION in onComplete handler:`, handlerError);
+        alert('처리 중 오류가 발생했습니다: ' + (handlerError instanceof Error ? handlerError.message : 'Unknown error'));
       }
+      console.log(`${'='.repeat(70)}\n`);
     });
+    console.log(`   ✓ onComplete listener set up`);
+    console.log(`${'='.repeat(70)}\n`);
 
     return () => {
+      console.log(`🧹 [ProcessingScreen] UNMOUNTING - Removing listeners`);
       removeProgressListener();
       removeCompleteListener();
     };
@@ -262,7 +307,15 @@ export function ProcessingScreen() {
       console.log(`${'='.repeat(70)}\n`);
 
       alert('비디오 처리 시작 중 오류가 발생했습니다: ' + (error instanceof Error ? error.message : 'Unknown error'));
-      setTimeout(() => setScreen('idle'), 2000);
+      setTimeout(() => {
+        // Reset hologram to logo before going to idle
+        // @ts-ignore
+        if (window.electron?.hologram) {
+          // @ts-ignore
+          window.electron.hologram.showLogo();
+        }
+        setScreen('idle');
+      }, 2000);
     }
   };
 

@@ -133,6 +133,12 @@ export function ResultScreen() {
       setTimeRemaining((prev) => {
         if (prev <= 1) {
           clearInterval(countdownTimer);
+          // Reset hologram to logo before going to idle
+          // @ts-ignore
+          if (window.electron?.hologram) {
+            // @ts-ignore
+            window.electron.hologram.showLogo();
+          }
           setScreen('idle');
           return 0;
         }

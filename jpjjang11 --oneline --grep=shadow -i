@@ -1,0 +1,161 @@
+[1mdiff --git a/MUT-distribution/pipeline.py b/MUT-distribution/pipeline.py[m
+[1mindex 6c54c6b..84b4bc7 100644[m
+[1m--- a/MUT-distribution/pipeline.py[m
+[1m+++ b/MUT-distribution/pipeline.py[m
+[36m@@ -19,6 +19,18 @@[m [mfrom botocore.exceptions import ClientError[m
+ import qrcode[m
+ from dotenv import load_dotenv[m
+ [m
+[32m+[m[32m# Shadow effect imports (optional - lazy loaded)[m
+[32m+[m[32mtry:[m
+[32m+[m[32m    import cv2[m
+[32m+[m[32m    import numpy as np[m
+[32m+[m[32m    CV2_AVAILABLE = True[m
+[32m+[m[32mexcept ImportError:[m
+[32m+[m[32m    CV2_AVAILABLE = False[m
+[32m+[m[32m    print("[WARN] OpenCV not available - shadow effect disabled")[m
+[32m+[m
+[32m+[m[32m# MediaPipe will be lazy-loaded when needed to avoid startup overhead[m
+[32m+[m[32mMEDIAPIPE_SEGMENTER = None[m
+[32m+[m
+ # ============================================================================[m
+ # CONFIGURATION & PATH SETUP[m
+ # ============================================================================[m
+[36m@@ -106,46 +118,281 @@[m [mFFMPEG_PATH = get_ffmpeg_path()[m
+ class EncoderType(Enum):[m
+     CPU = "libx264"[m
+     MACOS = "h264_videotoolbox"[m
+[32m+[m[32m    NVENC = "h264_nvenc"  # NVIDIA GPU encoder[m
+[32m+[m
+[32m+[m[32mdef check_nvenc_available():[m
+[32m+[m[32m    """Check if NVIDIA NVENC encoder is available and functional.[m
+[32m+[m
+[32m+[m[32m    This actually tests encoding a single frame because FFmpeg may list[m
+[32m+[m[32m    NVENC as available even when the driver version is too old.[m
+[32m+[m[32m    """[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        # First check if NVENC is listed[m
+[32m+[m[32m        result = subprocess.run([m
+[32m+[m[32m            [FFMPEG_PATH, '-hide_banner', '-encoders'],[m
+[32m+[m[32m            capture_output=True, text=True, timeout=10[m
+[32m+[m[32m        )[m
+[32m+[m[32m        if 'h264_nvenc' not in result.stdout:[m
+[32m+[m[32m            return False[m
+[32m+[m
+[32m+[m[32m        # Actually test NVENC by encoding a single frame[m
+[32m+[m[32m        # This catches driver version mismatches[m
+[32m+[m[32m        test_result = subprocess.run([m
+[32m+[m[32m            [FFMPEG_PATH, '-hide_banner', '-y',[m
+[32m+[m[32m             '-f', 'lavfi', '-i', 'color=black:size=64x64:duration=0.1:rate=30',[m
+[32m+[m[32m             '-c:v', 'h264_nvenc', '-frames:v', '1',[m
+[32m+[m[32m             '-f', 'null', '-'],[m
+[32m+[m[32m            capture_output=True, text=True, timeout=10[m
+[32m+[m[32m        )[m
+[32m+[m[32m        if test_result.returncode != 0:[m
+[32m+[m[32m            # Check for driver version error[m
+[32m+[m[32m            if 'Driver does not support' in test_result.stderr or 'minimum required Nvidia driver' in test_result.stderr:[m
+[32m+[m[32m                print(f"   [WARN] NVENC listed but driver too old - falling back to CPU")[m
+[32m+[m[32m            return False[m
+[32m+[m[32m        return True[m
+[32m+[m[32m    except Exception as e:[m
+[32m+[m[32m        print(f"   [WARN] NVENC check failed: {e}")[m
+[32m+[m[32m        return False[m
+ [m
+ def get_best_encoder():[m
+[31m-    """Detect if we are on macOS and have hardware acceleration"""[m
+[32m+[m[32m    """Detect the best available encoder (prefer GPU acceleration)"""[m
+     if sys.platform == 'darwin':[m
+         return EncoderType.MACOS[m
+[32m+[m[32m    # Check for NVIDIA GPU encoder on Windows/Linux[m
+[32m+[m[32m    if check_nvenc_available():[m
+[32m+[m[32m        print(f"   [GPU] NVIDIA NVENC encoder available - using hardware acceleration")[m
+[32m+[m[32m        return EncoderType.NVENC[m
+     return EncoderType.CPU[m
+ [m
+[32m+[m[32mdef verify_video_integrity(video_path, description="Video"):[m
+[32m+[m[32m    """[m
+[32m+[m[32m    Verify that a video file is valid and can be decoded.[m
+[32m+[m
+[32m+[m[32m    Args:[m
+[32m+[m[32m        video_path: Path to video file[m
+[32m+[m[32m        description: Description for logging[m
+[32m+[m
+[32m+[m[32m    Returns:[m
+[32m+[m[32m        dict with keys: valid, duration, width, height, codec, bitrate, error[m
+[32m+[m[32m    """[m
+[32m+[m[32m    print(f"\n[VERIFY] Checking {description} integrity...")[m
+[32m+[m[32m    print(f"   Path: {video_path}")[m
+[32m+[m
+[32m+[m[32m    result = {[m
+[32m+[m[32m        'valid': False,[m
+[32m+[m[32m        'duration': None,[m
+[32m+[m[32m        'width': None,[m
+[32m+[m[32m        'height': None,[m
+[32m+[m[32m        'codec': None,[m
+[32m+[m[32m        'bitrate': None,[m
+[32m+[m[32m        'frame_count': None,[m
+[32m+[m[32m        'error': None[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    # Check file exists and has content[m
+[32m+[m[32m    if not os.path.exists(video_path):[m
+[32m+[m[32m        result['error'] = "File does not exist"[m
+[32m+[m[32m        print(f"   [FAIL] {result['error']}")[m
+[32m+[m[32m        return result[m
+[32m+[m
+[32m+[m[32m    file_size = os.path.getsize(video_path)[m
+[32m+[m[32m    file_size_mb = file_size / (1024 * 1024)[m
+[32m+[m[32m    print(f"   File size: {file_size_mb:.2f} MB")[m
+[32m+[m
+[32m+[m[32m    if file_size == 0:[m
+[32m+[m[32m        result['error'] = "File is empty (0 bytes)"[m
+[32m+[m[32m        print(f"   [FAIL] {result['error']}")[m
+[32m+[m[32m        return result[m
+[32m+[m
+[32m+[m[32m    # Use ffprobe to get detailed video info[m
+[32m+[m[32m    # Handle both 'ffmpeg' and 'ffmpeg.exe' paths[m
+[32m+[m[32m    if FFMPEG_PATH.endswith('.exe'):[m
+[32m+[m[32m        ffprobe_path = FFMPEG_PATH.replace('ffmpeg.exe', 'ffprobe.exe')[m
+[32m+[m[32m    else:[m
+[32m+[m[32m        ffprobe_path = FFMPEG_PATH + '.exe'.replace('ffmpeg.exe', 'ffprobe.exe') if sys.platform == 'win32' else FFMPEG_PATH.replace('ffmpeg', 'ffprobe')[m
+[32m+[m
+[32m+[m[32m    # Actually, let's just derive it from the directory[m
+[32m+[m[32m    ffmpeg_dir = os.path.dirname(FFMPEG_PATH)[m
+[32m+[m[32m    if ffmpeg_dir:[m
+[32m+[m[32m        ffprobe_path = os.path.join(ffmpeg_dir, 'ffprobe.exe' if sys.platform == 'win32' else 'ffprobe')[m
+[32m+[m[32m    else:[m
+[32m+[m[32m        ffprobe_path = 'ffprobe'[m
+[32m+[m
+[32m+[m[32m    cmd = [[m
+[32m+[m[32m        ffprobe_path,[m
+[32m+[m[32m        '-v', 'error',[m
+[32m+[m[32m        '-select_streams', 'v:0',[m
+[32m+[m[32m        '-show_entries', 'stream=width,height,codec_name,bit_rate,nb_frames,duration',[m
+[32m+[m[32m        '-show_entries', 'format=duration,bit_rate',[m
+[32m+[m[32m        '-of', 'json',[m
+[32m+[m[32m        video_path[m
+[32m+[m[32m    ][m
+[32m+[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        import json  # Import here to ensure it's available in exception handlers[m
+[32m+[m
+[32m+[m[32m        probe_result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)[m
+[32m+[m
+[32m+[m[32m        if probe_result.returncode != 0:[m
+[32m+[m[32m            result['error'] = f"ffprobe failed: {probe_result.stderr[:200] if probe_result.stderr else 'Unknown error'}"[m
+[32m+[m[32m            print(f"   [FAIL] {result['error']}")[m
+[32m+[m[32m            return result[m
+[32m+[m
+[32m+[m[32m        probe_data = json.loads(probe_result.stdout)[m
+[32m+[m
+[32m+[m[32m        # Extract stream info[m
+[32m+[m[32m        if 'streams' in probe_data and len(probe_data['streams']) > 0:[m
+[32m+[m[32m            stream = probe_data['streams'][0][m
+[32m+[m[32m            result['width'] = stream.get('width')[m
+[32m+[m[32m            result['height'] = stream.get('height')[m
+[32m+[m[32m            result['codec'] = stream.get('codec_name')[m
+[32m+[m[32m            result['frame_count'] = int(stream.get('nb_frames', 0)) if stream.get('nb_frames') else None[m
+[32m+[m[32m            if stream.get('duration'):[m
+[32m+[m[32m                result['duration'] = float(stream['duration'])[m
+[32m+[m
+[32m+[m[32m        # Extract format 
