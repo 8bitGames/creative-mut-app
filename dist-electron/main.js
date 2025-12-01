@@ -5,6 +5,7 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -21,6 +22,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
+var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 const electron = require("electron");
 const path = require("path");
 const fs$1 = require("fs/promises");
@@ -30,6 +32,8 @@ const fs = require("fs");
 const os = require("os");
 const serialport = require("serialport");
 const Database = require("better-sqlite3");
+const util = require("util");
+const crypto = require("crypto");
 function _interopNamespaceDefault(e) {
   const n = Object.create(null, { [Symbol.toStringTag]: { value: "Module" } });
   if (e) {
@@ -98,9 +102,11 @@ const DEFAULT_CONFIG = {
   }
 };
 class ConfigManager {
-  config = DEFAULT_CONFIG;
-  configPath = "";
-  loaded = false;
+  constructor() {
+    __publicField(this, "config", DEFAULT_CONFIG);
+    __publicField(this, "configPath", "");
+    __publicField(this, "loaded", false);
+  }
   /**
    * Get the config file path
    */
@@ -289,40 +295,35 @@ function getDebugConfig() {
   };
 }
 class PythonBridge extends events.EventEmitter {
-  isProd;
-  pythonPath;
-  pipelineExePath;
-  pipelineScriptPath;
-  stitcherExePath;
-  stitcherScriptPath;
-  stitcherWorkingDir;
-  pipelineWorkingDir;
-  ffmpegPath;
-  outputDir;
   // Output directory with write permissions
   constructor() {
     super();
+    __publicField(this, "isProd");
+    __publicField(this, "pythonPath");
+    __publicField(this, "pipelineScriptPath");
+    __publicField(this, "stitcherScriptPath");
+    __publicField(this, "stitcherWorkingDir");
+    __publicField(this, "pipelineWorkingDir");
+    __publicField(this, "ffmpegPath");
+    __publicField(this, "outputDir");
     this.isProd = electron.app.isPackaged;
     if (this.isProd) {
-      this.pythonPath = "";
-      this.pipelineExePath = path.join(process.resourcesPath, "python", "pipeline.exe");
-      this.pipelineScriptPath = "";
-      this.stitcherExePath = path.join(process.resourcesPath, "python", "stitch_images.exe");
-      this.stitcherScriptPath = "";
-      this.stitcherWorkingDir = path.join(process.resourcesPath, "python");
-      this.pipelineWorkingDir = path.join(process.resourcesPath, "python");
+      this.pythonPath = path.join(process.resourcesPath, "python", "python.exe");
+      this.pipelineScriptPath = path.join(process.resourcesPath, "python", "scripts", "pipeline.py");
+      this.stitcherScriptPath = path.join(process.resourcesPath, "python", "scripts", "stitch_images.py");
+      this.stitcherWorkingDir = path.join(process.resourcesPath, "python", "scripts");
+      this.pipelineWorkingDir = path.join(process.resourcesPath, "python", "scripts");
       this.ffmpegPath = path.join(process.resourcesPath, "ffmpeg", "ffmpeg.exe");
       this.outputDir = path.join(electron.app.getPath("userData"), "output");
-      console.log("🎬 [PythonBridge] Initialized (Production - Bundled EXE)");
-      console.log(`   Pipeline EXE: ${this.pipelineExePath}`);
-      console.log(`   Stitcher EXE: ${this.stitcherExePath}`);
+      console.log("🎬 [PythonBridge] Initialized (Production - Embedded Python)");
+      console.log(`   Python: ${this.pythonPath}`);
+      console.log(`   Pipeline: ${this.pipelineScriptPath}`);
+      console.log(`   Stitcher: ${this.stitcherScriptPath}`);
       console.log(`   FFmpeg: ${this.ffmpegPath}`);
       console.log(`   Output dir: ${this.outputDir}`);
     } else {
       this.pythonPath = process.platform === "win32" ? "python" : "python3";
-      this.pipelineExePath = "";
       this.pipelineScriptPath = path.join(electron.app.getAppPath(), "MUT-distribution", "pipeline.py");
-      this.stitcherExePath = "";
       this.stitcherScriptPath = path.join(electron.app.getAppPath(), "python", "stitch_images.py");
       this.stitcherWorkingDir = path.join(electron.app.getAppPath(), "python");
       this.pipelineWorkingDir = path.join(electron.app.getAppPath(), "MUT-distribution");
@@ -342,28 +343,17 @@ class PythonBridge extends events.EventEmitter {
    */
   async processVideo(options) {
     return new Promise((resolve, reject) => {
-      let executable;
-      let args;
+      var _a, _b;
+      const executable = this.pythonPath;
+      const args = [
+        this.pipelineScriptPath,
+        "--input",
+        options.inputVideo,
+        "--frame",
+        options.frameOverlay
+      ];
       if (this.isProd) {
-        executable = this.pipelineExePath;
-        args = [
-          "--input",
-          options.inputVideo,
-          "--frame",
-          options.frameOverlay,
-          "--output-dir",
-          this.outputDir
-          // Use userData folder for write permissions
-        ];
-      } else {
-        executable = this.pythonPath;
-        args = [
-          this.pipelineScriptPath,
-          "--input",
-          options.inputVideo,
-          "--frame",
-          options.frameOverlay
-        ];
+        args.push("--output-dir", this.outputDir);
       }
       if (options.subtitleText) {
         args.push("--subtitle", options.subtitleText);
@@ -383,18 +373,27 @@ class PythonBridge extends events.EventEmitter {
         env: {
           ...process.env,
           PYTHONIOENCODING: "utf-8",
-          PYTHONUTF8: "1"
-        }
+          PYTHONUTF8: "1",
+          // Pass FFmpeg path to Python scripts
+          FFMPEG_PATH: this.ffmpegPath,
+          // Pass AWS credentials (loaded from .env in main process)
+          AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID || "",
+          AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY || "",
+          AWS_REGION: process.env.AWS_REGION || "ap-northeast-2",
+          AWS_S3_BUCKET: process.env.AWS_S3_BUCKET || "mut-demo-2025"
+        },
+        // Hide console window on Windows
+        windowsHide: true
       });
       let stdoutData = "";
       let stderrData = "";
-      pipelineProcess.stdout?.on("data", (data) => {
+      (_a = pipelineProcess.stdout) == null ? void 0 : _a.on("data", (data) => {
         const output = data.toString();
         stdoutData += output;
         console.log("[Pipeline]", output);
         this.parseProgress(output);
       });
-      pipelineProcess.stderr?.on("data", (data) => {
+      (_b = pipelineProcess.stderr) == null ? void 0 : _b.on("data", (data) => {
         stderrData += data.toString();
         console.error("[Pipeline Error]", data.toString());
       });
@@ -460,8 +459,14 @@ ${"=".repeat(70)}`);
     let frameFilesystemPath = options.frameTemplatePath;
     if (options.frameTemplatePath.startsWith("/")) {
       const relativePath = options.frameTemplatePath.substring(1);
-      frameFilesystemPath = path.join(electron.app.getAppPath(), "public", relativePath);
-      console.log(`   Frame template (filesystem): ${frameFilesystemPath}`);
+      if (this.isProd) {
+        const frameName = path.basename(relativePath);
+        frameFilesystemPath = path.join(process.resourcesPath, "frames", frameName);
+        console.log(`   Frame template (production extraResources): ${frameFilesystemPath}`);
+      } else {
+        frameFilesystemPath = path.join(electron.app.getAppPath(), "public", relativePath);
+        console.log(`   Frame template (development): ${frameFilesystemPath}`);
+      }
     }
     this.emit("progress", {
       step: "compositing",
@@ -513,6 +518,7 @@ ${"=".repeat(70)}`);
    */
   async stitchImagesToVideo(imagePaths) {
     return new Promise(async (resolve, reject) => {
+      var _a, _b;
       console.log(`
 🎬 [PythonBridge] Stitching images...`);
       const timestamp = Date.now();
@@ -523,47 +529,37 @@ ${"=".repeat(70)}`);
       } catch (err) {
         console.warn(`   Warning: Could not create output directory: ${err}`);
       }
-      let executable;
-      let args;
-      if (this.isProd) {
-        executable = this.stitcherExePath;
-        args = [
-          "--images",
-          ...imagePaths,
-          "--output",
-          outputPath,
-          "--duration",
-          "3.0"
-        ];
-      } else {
-        executable = this.pythonPath;
-        args = [
-          this.stitcherScriptPath,
-          "--images",
-          ...imagePaths,
-          "--output",
-          outputPath,
-          "--duration",
-          "3.0"
-        ];
-      }
+      const executable = this.pythonPath;
+      const args = [
+        this.stitcherScriptPath,
+        "--images",
+        ...imagePaths,
+        "--output",
+        outputPath,
+        "--duration",
+        "3.0"
+      ];
       console.log(`   Command: ${executable} ${args.join(" ")}`);
       const stitchProcess = child_process.spawn(executable, args, {
         cwd: this.stitcherWorkingDir,
         env: {
           ...process.env,
           PYTHONIOENCODING: "utf-8",
-          PYTHONUTF8: "1"
-        }
+          PYTHONUTF8: "1",
+          // Pass FFmpeg path to Python scripts
+          FFMPEG_PATH: this.ffmpegPath
+        },
+        // Hide console window on Windows
+        windowsHide: true
       });
       let stdoutData = "";
       let stderrData = "";
-      stitchProcess.stdout?.on("data", (data) => {
+      (_a = stitchProcess.stdout) == null ? void 0 : _a.on("data", (data) => {
         const output = data.toString();
         stdoutData += output;
         console.log("[Stitcher]", output);
       });
-      stitchProcess.stderr?.on("data", (data) => {
+      (_b = stitchProcess.stderr) == null ? void 0 : _b.on("data", (data) => {
         stderrData += data.toString();
         console.error("[Stitcher Error]", data.toString());
       });
@@ -629,9 +625,10 @@ ${"=".repeat(70)}`);
             framePath
           ];
           await new Promise((resolveFrame, rejectFrame) => {
+            var _a;
             const ffmpegProcess = child_process.spawn(this.ffmpegPath, args);
             let stderr = "";
-            ffmpegProcess.stderr?.on("data", (data) => {
+            (_a = ffmpegProcess.stderr) == null ? void 0 : _a.on("data", (data) => {
               stderr += data.toString();
             });
             ffmpegProcess.on("close", (code) => {
@@ -668,29 +665,36 @@ ${"=".repeat(70)}`);
    * Check if dependencies are available
    */
   async checkDependencies() {
+    const fs2 = await import("fs");
     if (this.isProd) {
-      const fs2 = await import("fs");
-      const pipelineExists = fs2.existsSync(this.pipelineExePath);
-      const stitcherExists = fs2.existsSync(this.stitcherExePath);
-      if (pipelineExists && stitcherExists) {
-        console.log("Bundled executables found");
-        console.log(`   Pipeline: ${this.pipelineExePath}`);
-        console.log(`   Stitcher: ${this.stitcherExePath}`);
+      const pythonExists = fs2.existsSync(this.pythonPath);
+      const pipelineExists = fs2.existsSync(this.pipelineScriptPath);
+      const stitcherExists = fs2.existsSync(this.stitcherScriptPath);
+      const ffmpegExists = fs2.existsSync(this.ffmpegPath);
+      const missing = [];
+      if (!pythonExists) missing.push("python.exe");
+      if (!pipelineExists) missing.push("pipeline.py");
+      if (!stitcherExists) missing.push("stitch_images.py");
+      if (!ffmpegExists) missing.push("ffmpeg.exe");
+      if (missing.length === 0) {
+        console.log("Bundled Python environment found");
+        console.log(`   Python: ${this.pythonPath}`);
+        console.log(`   Pipeline: ${this.pipelineScriptPath}`);
+        console.log(`   Stitcher: ${this.stitcherScriptPath}`);
+        console.log(`   FFmpeg: ${this.ffmpegPath}`);
         return { available: true };
       } else {
-        const missing = [];
-        if (!pipelineExists) missing.push("pipeline.exe");
-        if (!stitcherExists) missing.push("stitch_images.exe");
         return {
           available: false,
-          error: `Missing bundled executables: ${missing.join(", ")}`
+          error: `Missing bundled files: ${missing.join(", ")}`
         };
       }
     } else {
       return new Promise((resolve) => {
+        var _a;
         const checkProcess = child_process.spawn(this.pythonPath, ["--version"]);
         let versionOutput = "";
-        checkProcess.stdout?.on("data", (data) => {
+        (_a = checkProcess.stdout) == null ? void 0 : _a.on("data", (data) => {
           versionOutput += data.toString();
         });
         checkProcess.on("close", (code) => {
@@ -715,14 +719,14 @@ ${"=".repeat(70)}`);
   }
 }
 class CameraController extends events.EventEmitter {
-  mockMode;
-  useWebcam;
-  captureDir;
-  cameraProcess = null;
-  isConnected = false;
-  cameraInfo = null;
   constructor(config = {}) {
     super();
+    __publicField(this, "mockMode");
+    __publicField(this, "useWebcam");
+    __publicField(this, "captureDir");
+    __publicField(this, "cameraProcess", null);
+    __publicField(this, "isConnected", false);
+    __publicField(this, "cameraInfo", null);
     this.mockMode = config.mockMode ?? process.env.MOCK_CAMERA === "true";
     this.useWebcam = config.useWebcam ?? process.env.USE_WEBCAM === "true";
     this.captureDir = config.captureDir ?? path__namespace.join(process.cwd(), "captures");
@@ -734,6 +738,7 @@ class CameraController extends events.EventEmitter {
    * Initialize camera connection
    */
   async connect() {
+    var _a;
     if (this.mockMode) {
       return this.mockConnect();
     }
@@ -752,7 +757,7 @@ class CameraController extends events.EventEmitter {
       this.cameraInfo = this.parseCameraInfo(summaryResult);
       this.isConnected = true;
       this.emit("connected", this.cameraInfo);
-      console.log("✅ Camera connected:", this.cameraInfo?.model);
+      console.log("✅ Camera connected:", (_a = this.cameraInfo) == null ? void 0 : _a.model);
       return { success: true };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -834,13 +839,14 @@ class CameraController extends events.EventEmitter {
    */
   async executeGPhoto2Command(args) {
     return new Promise((resolve, reject) => {
+      var _a, _b;
       const process2 = child_process.spawn("gphoto2", args);
       let stdout = "";
       let stderr = "";
-      process2.stdout?.on("data", (data) => {
+      (_a = process2.stdout) == null ? void 0 : _a.on("data", (data) => {
         stdout += data.toString();
       });
-      process2.stderr?.on("data", (data) => {
+      (_b = process2.stderr) == null ? void 0 : _b.on("data", (data) => {
         stderr += data.toString();
       });
       process2.on("close", (code) => {
@@ -983,13 +989,14 @@ Webcam: Built-in`;
    */
   async executeCommand(command, args) {
     return new Promise((resolve, reject) => {
+      var _a, _b;
       const process2 = child_process.spawn(command, args);
       let stdout = "";
       let stderr = "";
-      process2.stdout?.on("data", (data) => {
+      (_a = process2.stdout) == null ? void 0 : _a.on("data", (data) => {
         stdout += data.toString();
       });
-      process2.stderr?.on("data", (data) => {
+      (_b = process2.stderr) == null ? void 0 : _b.on("data", (data) => {
         stderr += data.toString();
       });
       process2.on("close", (code) => {
@@ -1006,19 +1013,19 @@ Webcam: Built-in`;
   }
 }
 class PrinterController extends events.EventEmitter {
-  mockMode;
-  printerName;
-  currentJob = null;
-  mockPaperLevel = 100;
-  isWindows;
-  mockInkLevels = {
-    cyan: 85,
-    magenta: 90,
-    yellow: 75,
-    black: 88
-  };
   constructor(config = {}) {
     super();
+    __publicField(this, "mockMode");
+    __publicField(this, "printerName");
+    __publicField(this, "currentJob", null);
+    __publicField(this, "mockPaperLevel", 100);
+    __publicField(this, "isWindows");
+    __publicField(this, "mockInkLevels", {
+      cyan: 85,
+      magenta: 90,
+      yellow: 75,
+      black: 88
+    });
     this.mockMode = config.mockMode ?? process.env.MOCK_PRINTER === "true";
     this.printerName = config.printerName ?? "";
     this.isWindows = os__namespace.platform() === "win32";
@@ -1288,14 +1295,15 @@ class PrinterController extends events.EventEmitter {
    */
   async executePrinterCommand(args) {
     return new Promise((resolve, reject) => {
+      var _a, _b;
       const [command, ...cmdArgs] = args;
       const process2 = child_process.spawn(command, cmdArgs);
       let stdout = "";
       let stderr = "";
-      process2.stdout?.on("data", (data) => {
+      (_a = process2.stdout) == null ? void 0 : _a.on("data", (data) => {
         stdout += data.toString();
       });
-      process2.stderr?.on("data", (data) => {
+      (_b = process2.stderr) == null ? void 0 : _b.on("data", (data) => {
         stderr += data.toString();
       });
       process2.on("close", (code) => {
@@ -1585,8 +1593,11 @@ function buildApprovalRequestData(transactionType, amount, tax = 0, serviceCharg
   data.write(signature, offset, 1, "ascii");
   return data;
 }
-function buildCancelRequestData(cancelType, transactionType, amount, tax, serviceCharge, installment, signature, approvalNumber, originalDate, originalTime) {
-  const data = Buffer.alloc(59);
+function buildCancelRequestData(cancelType, transactionType, amount, tax, serviceCharge, installment, signature, approvalNumber, originalDate, originalTime, additionalInfo) {
+  const additionalInfoLength = 0;
+  const additionalInfoLengthStr = additionalInfoLength.toString().padStart(2, "0");
+  const totalLength = 59 + additionalInfoLength;
+  const data = Buffer.alloc(totalLength);
   let offset = 0;
   data.write(cancelType, offset, 1, "ascii");
   offset += 1;
@@ -1610,7 +1621,8 @@ function buildCancelRequestData(cancelType, transactionType, amount, tax, servic
   offset += 8;
   data.write(originalTime.padEnd(6, "0"), offset, 6, "ascii");
   offset += 6;
-  data.write("00", offset, 2, "ascii");
+  data.write(additionalInfoLengthStr, offset, 2, "ascii");
+  offset += 2;
   return data;
 }
 function parsePacket(buffer) {
@@ -1793,14 +1805,14 @@ function findCompletePacket(buffer) {
   return 0;
 }
 class TL3600Serial extends events.EventEmitter {
-  port = null;
-  portPath;
-  baudRate;
-  isConnected = false;
-  receiveBuffer = Buffer.alloc(0);
-  pendingResponse = null;
   constructor(config) {
     super();
+    __publicField(this, "port", null);
+    __publicField(this, "portPath");
+    __publicField(this, "baudRate");
+    __publicField(this, "isConnected", false);
+    __publicField(this, "receiveBuffer", Buffer.alloc(0));
+    __publicField(this, "pendingResponse", null);
     this.portPath = config.port;
     this.baudRate = config.baudRate || SERIAL_CONFIG.BAUD_RATE;
   }
@@ -1808,7 +1820,8 @@ class TL3600Serial extends events.EventEmitter {
    * Connect to serial port
    */
   async connect() {
-    if (this.isConnected && this.port?.isOpen) {
+    var _a;
+    if (this.isConnected && ((_a = this.port) == null ? void 0 : _a.isOpen)) {
       return { success: true };
     }
     return new Promise((resolve) => {
@@ -1855,12 +1868,13 @@ class TL3600Serial extends events.EventEmitter {
    * Disconnect from serial port
    */
   async disconnect() {
+    var _a;
     if (this.pendingResponse) {
       clearTimeout(this.pendingResponse.timeout);
       this.pendingResponse.reject(new Error("Disconnecting"));
       this.pendingResponse = null;
     }
-    if (this.port?.isOpen) {
+    if ((_a = this.port) == null ? void 0 : _a.isOpen) {
       return new Promise((resolve) => {
         this.port.close((err) => {
           if (err) {
@@ -1879,7 +1893,8 @@ class TL3600Serial extends events.EventEmitter {
    * Check if connected
    */
   isPortConnected() {
-    return this.isConnected && (this.port?.isOpen ?? false);
+    var _a;
+    return this.isConnected && (((_a = this.port) == null ? void 0 : _a.isOpen) ?? false);
   }
   /**
    * Send packet and wait for response with ACK/NACK handling
@@ -1928,7 +1943,8 @@ class TL3600Serial extends events.EventEmitter {
    * Send ACK
    */
   async sendAck() {
-    if (this.port?.isOpen) {
+    var _a;
+    if ((_a = this.port) == null ? void 0 : _a.isOpen) {
       await this.writeToPort(Buffer.from([ACK]));
       console.log(`📤 [TL3600] ACK sent`);
     }
@@ -1937,7 +1953,8 @@ class TL3600Serial extends events.EventEmitter {
    * Send NACK
    */
   async sendNack() {
-    if (this.port?.isOpen) {
+    var _a;
+    if ((_a = this.port) == null ? void 0 : _a.isOpen) {
       await this.writeToPort(Buffer.from([NACK]));
       console.log(`📤 [TL3600] NACK sent`);
     }
@@ -1950,7 +1967,8 @@ class TL3600Serial extends events.EventEmitter {
    */
   writeToPort(data) {
     return new Promise((resolve, reject) => {
-      if (!this.port?.isOpen) {
+      var _a;
+      if (!((_a = this.port) == null ? void 0 : _a.isOpen)) {
         reject(new Error("Port not open"));
         return;
       }
@@ -2090,13 +2108,13 @@ async function listSerialPorts() {
   }
 }
 class TL3600Controller extends events.EventEmitter {
-  serial;
-  terminalId;
-  isConnected = false;
-  isInPaymentMode = false;
-  currentPaymentRequest = null;
   constructor(config) {
     super();
+    __publicField(this, "serial");
+    __publicField(this, "terminalId");
+    __publicField(this, "isConnected", false);
+    __publicField(this, "isInPaymentMode", false);
+    __publicField(this, "currentPaymentRequest", null);
     this.terminalId = config.terminalId;
     this.serial = new TL3600Serial({
       port: config.port,
@@ -2213,10 +2231,10 @@ class TL3600Controller extends events.EventEmitter {
     if (!this.isConnected) {
       return { success: false, error: "Not connected" };
     }
-    const amount = request?.amount ?? PAYMENT_DEFAULTS.AMOUNT;
-    const tax = request?.tax ?? PAYMENT_DEFAULTS.TAX;
-    const serviceCharge = request?.serviceCharge ?? PAYMENT_DEFAULTS.SERVICE_CHARGE;
-    const installment = request?.installment ?? PAYMENT_DEFAULTS.INSTALLMENT;
+    const amount = (request == null ? void 0 : request.amount) ?? PAYMENT_DEFAULTS.AMOUNT;
+    const tax = (request == null ? void 0 : request.tax) ?? PAYMENT_DEFAULTS.TAX;
+    const serviceCharge = (request == null ? void 0 : request.serviceCharge) ?? PAYMENT_DEFAULTS.SERVICE_CHARGE;
+    const installment = (request == null ? void 0 : request.installment) ?? PAYMENT_DEFAULTS.INSTALLMENT;
     console.log(`💳 [TL3600] Requesting approval for ${amount}원...`);
     const data = buildApprovalRequestData(
       TransactionType.APPROVAL,
@@ -2301,6 +2319,16 @@ class TL3600Controller extends events.EventEmitter {
     if (!result.success || !result.response) {
       console.error(`❌ [TL3600] Cancel request failed:`, result.error);
       return { success: false, error: result.error || "Request failed" };
+    }
+    if (result.response.header.jobCode === JobCode.CARD_INQUIRY_RESPONSE) {
+      console.error(`❌ [TL3600] Card inquiry response received - no cancellable transaction`);
+      const cardInfo = parseCardInquiryResponse(result.response.data);
+      if (cardInfo.transactionStatus === "0") {
+        return { success: false, error: "취소 가능한 거래 내역이 없습니다" };
+      } else if (cardInfo.transactionStatus === "X") {
+        return { success: false, error: "이미 취소된 거래입니다" };
+      }
+      return { success: false, error: "취소할 수 없는 카드입니다" };
     }
     if (result.response.header.jobCode !== JobCode.TRANSACTION_CANCEL_RESPONSE) {
       console.error(`❌ [TL3600] Unexpected response: ${result.response.header.jobCode}`);
@@ -2417,17 +2445,17 @@ class TL3600Controller extends events.EventEmitter {
   }
 }
 class CardReaderController extends events.EventEmitter {
-  mockMode;
-  mockApprovalRate;
-  readerPort;
-  terminalId;
-  isConnected = false;
-  currentTransaction = null;
-  timeoutTimer = null;
-  // TL3600 controller (for real hardware mode)
-  tl3600 = null;
   constructor(config = {}) {
     super();
+    __publicField(this, "mockMode");
+    __publicField(this, "mockApprovalRate");
+    __publicField(this, "readerPort");
+    __publicField(this, "terminalId");
+    __publicField(this, "isConnected", false);
+    __publicField(this, "currentTransaction", null);
+    __publicField(this, "timeoutTimer", null);
+    // TL3600 controller (for real hardware mode)
+    __publicField(this, "tl3600", null);
     this.mockMode = config.mockMode ?? process.env.MOCK_CARD_READER !== "false";
     this.mockApprovalRate = config.mockApprovalRate ?? 0.8;
     this.readerPort = config.readerPort ?? process.env.TL3600_PORT ?? "COM3";
@@ -2641,6 +2669,7 @@ class CardReaderController extends events.EventEmitter {
    * Cancel a previous transaction
    */
   async cancelTransaction(options) {
+    var _a;
     if (this.mockMode) {
       console.log("💳 [CardReader] Mock cancel - always succeeds");
       return {
@@ -2670,7 +2699,7 @@ class CardReaderController extends events.EventEmitter {
       return {
         success: true,
         status: "approved",
-        transactionId: result.response?.transactionId,
+        transactionId: (_a = result.response) == null ? void 0 : _a.transactionId,
         amount: options.amount,
         timestamp: (/* @__PURE__ */ new Date()).toISOString()
       };
@@ -2945,13 +2974,13 @@ function recordPayment(sessionId, amount, status, errorMessage, details) {
     status,
     Date.now(),
     errorMessage || null,
-    details?.approvalNumber || null,
-    details?.salesDate || null,
-    details?.salesTime || null,
-    details?.transactionMedia || null,
-    details?.cardNumber || null
+    (details == null ? void 0 : details.approvalNumber) || null,
+    (details == null ? void 0 : details.salesDate) || null,
+    (details == null ? void 0 : details.salesTime) || null,
+    (details == null ? void 0 : details.transactionMedia) || null,
+    (details == null ? void 0 : details.cardNumber) || null
   );
-  console.log(`📊 [Analytics] Payment recorded: ${sessionId} - ${status} - ${amount}원 (approval: ${details?.approvalNumber || "N/A"})`);
+  console.log(`📊 [Analytics] Payment recorded: ${sessionId} - ${status} - ${amount}원 (approval: ${(details == null ? void 0 : details.approvalNumber) || "N/A"})`);
 }
 function recordPrint(sessionId, imagePath, success, errorMessage) {
   if (!db) return;
@@ -3295,12 +3324,1325 @@ function closeDatabase() {
     console.log("📊 [Analytics] Database closed");
   }
 }
+let _store = null;
+function getStore() {
+  if (!_store) {
+    const Store = require("electron-store");
+    _store = new Store({
+      name: "cloud-credentials"
+    });
+  }
+  return _store;
+}
+const store = {
+  get: (key) => getStore().get(key),
+  set: (key, value) => getStore().set(key, value),
+  delete: (key) => getStore().delete(key),
+  clear: () => getStore().clear()
+};
+const INVALID_TOKEN_ERRORS = ["INVALID_TOKEN", "TOKEN_EXPIRED", "MACHINE_NOT_FOUND", "UNAUTHORIZED"];
+const _CloudClient = class _CloudClient extends events.EventEmitter {
+  constructor(config) {
+    super();
+    __publicField(this, "config");
+    __publicField(this, "offlineQueue", []);
+    __publicField(this, "isOnline", true);
+    __publicField(this, "isReregistering", false);
+    this.config = config;
+  }
+  static getInstance(config) {
+    if (!_CloudClient.instance) {
+      if (!config) {
+        throw new Error("CloudClient must be initialized with config first");
+      }
+      _CloudClient.instance = new _CloudClient(config);
+    }
+    return _CloudClient.instance;
+  }
+  static initialize(config) {
+    _CloudClient.instance = new _CloudClient(config);
+    return _CloudClient.instance;
+  }
+  // =========================================
+  // Token Management
+  // =========================================
+  getStoredToken() {
+    const token = store.get("machineToken");
+    const expiresAt = store.get("tokenExpiresAt");
+    if (!token || !expiresAt) return null;
+    if (new Date(expiresAt).getTime() - 36e5 < Date.now()) {
+      return null;
+    }
+    return token;
+  }
+  storeToken(token, machineId, expiresAt) {
+    store.set("machineToken", token);
+    store.set("machineId", machineId);
+    store.set("tokenExpiresAt", expiresAt);
+  }
+  getMachineId() {
+    return store.get("machineId");
+  }
+  isRegistered() {
+    return !!this.getStoredToken();
+  }
+  clearCredentials() {
+    store.delete("machineToken");
+    store.delete("machineId");
+    store.delete("tokenExpiresAt");
+  }
+  /**
+   * Clear all stored data including hardware info
+   * Use this for complete reset
+   */
+  clearAllData() {
+    store.clear();
+  }
+  /**
+   * Get stored hardware info for re-registration
+   */
+  getStoredHardwareInfo() {
+    return {
+      hardwareId: store.get("hardwareId"),
+      hardwareInfo: store.get("hardwareInfo")
+    };
+  }
+  /**
+   * Store hardware info for future re-registration
+   */
+  storeHardwareInfo(hardwareId, hardwareInfo) {
+    store.set("hardwareId", hardwareId);
+    if (hardwareInfo) {
+      store.set("hardwareInfo", hardwareInfo);
+    }
+  }
+  // =========================================
+  // HTTP Methods
+  // =========================================
+  async request(method, path2, body, requiresAuth = true, isRetryAfterReregister = false) {
+    const url = `${this.config.apiUrl}${path2}`;
+    const headers = {
+      "Content-Type": "application/json"
+    };
+    if (requiresAuth) {
+      const token = this.getStoredToken();
+      if (!token) {
+        if (!isRetryAfterReregister) {
+          const reregistered = await this.attemptReregistration();
+          if (reregistered) {
+            return this.request(method, path2, body, requiresAuth, true);
+          }
+        }
+        return {
+          success: false,
+          error: { code: "NO_TOKEN", message: "Not authenticated" }
+        };
+      }
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    try {
+      const response = await this.fetchWithRetry(url, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : void 0
+      });
+      const data = await response.json();
+      this.isOnline = true;
+      if (!data.success && data.error && this.isInvalidTokenError(data.error.code)) {
+        console.log("\n🔄 ═══════════════════════════════════════════════════");
+        console.log("🔄  TOKEN INVALID - Attempting automatic re-registration");
+        console.log(`🔄  Error: ${data.error.code} - ${data.error.message}`);
+        console.log("🔄 ═══════════════════════════════════════════════════\n");
+        if (!isRetryAfterReregister) {
+          const reregistered = await this.attemptReregistration();
+          if (reregistered) {
+            return this.request(method, path2, body, requiresAuth, true);
+          }
+        }
+      }
+      return data;
+    } catch (error) {
+      this.isOnline = false;
+      if (requiresAuth) {
+        this.offlineQueue.push({ method, path: path2, body });
+      }
+      return {
+        success: false,
+        error: {
+          code: "NETWORK_ERROR",
+          message: error instanceof Error ? error.message : "Network error"
+        }
+      };
+    }
+  }
+  /**
+   * Check if error code indicates an invalid/expired token
+   */
+  isInvalidTokenError(code) {
+    return INVALID_TOKEN_ERRORS.includes(code) || code.toLowerCase().includes("invalid") || code.toLowerCase().includes("expired") || code.toLowerCase().includes("unauthorized");
+  }
+  /**
+   * Attempt to re-register with stored hardware info
+   */
+  async attemptReregistration() {
+    var _a;
+    if (this.isReregistering) {
+      console.log("[CloudClient] Re-registration already in progress, waiting...");
+      return new Promise((resolve) => {
+        const checkInterval = setInterval(() => {
+          if (!this.isReregistering) {
+            clearInterval(checkInterval);
+            resolve(this.isRegistered());
+          }
+        }, 100);
+        setTimeout(() => {
+          clearInterval(checkInterval);
+          resolve(false);
+        }, 1e4);
+      });
+    }
+    this.isReregistering = true;
+    try {
+      const { hardwareId, hardwareInfo } = this.getStoredHardwareInfo();
+      if (!hardwareId) {
+        console.log("[CloudClient] No stored hardware info for re-registration");
+        return false;
+      }
+      console.log("[CloudClient] Clearing old credentials...");
+      this.clearCredentials();
+      console.log("[CloudClient] Re-registering with stored hardware info...");
+      const result = await this.register(hardwareId, hardwareInfo || void 0);
+      if (result.success) {
+        console.log("\n✅ ═══════════════════════════════════════════════════");
+        console.log("✅  AUTO RE-REGISTRATION SUCCESSFUL");
+        console.log(`✅  New Machine ID: ${(_a = result.data) == null ? void 0 : _a.machineId}`);
+        console.log("✅ ═══════════════════════════════════════════════════\n");
+        this.emit("reregistered", result.data);
+        return true;
+      } else {
+        console.error("[CloudClient] Re-registration failed:", result.error);
+        return false;
+      }
+    } catch (error) {
+      console.error("[CloudClient] Re-registration error:", error);
+      return false;
+    } finally {
+      this.isReregistering = false;
+    }
+  }
+  /**
+   * Listen for re-registration events
+   */
+  onReregistered(callback) {
+    this.on("reregistered", callback);
+    return () => this.off("reregistered", callback);
+  }
+  async fetchWithRetry(url, options, retries = 3, delay = 1e3) {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const response = await fetch(url, options);
+        if (response.ok || response.status < 500) {
+          return response;
+        }
+        if (i < retries - 1) {
+          await this.sleep(delay * Math.pow(2, i));
+        }
+      } catch (error) {
+        if (i === retries - 1) throw error;
+        await this.sleep(delay * Math.pow(2, i));
+      }
+    }
+    throw new Error("Max retries exceeded");
+  }
+  sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+  // =========================================
+  // Public API Methods
+  // =========================================
+  async register(hardwareId, hardwareInfo) {
+    this.storeHardwareInfo(hardwareId, hardwareInfo);
+    const response = await this.request(
+      "POST",
+      "/machines/register",
+      {
+        hardwareId,
+        apiKey: this.config.apiKey,
+        hardwareInfo
+      },
+      false
+      // No auth required for registration
+    );
+    if (response.success && response.data) {
+      this.storeToken(
+        response.data.machineToken,
+        response.data.machineId,
+        response.data.expiresAt
+      );
+    }
+    return response;
+  }
+  async getConfig(currentVersion) {
+    const machineId = this.getMachineId();
+    if (!machineId) {
+      return { success: false, error: { code: "NOT_REGISTERED", message: "Machine not registered" } };
+    }
+    const query = currentVersion ? `?currentVersion=${currentVersion}` : "";
+    return this.request("GET", `/machines/${machineId}/config${query}`);
+  }
+  async sendLogs(logs) {
+    const machineId = this.getMachineId();
+    if (!machineId) {
+      return { success: false, error: { code: "NOT_REGISTERED", message: "Machine not registered" } };
+    }
+    return this.request("POST", `/machines/${machineId}/logs`, { logs });
+  }
+  async sendHeartbeat(status) {
+    const machineId = this.getMachineId();
+    if (!machineId) {
+      return { success: false, error: { code: "NOT_REGISTERED", message: "Machine not registered" } };
+    }
+    return this.request("POST", `/machines/${machineId}/heartbeat`, status);
+  }
+  async getPendingCommands() {
+    const machineId = this.getMachineId();
+    if (!machineId) {
+      return { success: false, error: { code: "NOT_REGISTERED", message: "Machine not registered" } };
+    }
+    return this.request("GET", `/machines/${machineId}/commands/pending`);
+  }
+  async acknowledgeCommand(commandId, ack) {
+    const machineId = this.getMachineId();
+    if (!machineId) {
+      return { success: false, error: { code: "NOT_REGISTERED", message: "Machine not registered" } };
+    }
+    return this.request("POST", `/machines/${machineId}/commands/${commandId}/ack`, ack);
+  }
+  async createSession(session) {
+    const machineId = this.getMachineId();
+    if (!machineId) {
+      return { success: false, error: { code: "NOT_REGISTERED", message: "Machine not registered" } };
+    }
+    return this.request("POST", `/machines/${machineId}/sessions`, session);
+  }
+  async updateSession(sessionId, update) {
+    const machineId = this.getMachineId();
+    if (!machineId) {
+      return { success: false, error: { code: "NOT_REGISTERED", message: "Machine not registered" } };
+    }
+    return this.request("PATCH", `/machines/${machineId}/sessions/${sessionId}`, update);
+  }
+  // =========================================
+  // Offline Queue
+  // =========================================
+  async processOfflineQueue() {
+    if (this.offlineQueue.length === 0) return;
+    const queue = [...this.offlineQueue];
+    this.offlineQueue = [];
+    for (const item of queue) {
+      await this.request(item.method, item.path, item.body);
+    }
+  }
+  getOnlineStatus() {
+    return this.isOnline;
+  }
+};
+__publicField(_CloudClient, "instance");
+let CloudClient = _CloudClient;
+const CONFIG_SYNC_INTERVAL = 6e4;
+class ConfigSyncManager extends events.EventEmitter {
+  constructor(client) {
+    super();
+    __publicField(this, "client");
+    __publicField(this, "cloudVersion", "unknown");
+    __publicField(this, "syncInterval", null);
+    __publicField(this, "initialized", false);
+    this.client = client;
+  }
+  async initialize() {
+    if (this.initialized) {
+      return appConfig.get();
+    }
+    await this.sync();
+    this.startPeriodicSync();
+    this.initialized = true;
+    return appConfig.get();
+  }
+  async sync() {
+    var _a;
+    try {
+      const response = await this.client.getConfig(this.cloudVersion);
+      if (!response.success) {
+        console.warn("[ConfigSync] Failed to sync:", response.error);
+        return false;
+      }
+      if (!((_a = response.data) == null ? void 0 : _a.changed)) {
+        return false;
+      }
+      if (response.data.config) {
+        const cloudConfig = response.data.config;
+        const oldVersion = this.cloudVersion;
+        this.cloudVersion = response.data.version;
+        const localUpdates = this.mapCloudToLocal(cloudConfig);
+        const oldConfig = appConfig.get();
+        appConfig.update(localUpdates);
+        const newConfig = appConfig.get();
+        console.log("\n" + "=".repeat(60));
+        console.log("☁️  CLOUD CONFIG CHANGE DETECTED");
+        console.log("=".repeat(60));
+        console.log(`📦 Version: ${oldVersion} → ${this.cloudVersion}`);
+        console.log(`⏰ Time: ${(/* @__PURE__ */ new Date()).toLocaleString()}`);
+        console.log("-".repeat(60));
+        const isInitialSync = oldVersion === "unknown" || oldVersion === "default";
+        if (isInitialSync) {
+          console.log("\n🆕 INITIAL SYNC - Cloud config received:");
+          this.logCloudConfig(cloudConfig);
+        } else {
+          let hasChanges = false;
+          hasChanges = this.logConfigChanges("camera", oldConfig.camera, newConfig.camera) || hasChanges;
+          hasChanges = this.logConfigChanges("payment", oldConfig.payment, newConfig.payment) || hasChanges;
+          hasChanges = this.logConfigChanges("tl3600", oldConfig.tl3600, newConfig.tl3600) || hasChanges;
+          hasChanges = this.logConfigChanges("display", oldConfig.display, newConfig.display) || hasChanges;
+          hasChanges = this.logConfigChanges("demo", oldConfig.demo, newConfig.demo) || hasChanges;
+          hasChanges = this.logConfigChanges("debug", oldConfig.debug, newConfig.debug) || hasChanges;
+          hasChanges = this.logConfigChanges("printer", oldConfig.printer, newConfig.printer) || hasChanges;
+          if (!hasChanges) {
+            console.log("\n📋 No field-level changes detected (config structure update)");
+          }
+        }
+        console.log("\n" + "=".repeat(60));
+        console.log("✅ Config applied successfully");
+        console.log("=".repeat(60) + "\n");
+        this.emit("change", newConfig, oldConfig);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error("[ConfigSync] Sync error:", error);
+      return false;
+    }
+  }
+  /**
+   * Log changes between old and new config sections
+   * Returns true if changes were found
+   */
+  logConfigChanges(section, oldVal, newVal) {
+    if (JSON.stringify(oldVal) === JSON.stringify(newVal)) {
+      return false;
+    }
+    console.log(`
+📝 [${section.toUpperCase()}] Changes:`);
+    if (typeof oldVal === "object" && oldVal && typeof newVal === "object" && newVal) {
+      const oldObj = oldVal;
+      const newObj = newVal;
+      const allKeys = /* @__PURE__ */ new Set([...Object.keys(oldObj), ...Object.keys(newObj)]);
+      for (const key of allKeys) {
+        const oldValue = oldObj[key];
+        const newValue = newObj[key];
+        if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
+          const oldDisplay = typeof oldValue === "object" ? JSON.stringify(oldValue) : oldValue;
+          const newDisplay = typeof newValue === "object" ? JSON.stringify(newValue) : newValue;
+          console.log(`   • ${key}: ${oldDisplay} → ${newDisplay}`);
+        }
+      }
+    } else {
+      console.log(`   • ${section}: ${JSON.stringify(oldVal)} → ${JSON.stringify(newVal)}`);
+    }
+    return true;
+  }
+  /**
+   * Log the full cloud config for initial sync
+   */
+  logCloudConfig(cloud) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v;
+    console.log("\n📷 [CAMERA]");
+    console.log(`   • type: ${(_a = cloud.camera) == null ? void 0 : _a.type}`);
+    console.log(`   • resolution: ${(_c = (_b = cloud.camera) == null ? void 0 : _b.resolution) == null ? void 0 : _c.width}x${(_e = (_d = cloud.camera) == null ? void 0 : _d.resolution) == null ? void 0 : _e.height}`);
+    console.log(`   • captureCount: ${(_f = cloud.camera) == null ? void 0 : _f.captureCount}`);
+    console.log("\n💳 [PAYMENT]");
+    console.log(`   • enabled: ${(_g = cloud.payment) == null ? void 0 : _g.enabled}`);
+    console.log(`   • mockMode: ${(_h = cloud.payment) == null ? void 0 : _h.mockMode}`);
+    console.log(`   • defaultPrice: ${(_i = cloud.payment) == null ? void 0 : _i.defaultPrice} ${(_j = cloud.payment) == null ? void 0 : _j.currency}`);
+    console.log("\n🖥️  [DISPLAY]");
+    console.log(`   • splitScreenMode: ${(_k = cloud.display) == null ? void 0 : _k.splitScreenMode}`);
+    console.log(`   • mainSize: ${(_l = cloud.display) == null ? void 0 : _l.mainWidth}x${(_m = cloud.display) == null ? void 0 : _m.mainHeight}`);
+    console.log(`   • language: ${(_n = cloud.display) == null ? void 0 : _n.language}`);
+    console.log("\n🖨️  [PRINTER]");
+    console.log(`   • enabled: ${(_o = cloud.printer) == null ? void 0 : _o.enabled}`);
+    console.log(`   • mockMode: ${(_p = cloud.printer) == null ? void 0 : _p.mockMode}`);
+    console.log(`   • paperSize: ${(_q = cloud.printer) == null ? void 0 : _q.paperSize}`);
+    console.log("\n⚙️  [PROCESSING]");
+    console.log(`   • mode: ${(_r = cloud.processing) == null ? void 0 : _r.mode}`);
+    console.log(`   • quality: ${(_s = cloud.processing) == null ? void 0 : _s.quality}`);
+    console.log(`   • faceEnhancement: ${(_t = cloud.processing) == null ? void 0 : _t.faceEnhancement}`);
+    console.log("\n🔧 [DEBUG]");
+    console.log(`   • enableLogging: ${(_u = cloud.debug) == null ? void 0 : _u.enableLogging}`);
+    console.log(`   • logLevel: ${(_v = cloud.debug) == null ? void 0 : _v.logLevel}`);
+  }
+  /**
+   * Map cloud config schema to local AppConfig schema
+   */
+  mapCloudToLocal(cloud) {
+    const local = {};
+    if (cloud.camera) {
+      local.camera = {
+        useWebcam: cloud.camera.type === "webcam",
+        mockMode: false
+        // Preserve local value
+      };
+    }
+    if (cloud.payment) {
+      local.payment = {
+        useMockMode: cloud.payment.mockMode,
+        defaultAmount: cloud.payment.defaultPrice,
+        mockApprovalRate: 0.8
+        // Preserve local default
+      };
+    }
+    if (cloud.tl3600) {
+      local.tl3600 = {
+        port: cloud.tl3600.port,
+        terminalId: cloud.tl3600.terminalId,
+        timeout: cloud.tl3600.timeout || 3e3,
+        retryCount: cloud.tl3600.retryCount || 3
+      };
+    }
+    if (cloud.display) {
+      local.display = {
+        splitScreenMode: cloud.display.splitScreenMode,
+        swapDisplays: cloud.display.swapDisplays || false,
+        mainWidth: cloud.display.mainWidth || 1080,
+        mainHeight: cloud.display.mainHeight || 1920,
+        hologramWidth: cloud.display.hologramWidth || 1080,
+        hologramHeight: cloud.display.hologramHeight || 1920
+      };
+    }
+    if (cloud.demo) {
+      local.demo = {
+        enabled: cloud.demo.enabled,
+        videoPath: cloud.demo.videoPath || ""
+      };
+    }
+    if (cloud.debug) {
+      local.debug = {
+        enableLogging: cloud.debug.enableLogging,
+        logLevel: cloud.debug.logLevel || "info",
+        logToFile: cloud.debug.logToFile || false,
+        logFilePath: cloud.debug.logFilePath || ""
+      };
+    }
+    if (cloud.printer) {
+      local.printer = {
+        mockMode: cloud.printer.mockMode
+      };
+    }
+    return local;
+  }
+  startPeriodicSync() {
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval);
+    }
+    this.syncInterval = setInterval(async () => {
+      const changed = await this.sync();
+      if (changed) {
+        console.log("[ConfigSync] Periodic sync detected changes");
+      }
+    }, CONFIG_SYNC_INTERVAL);
+  }
+  stopPeriodicSync() {
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval);
+      this.syncInterval = null;
+    }
+  }
+  getCloudVersion() {
+    return this.cloudVersion;
+  }
+  onChange(callback) {
+    this.on("change", callback);
+    return () => this.off("change", callback);
+  }
+}
+const LOG_LEVELS = {
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3
+};
+const FLUSH_INTERVAL = 1e4;
+const MAX_QUEUE_SIZE = 100;
+const MAX_LOCAL_QUEUE_SIZE = 1e3;
+class LogStreamer {
+  constructor(client, options) {
+    __publicField(this, "client");
+    __publicField(this, "queue", []);
+    __publicField(this, "minLevel", "info");
+    __publicField(this, "flushInterval", null);
+    __publicField(this, "isShuttingDown", false);
+    __publicField(this, "consoleOutput", true);
+    this.client = client;
+    if (options == null ? void 0 : options.minLevel) this.minLevel = options.minLevel;
+    if ((options == null ? void 0 : options.consoleOutput) !== void 0) this.consoleOutput = options.consoleOutput;
+    this.startFlushInterval();
+  }
+  // =========================================
+  // Logging Methods
+  // =========================================
+  log(level, category, message, metadata) {
+    if (LOG_LEVELS[level] < LOG_LEVELS[this.minLevel]) {
+      return;
+    }
+    const entry = {
+      level,
+      category,
+      message,
+      metadata,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    if (this.consoleOutput) {
+      this.outputToConsole(entry);
+    }
+    this.queue.push(entry);
+    if (this.queue.length >= MAX_QUEUE_SIZE) {
+      this.flush();
+    }
+  }
+  debug(category, message, metadata) {
+    this.log("debug", category, message, metadata);
+  }
+  info(category, message, metadata) {
+    this.log("info", category, message, metadata);
+  }
+  warn(category, message, metadata) {
+    this.log("warn", category, message, metadata);
+  }
+  error(category, message, metadata) {
+    this.log("error", category, message, metadata);
+  }
+  // =========================================
+  // Console Output
+  // =========================================
+  outputToConsole(entry) {
+    const icons = {
+      debug: "🔍",
+      info: "📋",
+      warn: "⚠️",
+      error: "❌"
+    };
+    const categoryIcons = {
+      system: "💻",
+      camera: "📷",
+      printer: "🖨️",
+      payment: "💳",
+      processing: "⚙️",
+      session: "🎬",
+      cloud: "☁️",
+      command: "📡"
+    };
+    const icon = icons[entry.level];
+    const catIcon = categoryIcons[entry.category] || "📌";
+    const prefix = `${icon} [${entry.category.toUpperCase()}] ${catIcon}`;
+    switch (entry.level) {
+      case "debug":
+        console.debug(prefix, entry.message, entry.metadata || "");
+        break;
+      case "info":
+        console.info(prefix, entry.message, entry.metadata || "");
+        break;
+      case "warn":
+        console.warn(prefix, entry.message, entry.metadata || "");
+        break;
+      case "error":
+        console.error(prefix, entry.message, entry.metadata || "");
+        break;
+    }
+  }
+  // =========================================
+  // Flush Logic
+  // =========================================
+  startFlushInterval() {
+    if (this.flushInterval) {
+      clearInterval(this.flushInterval);
+    }
+    this.flushInterval = setInterval(() => {
+      this.flush();
+    }, FLUSH_INTERVAL);
+  }
+  async flush() {
+    if (this.queue.length === 0) return;
+    const logsToSend = this.queue.splice(0, MAX_QUEUE_SIZE);
+    try {
+      const response = await this.client.sendLogs(logsToSend);
+      if (!response.success) {
+        if (this.queue.length < MAX_LOCAL_QUEUE_SIZE) {
+          this.queue.unshift(...logsToSend);
+        }
+        console.warn("[LogStreamer] Failed to send logs:", response.error);
+      }
+    } catch (error) {
+      if (this.queue.length < MAX_LOCAL_QUEUE_SIZE) {
+        this.queue.unshift(...logsToSend);
+      }
+      console.warn("[LogStreamer] Error sending logs:", error);
+    }
+  }
+  // =========================================
+  // Lifecycle
+  // =========================================
+  async shutdown() {
+    this.isShuttingDown = true;
+    if (this.flushInterval) {
+      clearInterval(this.flushInterval);
+      this.flushInterval = null;
+    }
+    if (this.queue.length > 0) {
+      await this.flush();
+    }
+  }
+  setMinLevel(level) {
+    this.minLevel = level;
+  }
+  getQueueSize() {
+    return this.queue.length;
+  }
+}
+let loggerInstance = null;
+function initializeLogger(client, options) {
+  loggerInstance = new LogStreamer(client, options);
+  return loggerInstance;
+}
+function getLogger() {
+  if (!loggerInstance) {
+    throw new Error("Logger not initialized. Call initializeLogger first.");
+  }
+  return loggerInstance;
+}
+const SYNC_INTERVAL = 3e4;
+class SessionSyncManager {
+  constructor(client) {
+    __publicField(this, "client");
+    __publicField(this, "db", null);
+    __publicField(this, "syncInterval", null);
+    __publicField(this, "isSyncing", false);
+    this.client = client;
+  }
+  getDb() {
+    if (!this.db) {
+      const dbPath = path__namespace.join(electron.app.getPath("userData"), "analytics.db");
+      this.db = new Database(dbPath);
+    }
+    return this.db;
+  }
+  /**
+   * Initialize sync manager and start periodic sync
+   */
+  async initialize() {
+    this.ensureSyncColumns();
+    this.startPeriodicSync();
+  }
+  /**
+   * Add cloud_synced and cloud_session_id columns to sessions table
+   */
+  ensureSyncColumns() {
+    const db2 = this.getDb();
+    try {
+      db2.exec(`ALTER TABLE sessions ADD COLUMN cloud_synced INTEGER DEFAULT 0`);
+    } catch (e) {
+    }
+    try {
+      db2.exec(`ALTER TABLE sessions ADD COLUMN cloud_session_id TEXT`);
+    } catch (e) {
+    }
+  }
+  /**
+   * Sync unsynced sessions to cloud
+   */
+  async syncToCloud() {
+    if (this.isSyncing) {
+      return { synced: 0, failed: 0 };
+    }
+    this.isSyncing = true;
+    let synced = 0;
+    let failed = 0;
+    try {
+      const db2 = this.getDb();
+      const unsyncedSessions = db2.prepare(`
+        SELECT * FROM sessions
+        WHERE cloud_synced = 0
+        AND completed = 1
+        ORDER BY start_time ASC
+        LIMIT 50
+      `).all();
+      for (const session of unsyncedSessions) {
+        try {
+          const payment = db2.prepare(`
+            SELECT * FROM payments WHERE session_id = ?
+          `).get(session.session_id);
+          const cloudData = this.mapToCloudFormat(session, payment);
+          if (!session.cloud_session_id) {
+            const response = await this.client.createSession({
+              sessionCode: session.session_id,
+              // Use session_id as session code
+              frameId: session.frame_selected
+            });
+            if (response.success && response.data) {
+              await this.client.updateSession(response.data.sessionId, cloudData);
+              db2.prepare(`
+                UPDATE sessions
+                SET cloud_synced = 1, cloud_session_id = ?
+                WHERE id = ?
+              `).run(response.data.sessionId, session.id);
+              synced++;
+            } else {
+              failed++;
+            }
+          } else {
+            await this.client.updateSession(session.cloud_session_id, cloudData);
+            db2.prepare(`UPDATE sessions SET cloud_synced = 1 WHERE id = ?`).run(session.id);
+            synced++;
+          }
+        } catch (error) {
+          console.error(`[SessionSync] Failed to sync session ${session.session_id}:`, error);
+          failed++;
+        }
+      }
+    } finally {
+      this.isSyncing = false;
+    }
+    if (synced > 0) {
+      console.log(`[SessionSync] Synced ${synced} sessions to cloud`);
+    }
+    return { synced, failed };
+  }
+  /**
+   * Map local session to cloud API format
+   * NOTE: Local schema uses different field names than cloud
+   */
+  mapToCloudFormat(session, payment) {
+    return {
+      status: session.completed ? "completed" : "started",
+      processingTimeMs: session.duration_seconds ? session.duration_seconds * 1e3 : void 0,
+      completedAt: session.end_time ? new Date(session.end_time).toISOString() : void 0,
+      // Payment details
+      paymentAmount: payment == null ? void 0 : payment.amount,
+      currency: "KRW",
+      // TL3600 Payment Details
+      approvalNumber: payment == null ? void 0 : payment.approval_number,
+      salesDate: payment == null ? void 0 : payment.sales_date,
+      salesTime: payment == null ? void 0 : payment.sales_time,
+      transactionMedia: payment == null ? void 0 : payment.transaction_media,
+      cardNumber: payment == null ? void 0 : payment.card_number
+    };
+  }
+  /**
+   * Sync a specific session immediately (call after completion)
+   */
+  async syncSession(sessionId) {
+    const db2 = this.getDb();
+    const session = db2.prepare(`
+      SELECT * FROM sessions WHERE session_id = ?
+    `).get(sessionId);
+    if (!session) {
+      return false;
+    }
+    const payment = db2.prepare(`
+      SELECT * FROM payments WHERE session_id = ?
+    `).get(sessionId);
+    try {
+      const cloudData = this.mapToCloudFormat(session, payment);
+      if (!session.cloud_session_id) {
+        const response = await this.client.createSession({
+          sessionCode: session.session_id,
+          frameId: session.frame_selected
+        });
+        if (response.success && response.data) {
+          await this.client.updateSession(response.data.sessionId, cloudData);
+          db2.prepare(`
+            UPDATE sessions
+            SET cloud_synced = 1, cloud_session_id = ?
+            WHERE id = ?
+          `).run(response.data.sessionId, session.id);
+          return true;
+        }
+      } else {
+        await this.client.updateSession(session.cloud_session_id, cloudData);
+        db2.prepare(`UPDATE sessions SET cloud_synced = 1 WHERE id = ?`).run(session.id);
+        return true;
+      }
+    } catch (error) {
+      console.error(`[SessionSync] Failed to sync session ${sessionId}:`, error);
+    }
+    return false;
+  }
+  startPeriodicSync() {
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval);
+    }
+    this.syncInterval = setInterval(async () => {
+      await this.syncToCloud();
+    }, SYNC_INTERVAL);
+  }
+  stopPeriodicSync() {
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval);
+      this.syncInterval = null;
+    }
+  }
+  /**
+   * Get sync status
+   */
+  getSyncStatus() {
+    const db2 = this.getDb();
+    const pending = db2.prepare(`
+      SELECT COUNT(*) as count FROM sessions
+      WHERE cloud_synced = 0 AND completed = 1
+    `).get();
+    const synced = db2.prepare(`
+      SELECT COUNT(*) as count FROM sessions WHERE cloud_synced = 1
+    `).get();
+    return {
+      pending: (pending == null ? void 0 : pending.count) || 0,
+      synced: (synced == null ? void 0 : synced.count) || 0
+    };
+  }
+  /**
+   * Close database connection
+   */
+  close() {
+    if (this.db) {
+      this.db.close();
+      this.db = null;
+    }
+    this.stopPeriodicSync();
+  }
+}
+const POLL_INTERVAL = 3e4;
+class CommandHandler {
+  constructor(client, logger) {
+    __publicField(this, "client");
+    __publicField(this, "handlers", /* @__PURE__ */ new Map());
+    __publicField(this, "pollInterval", null);
+    __publicField(this, "isPolling", false);
+    __publicField(this, "logger", null);
+    this.client = client;
+    this.logger = logger || null;
+    this.registerDefaultHandlers();
+  }
+  // =========================================
+  // Handler Registration
+  // =========================================
+  registerHandler(type, handler) {
+    this.handlers.set(type, handler);
+  }
+  registerDefaultHandlers() {
+    this.registerHandler("restart", async (payload) => {
+      const delay = payload.delay || 3e3;
+      this.log("info", "command", `Restarting app in ${delay}ms`);
+      setTimeout(() => {
+        electron.app.relaunch();
+        electron.app.exit(0);
+      }, delay);
+      return { success: true, data: { scheduledRestart: true, delay } };
+    });
+    this.registerHandler("force-idle", async () => {
+      this.log("info", "command", "Forcing return to idle screen");
+      const mainWindow2 = electron.BrowserWindow.getAllWindows()[0];
+      if (mainWindow2) {
+        mainWindow2.webContents.send("command:force-idle");
+      }
+      return { success: true };
+    });
+    this.registerHandler("clear-cache", async (payload) => {
+      const types = payload.types || ["all"];
+      this.log("info", "command", "Clearing cache", { types });
+      return { success: true, data: { clearedTypes: types } };
+    });
+  }
+  log(level, category, message, metadata) {
+    if (this.logger) {
+      this.logger[level](category, message, metadata);
+    } else {
+      console[level](`[${category}] ${message}`, metadata || "");
+    }
+  }
+  // =========================================
+  // Polling
+  // =========================================
+  startPolling() {
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+    }
+    this.poll();
+    this.pollInterval = setInterval(() => {
+      this.poll();
+    }, POLL_INTERVAL);
+  }
+  stopPolling() {
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
+    }
+  }
+  async poll() {
+    if (this.isPolling) return;
+    this.isPolling = true;
+    try {
+      const response = await this.client.getPendingCommands();
+      if (!response.success || !response.data) {
+        return;
+      }
+      const { commands } = response.data;
+      if (commands.length === 0) {
+        return;
+      }
+      this.log("info", "command", `Received ${commands.length} pending commands`);
+      for (const command of commands) {
+        await this.executeCommand(command);
+      }
+    } catch (error) {
+      this.log("warn", "command", "Error polling for commands", { error });
+    } finally {
+      this.isPolling = false;
+    }
+  }
+  // =========================================
+  // Command Execution
+  // =========================================
+  async executeCommand(command) {
+    this.log("info", "command", `Executing command: ${command.type}`, {
+      commandId: command.id,
+      payload: command.payload
+    });
+    await this.client.acknowledgeCommand(command.id, { status: "received" });
+    const handler = this.handlers.get(command.type);
+    if (!handler) {
+      this.log("warn", "command", `Unknown command type: ${command.type}`);
+      await this.client.acknowledgeCommand(command.id, {
+        status: "failed",
+        errorMessage: `Unknown command type: ${command.type}`
+      });
+      return;
+    }
+    try {
+      const result = await handler(command.payload);
+      await this.client.acknowledgeCommand(command.id, {
+        status: result.success ? "completed" : "failed",
+        result: result.data,
+        errorMessage: result.error
+      });
+      this.log("info", "command", `Command ${command.type} ${result.success ? "completed" : "failed"}`, {
+        commandId: command.id
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      await this.client.acknowledgeCommand(command.id, {
+        status: "failed",
+        errorMessage
+      });
+      this.log("error", "command", `Command ${command.type} threw error`, {
+        commandId: command.id,
+        error: errorMessage
+      });
+    }
+  }
+  // =========================================
+  // External Handler Registration
+  // =========================================
+  setConfigUpdateHandler(handler) {
+    this.registerHandler("update-config", async () => {
+      console.log("\n🎯 ═══════════════════════════════════════════════════");
+      console.log("🎯  COMMAND RECEIVED: update-config");
+      console.log("🎯  Source: Cloud Dashboard");
+      console.log("🎯  Time:", (/* @__PURE__ */ new Date()).toLocaleString());
+      console.log("🎯  Executing config sync...");
+      console.log("🎯 ═══════════════════════════════════════════════════\n");
+      const success = await handler();
+      if (success) {
+        console.log("🎯 ✅ Config update command completed successfully\n");
+      } else {
+        console.log("🎯 ⚠️  Config update command: no changes detected\n");
+      }
+      return { success };
+    });
+  }
+  setScreenshotHandler(handler) {
+    this.registerHandler("capture-screenshot", async () => {
+      const screenshotPath = await handler();
+      return { success: true, data: { path: screenshotPath } };
+    });
+  }
+  setDiagnosticsHandler(handler) {
+    this.registerHandler("run-diagnostics", async (payload) => {
+      const tests = payload.tests || ["all"];
+      const results = await handler(tests);
+      return { success: true, data: results };
+    });
+  }
+}
+const HEARTBEAT_INTERVAL = 6e4;
+class HeartbeatManager {
+  constructor(client, configSync2, logger) {
+    __publicField(this, "client");
+    __publicField(this, "configSync");
+    __publicField(this, "interval", null);
+    __publicField(this, "status", "online");
+    __publicField(this, "peripheralStatus", {
+      camera: "offline",
+      printer: "offline",
+      cardReader: "offline"
+    });
+    __publicField(this, "startTime");
+    __publicField(this, "sessionsToday", 0);
+    __publicField(this, "onConfigUpdateAvailable");
+    __publicField(this, "configVersion", "unknown");
+    __publicField(this, "logger", null);
+    this.client = client;
+    this.configSync = configSync2 || null;
+    this.logger = logger || null;
+    this.startTime = Date.now();
+  }
+  log(level, category, message, metadata) {
+    if (this.logger) {
+      this.logger[level](category, message, metadata);
+    } else {
+      console[level](`[${category}] ${message}`, metadata || "");
+    }
+  }
+  // =========================================
+  // Lifecycle
+  // =========================================
+  start() {
+    if (this.interval) {
+      clearInterval(this.interval);
+    }
+    this.sendHeartbeat();
+    this.interval = setInterval(() => {
+      this.sendHeartbeat();
+    }, HEARTBEAT_INTERVAL);
+    this.log("info", "system", "Heartbeat manager started");
+  }
+  stop() {
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+    this.log("info", "system", "Heartbeat manager stopped");
+  }
+  // =========================================
+  // Heartbeat
+  // =========================================
+  async sendHeartbeat() {
+    try {
+      const metrics = await this.collectMetrics();
+      const uptime = Math.floor((Date.now() - this.startTime) / 1e3);
+      if (this.configSync) {
+        this.configVersion = this.configSync.getCloudVersion();
+      }
+      const response = await this.client.sendHeartbeat({
+        status: this.status,
+        configVersion: this.configVersion,
+        uptime,
+        peripheralStatus: this.peripheralStatus,
+        metrics
+      });
+      if (response.success && response.data) {
+        if (response.data.configUpdateAvailable && this.onConfigUpdateAvailable) {
+          console.log("\n🔔 ═══════════════════════════════════════════════════");
+          console.log("🔔  CLOUD SERVER: Config Update Available!");
+          console.log("🔔  Server Time:", response.data.serverTime);
+          console.log("🔔  Triggering config sync...");
+          console.log("🔔 ═══════════════════════════════════════════════════\n");
+          this.onConfigUpdateAvailable();
+        }
+      } else {
+        this.log("warn", "cloud", "Heartbeat failed", { error: response.error });
+      }
+    } catch (error) {
+      this.log("warn", "cloud", "Error sending heartbeat", { error });
+    }
+  }
+  async collectMetrics() {
+    const cpus = os__namespace.cpus();
+    let totalIdle = 0;
+    let totalTick = 0;
+    for (const cpu of cpus) {
+      for (const type in cpu.times) {
+        totalTick += cpu.times[type];
+      }
+      totalIdle += cpu.times.idle;
+    }
+    const cpuUsage = Math.round(100 - totalIdle / totalTick * 100);
+    const totalMem = os__namespace.totalmem();
+    const freeMem = os__namespace.freemem();
+    const memoryUsage = Math.round((totalMem - freeMem) / totalMem * 100);
+    return {
+      cpuUsage,
+      memoryUsage,
+      sessionsToday: this.sessionsToday
+    };
+  }
+  // =========================================
+  // Status Updates
+  // =========================================
+  setStatus(status) {
+    this.status = status;
+  }
+  setPeripheralStatus(peripheral, status) {
+    this.peripheralStatus[peripheral] = status;
+  }
+  setCameraStatus(status) {
+    this.peripheralStatus.camera = status;
+  }
+  setPrinterStatus(status) {
+    this.peripheralStatus.printer = status;
+  }
+  setCardReaderStatus(status) {
+    this.peripheralStatus.cardReader = status;
+  }
+  incrementSessionsToday() {
+    this.sessionsToday++;
+  }
+  resetSessionsToday() {
+    this.sessionsToday = 0;
+  }
+  setConfigVersion(version) {
+    this.configVersion = version;
+  }
+  // =========================================
+  // Config Update Callback
+  // =========================================
+  onConfigUpdate(callback) {
+    this.onConfigUpdateAvailable = callback;
+  }
+  // =========================================
+  // Getters
+  // =========================================
+  getStatus() {
+    return this.status;
+  }
+  getPeripheralStatus() {
+    return { ...this.peripheralStatus };
+  }
+  getUptime() {
+    return Math.floor((Date.now() - this.startTime) / 1e3);
+  }
+}
+const execAsync = util.promisify(child_process.exec);
+async function getWindowsUUID() {
+  var _a;
+  try {
+    const { stdout } = await execAsync("wmic csproduct get uuid");
+    const lines = stdout.trim().split("\n");
+    return ((_a = lines[1]) == null ? void 0 : _a.trim()) || "";
+  } catch {
+    return "";
+  }
+}
+async function getWindowsCpuId() {
+  var _a;
+  try {
+    const { stdout } = await execAsync("wmic cpu get processorid");
+    const lines = stdout.trim().split("\n");
+    return ((_a = lines[1]) == null ? void 0 : _a.trim()) || "";
+  } catch {
+    return "";
+  }
+}
+async function getWindowsDiskSerial() {
+  var _a;
+  try {
+    const { stdout } = await execAsync("wmic diskdrive get serialnumber");
+    const lines = stdout.trim().split("\n");
+    return ((_a = lines[1]) == null ? void 0 : _a.trim()) || "";
+  } catch {
+    return "";
+  }
+}
+async function getMacAddress() {
+  try {
+    const networkInterfaces = os__namespace.networkInterfaces();
+    for (const [, interfaces] of Object.entries(networkInterfaces)) {
+      if (!interfaces) continue;
+      for (const iface of interfaces) {
+        if (!iface.internal && iface.mac && iface.mac !== "00:00:00:00:00:00") {
+          return iface.mac;
+        }
+      }
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+async function getMacOsUUID() {
+  try {
+    const { stdout } = await execAsync(
+      `ioreg -rd1 -c IOPlatformExpertDevice | awk '/IOPlatformUUID/ { split($0, a, "\\""); print a[4] }'`
+    );
+    return stdout.trim();
+  } catch {
+    return "";
+  }
+}
+async function generateHardwareId() {
+  const platform = os__namespace.platform();
+  let components = [];
+  if (platform === "win32") {
+    const [uuid, cpuId, diskSerial, mac] = await Promise.all([
+      getWindowsUUID(),
+      getWindowsCpuId(),
+      getWindowsDiskSerial(),
+      getMacAddress()
+    ]);
+    components = [uuid, cpuId, diskSerial, mac];
+  } else if (platform === "darwin") {
+    const [uuid, mac] = await Promise.all([
+      getMacOsUUID(),
+      getMacAddress()
+    ]);
+    components = [uuid, mac];
+  } else {
+    const mac = await getMacAddress();
+    components = [os__namespace.hostname(), mac];
+  }
+  const fingerprint = components.filter(Boolean).join("|");
+  if (!fingerprint) {
+    const fallback = `${os__namespace.hostname()}-${Date.now()}`;
+    return crypto.createHash("sha256").update(fallback).digest("hex").substring(0, 32);
+  }
+  return crypto.createHash("sha256").update(fingerprint).digest("hex").substring(0, 32);
+}
+async function getHardwareInfo() {
+  var _a;
+  const cpus = os__namespace.cpus();
+  return {
+    os: os__namespace.platform() === "win32" ? "Windows" : os__namespace.platform() === "darwin" ? "macOS" : "Linux",
+    osVersion: os__namespace.release(),
+    hostname: os__namespace.hostname(),
+    cpu: ((_a = cpus[0]) == null ? void 0 : _a.model) || "Unknown",
+    cpuCores: cpus.length,
+    ramTotal: Math.round(os__namespace.totalmem() / 1024 / 1024),
+    platform: os__namespace.platform(),
+    arch: os__namespace.arch()
+  };
+}
+let cachedHardwareId = null;
+async function getHardwareId() {
+  if (cachedHardwareId) {
+    return cachedHardwareId;
+  }
+  cachedHardwareId = await generateHardwareId();
+  return cachedHardwareId;
+}
 try {
+  const envPath = electron.app.isPackaged ? path__namespace.join(process.resourcesPath, ".env") : path__namespace.join(__dirname, "../.env");
   require("dotenv").config({
-    path: path__namespace.join(__dirname, "../.env"),
+    path: envPath,
     override: true
   });
+  console.log(`Loaded .env from: ${envPath}`);
 } catch (e) {
+  console.warn("Could not load .env file:", e);
 }
 let mainWindow = null;
 let hologramWindow = null;
@@ -3308,6 +4650,12 @@ let pythonBridge = null;
 let cameraController = null;
 let printerController = null;
 let cardReader = null;
+let cloudClient = null;
+let configSync = null;
+let sessionSync = null;
+let commandHandler = null;
+let heartbeatManager = null;
+const isCloudEnabled = !!(process.env.CLOUD_API_URL && process.env.CLOUD_API_KEY);
 let hologramState = {
   mode: "logo"
 };
@@ -3322,6 +4670,122 @@ let displaySettings = {
 };
 function getHologramTargetWindow() {
   return displaySettings.splitScreenMode ? mainWindow : hologramWindow;
+}
+async function initializeCloudIntegration() {
+  var _a;
+  if (!isCloudEnabled) {
+    console.log("☁️ Cloud integration disabled (no CLOUD_API_URL or CLOUD_API_KEY)");
+    return;
+  }
+  console.log("☁️ Initializing cloud integration...");
+  try {
+    cloudClient = CloudClient.initialize({
+      apiUrl: process.env.CLOUD_API_URL,
+      apiKey: process.env.CLOUD_API_KEY,
+      organizationId: process.env.CLOUD_ORG_ID || ""
+    });
+    initializeLogger(cloudClient, {
+      minLevel: process.env.LOG_LEVEL || "info",
+      consoleOutput: true
+    });
+    const logger = getLogger();
+    logger.info("system", "Cloud client initialized");
+    const hardwareId = await getHardwareId();
+    const hardwareInfo = await getHardwareInfo();
+    logger.info("system", "Hardware ID generated", { hardwareId });
+    if (!cloudClient.isRegistered()) {
+      logger.info("system", "Registering machine with cloud...");
+      const result = await cloudClient.register(hardwareId, hardwareInfo);
+      if (result.success) {
+        logger.info("system", "Machine registered successfully", {
+          machineId: (_a = result.data) == null ? void 0 : _a.machineId
+        });
+      } else {
+        logger.error("system", "Machine registration failed", {
+          error: result.error
+        });
+        return;
+      }
+    }
+    configSync = new ConfigSyncManager(cloudClient);
+    await configSync.initialize();
+    logger.info("system", "Config sync manager initialized", {
+      version: configSync.getCloudVersion()
+    });
+    sessionSync = new SessionSyncManager(cloudClient);
+    await sessionSync.initialize();
+    logger.info("system", "Session sync manager initialized");
+    commandHandler = new CommandHandler(cloudClient, logger);
+    commandHandler.setConfigUpdateHandler(async () => {
+      return await configSync.sync();
+    });
+    commandHandler.setDiagnosticsHandler(async (tests) => {
+      return await runDiagnostics(tests);
+    });
+    commandHandler.startPolling();
+    logger.info("system", "Command handler started");
+    heartbeatManager = new HeartbeatManager(cloudClient, configSync, logger);
+    heartbeatManager.onConfigUpdate(() => {
+      configSync == null ? void 0 : configSync.sync();
+    });
+    heartbeatManager.start();
+    logger.info("system", "Heartbeat manager started");
+    cloudClient.onReregistered(async (data) => {
+      logger.info("system", "Machine was automatically re-registered", {
+        machineId: data.machineId
+      });
+      if (configSync) {
+        await configSync.sync();
+      }
+      updatePeripheralStatus();
+    });
+    updatePeripheralStatus();
+    console.log("✅ Cloud integration initialized successfully");
+  } catch (error) {
+    console.error("❌ Cloud integration failed:", error);
+  }
+}
+function updatePeripheralStatus() {
+  if (!heartbeatManager) return;
+  if (cameraController) {
+    const cameraStatus = cameraController.getStatus();
+    heartbeatManager.setCameraStatus(cameraStatus.connected ? "ok" : "offline");
+  }
+  if (printerController) {
+    printerController.getStatus().then((status) => {
+      if (!heartbeatManager) return;
+      if (!status.available) {
+        heartbeatManager.setPrinterStatus("offline");
+      } else if (status.paperLevel < 10) {
+        heartbeatManager.setPrinterStatus("paper_low");
+      } else {
+        heartbeatManager.setPrinterStatus("ok");
+      }
+    });
+  }
+  if (cardReader) {
+    const readerStatus = cardReader.getStatus();
+    heartbeatManager.setCardReaderStatus(readerStatus.connected ? "ok" : "offline");
+  }
+}
+async function runDiagnostics(tests) {
+  var _a;
+  const results = {};
+  if (tests.includes("all") || tests.includes("camera")) {
+    results.camera = {
+      connected: (cameraController == null ? void 0 : cameraController.getStatus().connected) || false
+    };
+  }
+  if (tests.includes("all") || tests.includes("printer")) {
+    const printerStatus = await (printerController == null ? void 0 : printerController.getStatus());
+    results.printer = printerStatus;
+  }
+  if (tests.includes("all") || tests.includes("payment")) {
+    results.payment = {
+      connected: ((_a = cardReader == null ? void 0 : cardReader.getStatus()) == null ? void 0 : _a.connected) || false
+    };
+  }
+  return results;
 }
 function createWindow() {
   const displays = electron.screen.getAllDisplays();
@@ -3359,42 +4823,88 @@ function createWindow() {
     mainWindow = null;
   });
 }
+let hologramWindowReadyPromise = null;
+let hologramWindowReadyResolve = null;
 function createHologramWindow() {
+  console.log("📺 [Hologram] Creating hologram window...");
+  if (hologramWindow && !hologramWindow.isDestroyed()) {
+    console.log("📺 [Hologram] Window already exists, skipping creation");
+    return Promise.resolve();
+  }
+  hologramWindowReadyPromise = new Promise((resolve) => {
+    hologramWindowReadyResolve = resolve;
+  });
   const displays = electron.screen.getAllDisplays();
+  console.log(`📺 [Hologram] Available displays: ${displays.length}`);
   const hologramDisplayIndex = displaySettings.swapDisplays ? 0 : displays.length > 1 ? 1 : 0;
   const hologramDisplay = displays[hologramDisplayIndex];
   const { x, y, width, height } = hologramDisplay.bounds;
-  console.log(`📺 Hologram window will be on display ${hologramDisplayIndex + 1}${displaySettings.swapDisplays ? " (swapped)" : ""}`);
-  hologramWindow = new electron.BrowserWindow({
-    x,
-    y,
-    width: isDevelopment ? width : displaySettings.hologramWidth,
-    height: isDevelopment ? height : displaySettings.hologramHeight,
-    fullscreen: false,
-    frame: isDevelopment,
-    // No frame in production
-    show: true,
-    alwaysOnTop: !isDevelopment,
-    // Stay on top in production
-    webPreferences: {
-      preload: path__namespace.join(__dirname, "preload.js"),
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true,
-      webSecurity: false
-    }
-  });
-  if (isDevelopment) {
-    hologramWindow.loadURL("http://localhost:5173/#/hologram");
-  } else {
-    hologramWindow.loadFile(path__namespace.join(__dirname, "../dist/index.html"), {
-      hash: "/hologram"
+  console.log(`📺 [Hologram] Using display ${hologramDisplayIndex + 1}${displaySettings.swapDisplays ? " (swapped)" : ""}`);
+  console.log(`📺 [Hologram] Display bounds: ${width}x${height} at (${x}, ${y})`);
+  try {
+    hologramWindow = new electron.BrowserWindow({
+      x,
+      y,
+      width: isDevelopment ? width : displaySettings.hologramWidth,
+      height: isDevelopment ? height : displaySettings.hologramHeight,
+      fullscreen: false,
+      frame: isDevelopment,
+      // No frame in production
+      show: true,
+      alwaysOnTop: !isDevelopment,
+      // Stay on top in production
+      webPreferences: {
+        preload: path__namespace.join(__dirname, "preload.js"),
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        webSecurity: false
+      }
     });
-  }
-  hologramWindow.on("closed", () => {
+    console.log("📺 [Hologram] BrowserWindow created successfully");
+    if (isDevelopment) {
+      const url = "http://localhost:5173/#/hologram";
+      console.log(`📺 [Hologram] Loading URL (dev): ${url}`);
+      hologramWindow.loadURL(url);
+    } else {
+      const filePath = path__namespace.join(__dirname, "../dist/index.html");
+      console.log(`📺 [Hologram] Loading file (prod): ${filePath}`);
+      hologramWindow.loadFile(filePath, {
+        hash: "/hologram"
+      });
+    }
+    hologramWindow.webContents.on("did-finish-load", () => {
+      console.log("✅ [Hologram] Page finished loading");
+      setTimeout(() => {
+        console.log("✅ [Hologram] Window fully ready (React mounted)");
+        if (hologramWindowReadyResolve) {
+          hologramWindowReadyResolve();
+          hologramWindowReadyResolve = null;
+        }
+      }, 500);
+    });
+    hologramWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription) => {
+      console.error(`❌ [Hologram] Page failed to load: ${errorDescription} (${errorCode})`);
+      if (hologramWindowReadyResolve) {
+        hologramWindowReadyResolve();
+        hologramWindowReadyResolve = null;
+      }
+    });
+    hologramWindow.on("closed", () => {
+      console.log("📺 [Hologram] Window closed");
+      hologramWindow = null;
+      hologramWindowReadyPromise = null;
+    });
+    console.log(`📺 [Hologram] Window configured: ${displaySettings.hologramWidth}x${displaySettings.hologramHeight} at (${x}, ${y}) on display ${hologramDisplayIndex + 1}`);
+  } catch (error) {
+    console.error("❌ [Hologram] Failed to create window:", error);
     hologramWindow = null;
-  });
-  console.log(`📺 Hologram window: ${displaySettings.hologramWidth}x${displaySettings.hologramHeight} at (${x}, ${y}) on display ${hologramDisplayIndex + 1}`);
+    if (hologramWindowReadyResolve) {
+      hologramWindowReadyResolve();
+      hologramWindowReadyResolve = null;
+    }
+  }
+  return hologramWindowReadyPromise || Promise.resolve();
 }
 electron.app.whenReady().then(async () => {
   console.log("🚀 Initializing MUT Hologram Studio...");
@@ -3439,7 +4949,7 @@ electron.app.whenReady().then(async () => {
     console.log("✅ Python bridge initialized");
   }
   pythonBridge.on("progress", (progress) => {
-    mainWindow?.webContents.send("video:progress", progress);
+    mainWindow == null ? void 0 : mainWindow.webContents.send("video:progress", progress);
   });
   const cameraConfig = getCameraConfig();
   cameraController = new CameraController({
@@ -3474,28 +4984,29 @@ electron.app.whenReady().then(async () => {
     const mode = useMockCardReader ? "mock mode" : `TL3600 on ${tl3600Config.port}`;
     console.log(`✅ Card reader initialized (${mode})`);
     cardReader.on("status", (statusUpdate) => {
-      mainWindow?.webContents.send("payment:status", statusUpdate);
+      mainWindow == null ? void 0 : mainWindow.webContents.send("payment:status", statusUpdate);
     });
     if (!useMockCardReader) {
       cardReader.on("cardRemoved", () => {
-        mainWindow?.webContents.send("payment:card-removed");
+        mainWindow == null ? void 0 : mainWindow.webContents.send("payment:card-removed");
       });
       cardReader.on("paymentComplete", (result) => {
-        mainWindow?.webContents.send("payment:complete", result);
+        mainWindow == null ? void 0 : mainWindow.webContents.send("payment:complete", result);
       });
       cardReader.on("error", (error) => {
-        mainWindow?.webContents.send("payment:error", {
+        mainWindow == null ? void 0 : mainWindow.webContents.send("payment:error", {
           message: error instanceof Error ? error.message : "Unknown error"
         });
       });
       cardReader.on("disconnected", () => {
-        mainWindow?.webContents.send("payment:disconnected");
+        mainWindow == null ? void 0 : mainWindow.webContents.send("payment:disconnected");
       });
     }
   } else {
     console.error("⚠️  Card reader initialization failed:", cardReaderResult.error);
   }
   console.log("✅ All systems initialized\n");
+  await initializeCloudIntegration();
   createWindow();
   if (!displaySettings.splitScreenMode) {
     console.log("📺 Creating separate hologram window (dual-monitor mode)");
@@ -3594,10 +5105,12 @@ electron.ipcMain.handle("printer:print", async (_event, options) => {
     };
   }
   try {
+    const progressHandler = (progressData) => {
+      mainWindow == null ? void 0 : mainWindow.webContents.send("printer:progress", progressData);
+    };
+    printerController.on("progress", progressHandler);
     const result = await printerController.print(options);
-    printerController.on("progress", (progressData) => {
-      mainWindow?.webContents.send("printer:progress", progressData);
-    });
+    printerController.off("progress", progressHandler);
     return result;
   } catch (error) {
     return {
@@ -3625,15 +5138,16 @@ electron.ipcMain.handle("video:process", async (_event, params) => {
       frameOverlayPath = path__namespace.join(electron.app.getAppPath(), "public", relativePath);
       console.log(`   Frame overlay converted: ${params.chromaVideo} -> ${frameOverlayPath}`);
     }
+    if (electron.app.isPackaged) {
+      const frameName = path__namespace.basename(frameOverlayPath);
+      frameOverlayPath = path__namespace.join(process.resourcesPath, "frames", frameName);
+      console.log(`   Production frame path (extraResources): ${frameOverlayPath}`);
+    }
     const result = await pythonBridge.processVideo({
       inputVideo: params.inputVideo,
       frameOverlay: frameOverlayPath,
       subtitleText: params.subtitleText,
       s3Folder: params.s3Folder || "mut-hologram"
-    });
-    mainWindow?.webContents.send("video:complete", {
-      success: true,
-      result
     });
     return {
       success: true,
@@ -3642,10 +5156,6 @@ electron.ipcMain.handle("video:process", async (_event, params) => {
   } catch (error) {
     console.error("Video processing error:", error);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    mainWindow?.webContents.send("video:complete", {
-      success: false,
-      error: errorMessage
-    });
     return {
       success: false,
       error: errorMessage
@@ -3677,7 +5187,7 @@ ${"=".repeat(70)}`);
   try {
     const progressListener = (progress) => {
       console.log(`📊 [IPC] Progress: ${progress.step} - ${progress.progress}% - ${progress.message}`);
-      mainWindow?.webContents.send("video:progress", progress);
+      mainWindow == null ? void 0 : mainWindow.webContents.send("video:progress", progress);
     };
     pythonBridge.on("progress", progressListener);
     const result = await pythonBridge.processFromImages({
@@ -3694,10 +5204,6 @@ ${"=".repeat(70)}`);
     console.log(`   QR Code: ${result.qrCodePath}`);
     console.log(`${"=".repeat(70)}
 `);
-    mainWindow?.webContents.send("video:complete", {
-      success: true,
-      result
-    });
     return {
       success: true,
       result
@@ -3707,10 +5213,6 @@ ${"=".repeat(70)}`);
     console.log(`${"=".repeat(70)}
 `);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    mainWindow?.webContents.send("video:complete", {
-      success: false,
-      error: errorMessage
-    });
     return {
       success: false,
       error: errorMessage
@@ -3829,11 +5331,11 @@ electron.ipcMain.handle("payment:process", async (_event, params) => {
       currency: params.currency || "KRW",
       description: params.description || "Photo print"
     });
-    mainWindow?.webContents.send("payment:complete", result);
+    mainWindow == null ? void 0 : mainWindow.webContents.send("payment:complete", result);
     return result;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    mainWindow?.webContents.send("payment:complete", {
+    mainWindow == null ? void 0 : mainWindow.webContents.send("payment:complete", {
       success: false,
       status: "error",
       error: errorMessage
@@ -3917,18 +5419,26 @@ electron.ipcMain.handle("payment:list-ports", async () => {
   }
 });
 electron.ipcMain.handle("hologram:set-mode", async (_event, mode, data) => {
-  console.log("🎭 Hologram mode change requested:", mode);
+  console.log("🎭 [IPC] hologram:set-mode called:", mode);
   hologramState = {
     mode,
-    qrCodePath: data?.qrCodePath,
-    videoPath: data?.videoPath
+    qrCodePath: data == null ? void 0 : data.qrCodePath,
+    videoPath: data == null ? void 0 : data.videoPath
   };
-  console.log("💾 Hologram state stored:", hologramState);
-  const targetWindow = getHologramTargetWindow();
+  console.log("💾 [IPC] Hologram state stored:", hologramState);
+  let targetWindow = getHologramTargetWindow();
+  const windowName = displaySettings.splitScreenMode ? "main window" : "hologram window";
+  if (!targetWindow && !displaySettings.splitScreenMode) {
+    console.warn(`⚠️ [IPC] ${windowName} is NULL - attempting to recreate...`);
+    await createHologramWindow();
+    targetWindow = getHologramTargetWindow();
+  }
   if (!targetWindow) {
-    return { success: false, error: "Target window not initialized" };
+    console.error(`❌ [IPC] ${windowName} is NULL - cannot send message!`);
+    return { success: false, error: `${windowName} not initialized` };
   }
   targetWindow.webContents.send("hologram:update", hologramState);
+  console.log(`✅ [IPC] hologram:update sent to ${windowName}`);
   return { success: true };
 });
 electron.ipcMain.handle("hologram:show-qr", async (_event, qrCodePath, videoPath) => {
@@ -3941,10 +5451,15 @@ electron.ipcMain.handle("hologram:show-qr", async (_event, qrCodePath, videoPath
     videoPath
   };
   console.log("💾 [IPC] Hologram state updated:", JSON.stringify(hologramState));
-  const targetWindow = getHologramTargetWindow();
+  let targetWindow = getHologramTargetWindow();
   const windowName = displaySettings.splitScreenMode ? "main window" : "hologram window";
+  if (!targetWindow && !displaySettings.splitScreenMode) {
+    console.warn(`⚠️ [IPC] ${windowName} is NULL - attempting to recreate...`);
+    await createHologramWindow();
+    targetWindow = getHologramTargetWindow();
+  }
   if (!targetWindow) {
-    console.error(`❌ [IPC] ${windowName} is NULL - cannot send message!`);
+    console.error(`❌ [IPC] ${windowName} is still NULL after recreation attempt!`);
     return { success: false, error: `${windowName} not initialized` };
   }
   if (targetWindow.isDestroyed()) {
@@ -3960,16 +5475,28 @@ electron.ipcMain.handle("hologram:show-qr", async (_event, qrCodePath, videoPath
   return { success: true };
 });
 electron.ipcMain.handle("hologram:show-logo", async () => {
-  console.log("🎭 Hologram showing logo");
+  console.log("🎭 [IPC] hologram:show-logo called");
   hologramState = {
     mode: "logo"
   };
-  console.log("💾 Hologram state stored:", hologramState);
-  const targetWindow = getHologramTargetWindow();
+  console.log("💾 [IPC] Hologram state stored:", hologramState);
+  let targetWindow = getHologramTargetWindow();
+  const windowName = displaySettings.splitScreenMode ? "main window" : "hologram window";
+  if (!targetWindow && !displaySettings.splitScreenMode) {
+    console.warn(`⚠️ [IPC] ${windowName} is NULL - attempting to recreate...`);
+    await createHologramWindow();
+    targetWindow = getHologramTargetWindow();
+  }
   if (!targetWindow) {
-    return { success: false, error: "Target window not initialized" };
+    console.error(`❌ [IPC] ${windowName} is NULL - cannot send message!`);
+    return { success: false, error: `${windowName} not initialized` };
+  }
+  if (targetWindow.isDestroyed()) {
+    console.error(`❌ [IPC] ${windowName} is DESTROYED - cannot send message!`);
+    return { success: false, error: `${windowName} destroyed` };
   }
   targetWindow.webContents.send("hologram:update", hologramState);
+  console.log(`✅ [IPC] hologram:update sent to ${windowName}`);
   return { success: true };
 });
 electron.ipcMain.handle("hologram:get-state", async () => {
@@ -4184,6 +5711,25 @@ electron.ipcMain.handle("config:get-path", async () => {
     path: appConfig.getConfigPath()
   };
 });
-electron.app.on("before-quit", () => {
+electron.app.on("before-quit", async () => {
+  if (heartbeatManager) {
+    heartbeatManager.stop();
+  }
+  if (commandHandler) {
+    commandHandler.stopPolling();
+  }
+  if (sessionSync) {
+    sessionSync.close();
+  }
+  if (configSync) {
+    configSync.stopPeriodicSync();
+  }
+  try {
+    const logger = getLogger();
+    if (logger) {
+      await logger.shutdown();
+    }
+  } catch {
+  }
   closeDatabase();
 });

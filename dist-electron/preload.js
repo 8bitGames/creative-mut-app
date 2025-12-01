@@ -1,1 +1,129 @@
-"use strict";const{contextBridge:s,ipcRenderer:t}=require("electron"),i={startPreview:()=>t.invoke("camera:start-preview"),stopPreview:()=>t.invoke("camera:stop-preview"),capture:()=>t.invoke("camera:capture")},c={getStatus:()=>t.invoke("printer:get-status"),print:e=>t.invoke("printer:print",e)},v={saveBlob:(e,n)=>t.invoke("image:save-blob",e,n)},p={saveBuffer:(e,n)=>t.invoke("video:save-buffer",e,n),process:e=>t.invoke("video:process",e),processFromImages:e=>t.invoke("video:process-from-images",e),extractFrames:(e,n)=>t.invoke("video:extract-frames",e,n),cancel:e=>t.invoke("video:cancel",e),onProgress:e=>{const n=(a,o)=>e(o);return t.on("video:progress",n),()=>t.removeListener("video:progress",n)},onComplete:e=>{const n=(a,o)=>e(o);return t.on("video:complete",n),()=>t.removeListener("video:complete",n)}},m={process:e=>t.invoke("payment:process",e),cancel:()=>t.invoke("payment:cancel"),getStatus:()=>t.invoke("payment:get-status"),cancelTransaction:e=>t.invoke("payment:cancel-transaction",e),listPorts:()=>t.invoke("payment:list-ports"),onStatus:e=>{const n=(a,o)=>e(o);return t.on("payment:status",n),()=>t.removeListener("payment:status",n)},onComplete:e=>{const n=(a,o)=>e(o);return t.on("payment:complete",n),()=>t.removeListener("payment:complete",n)},onCardRemoved:e=>{const n=()=>e();return t.on("payment:card-removed",n),()=>t.removeListener("payment:card-removed",n)},onError:e=>{const n=(a,o)=>e(o);return t.on("payment:error",n),()=>t.removeListener("payment:error",n)},onDisconnected:e=>{const n=()=>e();return t.on("payment:disconnected",n),()=>t.removeListener("payment:disconnected",n)}},d={readAsDataUrl:e=>t.invoke("file:read-as-data-url",e),delete:e=>t.invoke("file:delete",e)},l={sessionStart:(e,n)=>t.invoke("analytics:session-start",e,n),sessionEnd:(e,n)=>t.invoke("analytics:session-end",e,n),updateFrame:(e,n)=>t.invoke("analytics:update-frame",e,n),updateImages:(e,n)=>t.invoke("analytics:update-images",e,n),recordPayment:(e,n,a,o,r)=>t.invoke("analytics:record-payment",e,n,a,o,r),recordPrint:(e,n,a,o)=>t.invoke("analytics:record-print",e,n,a,o),getDashboardStats:()=>t.invoke("analytics:get-dashboard-stats"),getFlowStatistics:()=>t.invoke("analytics:get-flow-statistics"),insertSampleData:()=>t.invoke("analytics:insert-sample-data")},g={get:()=>t.invoke("config:get"),update:e=>t.invoke("config:update",e),updateTL3600:e=>t.invoke("config:update-tl3600",e),updatePayment:e=>t.invoke("config:update-payment",e),updateCamera:e=>t.invoke("config:update-camera",e),updateDisplay:e=>t.invoke("config:update-display",e),reset:()=>t.invoke("config:reset"),getPath:()=>t.invoke("config:get-path")},k={setMode:(e,n)=>t.invoke("hologram:set-mode",e,n),showQR:(e,n)=>t.invoke("hologram:show-qr",e,n),showLogo:()=>t.invoke("hologram:show-logo"),getState:()=>t.invoke("hologram:get-state")},u={on:(e,n)=>{t.on(e,(a,...o)=>n(...o))},removeListener:(e,n)=>{t.removeListener(e,n)}};s.exposeInMainWorld("electron",{camera:i,printer:c,image:v,video:p,payment:m,file:d,analytics:l,config:g,hologram:k,ipcRenderer:u});
+"use strict";
+const { contextBridge, ipcRenderer } = require("electron");
+const cameraAPI = {
+  startPreview: () => ipcRenderer.invoke("camera:start-preview"),
+  stopPreview: () => ipcRenderer.invoke("camera:stop-preview"),
+  capture: () => ipcRenderer.invoke("camera:capture")
+};
+const printerAPI = {
+  getStatus: () => ipcRenderer.invoke("printer:get-status"),
+  print: (options) => ipcRenderer.invoke("printer:print", options)
+};
+const imageAPI = {
+  saveBlob: (blobData, filename) => ipcRenderer.invoke("image:save-blob", blobData, filename)
+};
+const videoAPI = {
+  saveBuffer: (byteArray, filename) => ipcRenderer.invoke("video:save-buffer", byteArray, filename),
+  process: (params) => ipcRenderer.invoke("video:process", params),
+  processFromImages: (params) => ipcRenderer.invoke("video:process-from-images", params),
+  extractFrames: (videoPath, timestamps) => ipcRenderer.invoke("video:extract-frames", videoPath, timestamps),
+  cancel: (taskId) => ipcRenderer.invoke("video:cancel", taskId),
+  onProgress: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on("video:progress", listener);
+    return () => ipcRenderer.removeListener("video:progress", listener);
+  },
+  onComplete: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on("video:complete", listener);
+    return () => ipcRenderer.removeListener("video:complete", listener);
+  }
+};
+const paymentAPI = {
+  process: (params) => ipcRenderer.invoke("payment:process", params),
+  cancel: () => ipcRenderer.invoke("payment:cancel"),
+  getStatus: () => ipcRenderer.invoke("payment:get-status"),
+  // Cancel a previous transaction (for dashboard manual cancellation)
+  cancelTransaction: (params) => ipcRenderer.invoke("payment:cancel-transaction", params),
+  // List available COM ports for TL3600 configuration
+  listPorts: () => ipcRenderer.invoke("payment:list-ports"),
+  // Payment status events
+  onStatus: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on("payment:status", listener);
+    return () => ipcRenderer.removeListener("payment:status", listener);
+  },
+  // Payment completion event
+  onComplete: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on("payment:complete", listener);
+    return () => ipcRenderer.removeListener("payment:complete", listener);
+  },
+  // Card removed event (TL3600 only)
+  onCardRemoved: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("payment:card-removed", listener);
+    return () => ipcRenderer.removeListener("payment:card-removed", listener);
+  },
+  // Payment error event
+  onError: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on("payment:error", listener);
+    return () => ipcRenderer.removeListener("payment:error", listener);
+  },
+  // Terminal disconnected event
+  onDisconnected: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("payment:disconnected", listener);
+    return () => ipcRenderer.removeListener("payment:disconnected", listener);
+  }
+};
+const fileAPI = {
+  readAsDataUrl: (filePath) => ipcRenderer.invoke("file:read-as-data-url", filePath),
+  delete: (filePath) => ipcRenderer.invoke("file:delete", filePath)
+};
+const analyticsAPI = {
+  sessionStart: (sessionId, startTime) => ipcRenderer.invoke("analytics:session-start", sessionId, startTime),
+  sessionEnd: (sessionId, endTime) => ipcRenderer.invoke("analytics:session-end", sessionId, endTime),
+  updateFrame: (sessionId, frameName) => ipcRenderer.invoke("analytics:update-frame", sessionId, frameName),
+  updateImages: (sessionId, imageCount) => ipcRenderer.invoke("analytics:update-images", sessionId, imageCount),
+  recordPayment: (sessionId, amount, status, errorMessage, details) => ipcRenderer.invoke("analytics:record-payment", sessionId, amount, status, errorMessage, details),
+  recordPrint: (sessionId, imagePath, success, errorMessage) => ipcRenderer.invoke("analytics:record-print", sessionId, imagePath, success, errorMessage),
+  getDashboardStats: () => ipcRenderer.invoke("analytics:get-dashboard-stats"),
+  getFlowStatistics: () => ipcRenderer.invoke("analytics:get-flow-statistics"),
+  insertSampleData: () => ipcRenderer.invoke("analytics:insert-sample-data")
+};
+const configAPI = {
+  // Get current configuration
+  get: () => ipcRenderer.invoke("config:get"),
+  // Update full configuration
+  update: (updates) => ipcRenderer.invoke("config:update", updates),
+  // Update TL3600 settings only
+  updateTL3600: (updates) => ipcRenderer.invoke("config:update-tl3600", updates),
+  // Update payment settings only
+  updatePayment: (updates) => ipcRenderer.invoke("config:update-payment", updates),
+  // Update camera settings only
+  updateCamera: (updates) => ipcRenderer.invoke("config:update-camera", updates),
+  // Update display settings only
+  updateDisplay: (updates) => ipcRenderer.invoke("config:update-display", updates),
+  // Reset to default configuration
+  reset: () => ipcRenderer.invoke("config:reset"),
+  // Get config file path (for user reference)
+  getPath: () => ipcRenderer.invoke("config:get-path")
+};
+const hologramAPI = {
+  setMode: (mode, data) => ipcRenderer.invoke("hologram:set-mode", mode, data),
+  showQR: (qrCodePath, videoPath) => ipcRenderer.invoke("hologram:show-qr", qrCodePath, videoPath),
+  showLogo: () => ipcRenderer.invoke("hologram:show-logo"),
+  getState: () => ipcRenderer.invoke("hologram:get-state")
+};
+const ipcRendererAPI = {
+  on: (channel, callback) => {
+    ipcRenderer.on(channel, (_event, ...args) => callback(...args));
+  },
+  removeListener: (channel, callback) => {
+    ipcRenderer.removeListener(channel, callback);
+  }
+};
+contextBridge.exposeInMainWorld("electron", {
+  camera: cameraAPI,
+  printer: printerAPI,
+  image: imageAPI,
+  video: videoAPI,
+  payment: paymentAPI,
+  file: fileAPI,
+  analytics: analyticsAPI,
+  config: configAPI,
+  hologram: hologramAPI,
+  ipcRenderer: ipcRendererAPI
+});
