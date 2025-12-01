@@ -56,7 +56,6 @@ export function ImageSelectionScreen() {
   const capturedImages = useSessionStore((state) => state.capturedImages);
   const selectedPrintImage = useSessionStore((state) => state.selectedPrintImage);
   const setSelectedPrintImage = useSessionStore((state) => state.setSelectedPrintImage);
-  const processedResult = useSessionStore((state) => state.processedResult);
 
   const [localSelection, setLocalSelection] = useState<string | null>(
     selectedPrintImage || (capturedImages.length > 0 ? capturedImages[0] : null)
@@ -69,42 +68,8 @@ export function ImageSelectionScreen() {
   // 60-second countdown timer
   const [timeRemaining, setTimeRemaining] = useState(60);
 
-  // CRITICAL: Ensure hologram display (video + QR) persists when entering this screen
-  // AGGRESSIVE APPROACH: Poll every 500ms to ensure hologram stays in correct state
-  useEffect(() => {
-    console.log('🎭 [ImageSelectionScreen] Component mounted - setting up hologram persistence');
-    console.log(`   processedResult exists: ${!!processedResult}`);
-    console.log(`   qrCodePath exists: ${!!processedResult?.qrCodePath}`);
-    console.log(`   s3Url exists: ${!!processedResult?.s3Url}`);
-
-    if (!processedResult || !processedResult.qrCodePath || !processedResult.s3Url) {
-      console.error('❌ [ImageSelectionScreen] Missing processedResult data - cannot persist hologram!');
-      return;
-    }
-
-    const maintainHologram = () => {
-      console.log('🔄 [ImageSelectionScreen] Maintaining hologram display (video + QR)');
-      // @ts-ignore - Electron API
-      if (window.electron?.hologram) {
-        // @ts-ignore
-        window.electron.hologram.showQR(
-          processedResult.qrCodePath,
-          processedResult.s3Url
-        );
-      }
-    };
-
-    // Call immediately
-    maintainHologram();
-
-    // Poll every 500ms to ensure state persists
-    const interval = setInterval(maintainHologram, 500);
-
-    return () => {
-      console.log('🛑 [ImageSelectionScreen] Stopping hologram polling');
-      clearInterval(interval);
-    };
-  }, [processedResult]);
+  // Note: Hologram display is handled by ResultScreen after photo selection
+  // This screen comes BEFORE the result screen, so no hologram persistence needed here
 
   // Load images via IPC as data URLs
   useEffect(() => {
@@ -187,7 +152,7 @@ export function ImageSelectionScreen() {
   const handleConfirm = () => {
     if (localSelection) {
       setSelectedPrintImage(localSelection);
-      setScreen('payment');
+      setScreen('result');
     }
   };
 
@@ -304,7 +269,7 @@ export function ImageSelectionScreen() {
           disabled={!localSelection}
           className="w-full bg-black text-white hover:bg-gray-800 px-12 py-8 text-3xl font-bold touch-target border-3 border-black disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          결제하기
+          다음
           <ArrowRight className="w-8 h-8 ml-3" strokeWidth={2.5} />
         </Button>
       </motion.div>
@@ -312,7 +277,7 @@ export function ImageSelectionScreen() {
       {/* Footer - Smaller */}
       <motion.div className="text-center py-2" variants={itemVariants}>
         <p className="text-xl text-gray-500">
-          인쇄 비용: <span className="font-bold text-black">5,000원</span>
+          인쇄할 사진을 선택해주세요
         </p>
       </motion.div>
     </motion.div>

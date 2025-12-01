@@ -1,10 +1,17 @@
 // src/screens/01-IdleScreen.tsx
+import { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
 import { Logo } from '@/components/Logo';
 
 export function IdleScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
+
+  // Reset hologram to logo when entering idle screen
+  useEffect(() => {
+    // @ts-ignore - Electron API
+    window.electron?.hologram?.showLogo();
+  }, []);
 
   return (
     <motion.div

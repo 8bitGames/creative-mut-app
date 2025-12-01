@@ -90,7 +90,7 @@ export function ProcessingScreen() {
             compositionTime: 5000,
             totalTime: 5000,
           });
-          setTimeout(() => setScreen('result'), 500);
+          setTimeout(() => setScreen('image-selection'), 500);
         }
       }, 500);
       return () => clearInterval(interval);
@@ -119,9 +119,9 @@ export function ProcessingScreen() {
           console.log(`   Frame paths:`, result.result.framePaths);
           setCapturedImages(result.result.framePaths);
 
-          // Navigate to result screen
+          // Navigate to image selection screen first
           setTimeout(() => {
-            setScreen('result');
+            setScreen('image-selection');
           }, 500);
         } else {
           // Frame extraction failed - show error
@@ -271,9 +271,9 @@ export function ProcessingScreen() {
           setCapturedImages(processResult.result.framePaths);
           setProgress(100);
 
-          // Navigate to result screen
+          // Navigate to image selection screen first
           setTimeout(() => {
-            setScreen('result');
+            setScreen('image-selection');
           }, 500);
         } else {
           // Frame extraction failed - show error
