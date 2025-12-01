@@ -158,7 +158,7 @@ export function ResultScreen() {
   const handlePay = () => {
     // CRITICAL: Ensure hologram stays in result mode before navigating
     if (processedResult && processedResult.qrCodePath && processedResult.s3Url) {
-      console.log('🎭 [ResultScreen] Ensuring hologram persists before navigation to image-selection');
+      console.log('🎭 [ResultScreen] Ensuring hologram persists before navigation to payment');
       // @ts-ignore - Electron API
       if (window.electron?.hologram) {
         // @ts-ignore - Re-send to ensure state persists
@@ -169,8 +169,8 @@ export function ResultScreen() {
       }
     }
 
-    // Navigate to image selection screen to choose which photo to print
-    setScreen('image-selection');
+    // Navigate to payment screen
+    setScreen('payment');
   };
 
   if (!processedResult) {

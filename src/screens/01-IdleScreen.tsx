@@ -22,6 +22,12 @@ export function IdleScreen() {
     clearSession();
   }, [clearSession]);
 
+  // Reset hologram to logo when entering idle screen
+  useEffect(() => {
+    // @ts-ignore - Electron API
+    window.electron?.hologram?.showLogo();
+  }, []);
+
   return (
     <motion.div
       className="fullscreen bg-black text-white flex flex-col items-center justify-between py-16 cursor-pointer"

@@ -251,7 +251,7 @@ export function ImageSelectionScreen() {
   const handleConfirm = () => {
     if (localSelection) {
       setSelectedPrintImage(localSelection);
-      setScreen('payment');
+      setScreen('result');
     }
   };
 
@@ -368,7 +368,7 @@ export function ImageSelectionScreen() {
           disabled={!localSelection}
           className="w-full bg-black text-white hover:bg-gray-800 px-12 py-8 text-3xl font-bold touch-target border-3 border-black disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          결제하기
+          다음
           <ArrowRight className="w-8 h-8 ml-3" strokeWidth={2.5} />
         </Button>
       </motion.div>
@@ -376,7 +376,7 @@ export function ImageSelectionScreen() {
       {/* Footer - Smaller */}
       <motion.div className="text-center py-2" variants={itemVariants}>
         <p className="text-xl text-gray-500">
-          인쇄 비용: <span className="font-bold text-black">5,000원</span>
+          인쇄할 사진을 선택해주세요
         </p>
       </motion.div>
     </motion.div>

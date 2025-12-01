@@ -257,7 +257,12 @@ export function buildApprovalRequestData(
 
 /**
  * Build Transaction Cancel Request Data (Job Code: C)
- * For VAN No-Card Cancel (취소구분코드 "3")
+ * Supports various cancel types with additional info
+ *
+ * Additional info requirements:
+ * - PG 무카드/부분취소 (cancelType 4/5): PG거래일련번호 30자리
+ * - 카카오페이 취소: 바코드 데이터 16자리 (응답 카드번호 뒤 16자리)
+ * - 현금영수증 취소: 인증번호
  */
 export function buildCancelRequestData(
   cancelType: string,
@@ -269,17 +274,23 @@ export function buildCancelRequestData(
   signature: string,
   approvalNumber: string,
   originalDate: string,
-  originalTime: string
+  originalTime: string,
+  additionalInfo?: string  // Optional: PG transaction ID, KakaoPay barcode, or cash receipt auth number
 ): Buffer {
-  // Base: 57 bytes (without additional info)
-  const data = Buffer.alloc(59); // 57 + 2 for length field
+  // Calculate additional info length
+  const additionalInfoLength = additionalInfo ? additionalInfo.length : 0;
+  const additionalInfoLengthStr = additionalInfoLength.toString().padStart(2, '0');
+
+  // Base: 57 bytes + 2 (length field) + N (additional info)
+  const totalLength = 59 + additionalInfoLength;
+  const data = Buffer.alloc(totalLength);
   let offset = 0;
 
   // 취소구분코드 (1 byte)
   data.write(cancelType, offset, 1, 'ascii');
   offset += 1;
 
-  // 거래구분코드 (1 byte): "1" IC신용, "2" RF/MS신용
+  // 거래구분코드 (1 byte): "1" IC신용, "2" RF/MS신용, "3" 현금영수증, "4" 제로페이, "5" 카카오머니, "6" 카카오신용, "8" 네이버페이
   data.write(transactionType, offset, 1, 'ascii');
   offset += 1;
 
@@ -296,6 +307,7 @@ export function buildCancelRequestData(
   offset += 8;
 
   // 할부개월 (2 bytes)
+  // 현금영수증(거래구분코드 "3")인 경우: 소비자 "00", 사업자 "01"
   data.write(installment.padStart(2, '0'), offset, 2, 'ascii');
   offset += 2;
 
@@ -317,8 +329,14 @@ export function buildCancelRequestData(
   data.write(originalTime.padEnd(6, '0'), offset, 6, 'ascii');
   offset += 6;
 
-  // 부가정보 길이 (2 bytes): "00" for no additional info
-  data.write('00', offset, 2, 'ascii');
+  // 부가정보 길이 (2 bytes)
+  data.write(additionalInfoLengthStr, offset, 2, 'ascii');
+  offset += 2;
+
+  // 부가정보 (N bytes) - if present
+  if (additionalInfo && additionalInfoLength > 0) {
+    data.write(additionalInfo, offset, additionalInfoLength, 'ascii');
+  }
 
   return data;
 }

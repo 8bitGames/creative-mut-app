@@ -79,41 +79,15 @@ export function PaymentScreen() {
   const cleanupRef = useRef<(() => void)[]>([]);
   const paymentStartedRef = useRef(false);
 
-  // CRITICAL: Ensure hologram display (video + QR) persists when entering this screen
-  // AGGRESSIVE APPROACH: Poll every 500ms to ensure hologram stays in correct state
+  // Show hologram display once when entering this screen
   useEffect(() => {
-    console.log('🎭 [PaymentScreen] Component mounted - setting up hologram persistence');
-    console.log(`   processedResult exists: ${!!processedResult}`);
-    console.log(`   qrCodePath exists: ${!!processedResult?.qrCodePath}`);
-    console.log(`   s3Url exists: ${!!processedResult?.s3Url}`);
-
-    if (!processedResult || !processedResult.qrCodePath || !processedResult.s3Url) {
-      console.error('❌ [PaymentScreen] Missing processedResult data - cannot persist hologram!');
-      return;
-    }
-
-    const maintainHologram = () => {
-      console.log('🔄 [PaymentScreen] Maintaining hologram display (video + QR)');
+    if (processedResult?.qrCodePath && processedResult?.s3Url) {
       // @ts-ignore - Electron API
-      if (window.electron?.hologram) {
-        // @ts-ignore
-        window.electron.hologram.showQR(
-          processedResult.qrCodePath,
-          processedResult.s3Url
-        );
-      }
-    };
-
-    // Call immediately
-    maintainHologram();
-
-    // Poll every 500ms to ensure state persists
-    const interval = setInterval(maintainHologram, 500);
-
-    return () => {
-      console.log('🛑 [PaymentScreen] Stopping hologram polling');
-      clearInterval(interval);
-    };
+      window.electron?.hologram?.showQR(
+        processedResult.qrCodePath,
+        processedResult.s3Url
+      );
+    }
   }, [processedResult]);
 
   useEffect(() => {
@@ -317,7 +291,7 @@ export function PaymentScreen() {
       setTimeout(() => {
         console.log('📄 [PaymentScreen] Navigating to printing screen NOW');
         setScreen('printing');
-      }, 1000); // Reduced from 2000ms to 1000ms
+      }, 1000);
     }
   }, [paymentStatus, setScreen]);
 
