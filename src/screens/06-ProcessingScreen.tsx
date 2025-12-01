@@ -247,15 +247,51 @@ export function ProcessingScreen() {
       console.log(`   Frame template path: ${frameFilesystemPath}`);
 
       // @ts-ignore
-      await window.electron.video.process({
+      const processResult = await window.electron.video.process({
         inputVideo: videoPath,
         chromaVideo: frameFilesystemPath, // Pass frame template path (will be mapped to frameOverlay)
         subtitleText: 'MUT 홀로그램 스튜디오',
         s3Folder: 'mut-hologram',
       });
 
-      console.log(`✅ [ProcessingScreen] Video processing started successfully!`);
+      console.log(`✅ [ProcessingScreen] Video processing completed!`);
+      console.log(`   Result:`, processResult);
       console.log(`${'='.repeat(70)}\n`);
+
+      // Handle result directly from invoke (main.ts returns result directly)
+      if (processResult.success && processResult.result) {
+        console.log(`✅ [ProcessingScreen] Processing successful, handling result...`);
+        setProcessedResult(processResult.result);
+
+        // CRITICAL: Validate that exactly 3 frames were extracted
+        const REQUIRED_FRAMES = 3;
+        if (processResult.result.framePaths && processResult.result.framePaths.length === REQUIRED_FRAMES) {
+          console.log(`✅ [ProcessingScreen] Received ${processResult.result.framePaths.length} extracted frames from pipeline`);
+          console.log(`   Frame paths:`, processResult.result.framePaths);
+          setCapturedImages(processResult.result.framePaths);
+          setProgress(100);
+
+          // Navigate to result screen
+          setTimeout(() => {
+            setScreen('result');
+          }, 500);
+        } else {
+          // Frame extraction failed - show error
+          const frameCount = processResult.result.framePaths ? processResult.result.framePaths.length : 0;
+          const errorMsg = `프레임 추출 오류: ${REQUIRED_FRAMES}개의 사진이 필요하지만 ${frameCount}개만 추출되었습니다.`;
+          console.error(`❌ [ProcessingScreen] ${errorMsg}`);
+          alert(errorMsg + '\n처음부터 다시 시도해주세요.');
+          setTimeout(() => {
+            setScreen('idle');
+          }, 2000);
+        }
+      } else if (!processResult.success) {
+        console.error('❌ [ProcessingScreen] Video processing failed:', processResult.error);
+        alert('비디오 처리 중 오류가 발생했습니다: ' + processResult.error);
+        setTimeout(() => {
+          setScreen('idle');
+        }, 2000);
+      }
 
     } catch (error) {
       console.error(`❌ [ProcessingScreen] Failed to start video processing:`, error);
