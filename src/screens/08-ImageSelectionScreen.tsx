@@ -59,6 +59,10 @@ export function ImageSelectionScreen() {
   const processedResult = useSessionStore((state) => state.processedResult);
   const clearSession = useSessionStore((state) => state.clearSession);
 
+  // Use shared timer from sessionStore
+  const selectionTimeRemaining = useSessionStore((state) => state.selectionTimeRemaining);
+  const setSelectionTimeRemaining = useSessionStore((state) => state.setSelectionTimeRemaining);
+
   const [localSelection, setLocalSelection] = useState<string | null>(
     selectedPrintImage || (capturedImages.length > 0 ? capturedImages[0] : null)
   );
@@ -66,9 +70,6 @@ export function ImageSelectionScreen() {
   // State for loading images as data URLs
   const [imageDataUrls, setImageDataUrls] = useState<{ [key: string]: string }>({});
   const [loadingImages, setLoadingImages] = useState(true);
-
-  // 60-second countdown timer
-  const [timeRemaining, setTimeRemaining] = useState(60);
 
   // CRITICAL: Ensure hologram display (video + QR) persists when entering this screen
   // Only poll if we have valid processedResult data
@@ -141,7 +142,13 @@ export function ImageSelectionScreen() {
       console.log(`   Image paths:`, capturedImages);
 
       // CRITICAL: Validate that we have exactly 3 images
+      // Skip validation if capturedImages is empty (session was intentionally cleared, e.g., timeout)
       const REQUIRED_IMAGES = 3;
+      if (capturedImages.length === 0) {
+        console.log('⏭️ [ImageSelectionScreen] No images (session cleared), skipping validation');
+        setLoadingImages(false);
+        return;
+      }
       if (capturedImages.length !== REQUIRED_IMAGES) {
         console.error(`❌ [ImageSelectionScreen] Expected ${REQUIRED_IMAGES} images, got ${capturedImages.length}`);
         alert(`오류: ${REQUIRED_IMAGES}개의 사진이 필요하지만 ${capturedImages.length}개만 있습니다.\n처음부터 다시 시도해주세요.`);
@@ -206,20 +213,20 @@ export function ImageSelectionScreen() {
     loadImages();
   }, [capturedImages, setScreen, clearSession]);
 
-  // 60-second countdown timer
+  // Shared countdown timer (continues across screens)
   useEffect(() => {
     const countdownTimer = setInterval(() => {
-      setTimeRemaining((prev) => (prev > 0 ? prev - 1 : 0));
+      setSelectionTimeRemaining(Math.max(0, selectionTimeRemaining - 1));
     }, 1000);
 
     return () => clearInterval(countdownTimer);
-  }, []);
+  }, [selectionTimeRemaining, setSelectionTimeRemaining]);
 
   // Handle timeout expiry separately to avoid setState during render
   useEffect(() => {
-    if (timeRemaining === 0) {
-      console.log('⏱️ [ImageSelectionScreen] Time expired, returning to start');
-      // Reset hologram to logo before going to start
+    if (selectionTimeRemaining === 0) {
+      console.log('⏱️ [ImageSelectionScreen] Time expired, returning to idle');
+      // Reset hologram to logo before going to idle
       // @ts-ignore - Electron API
       if (window.electron?.hologram) {
         // @ts-ignore
@@ -227,9 +234,9 @@ export function ImageSelectionScreen() {
       }
       // Clear session data to prevent stale data in next session
       clearSession();
-      setScreen('start');
+      setScreen('idle');
     }
-  }, [timeRemaining, setScreen, clearSession]);
+  }, [selectionTimeRemaining, setScreen, clearSession]);
 
   // Also handle error cases where we navigate back to start
   useEffect(() => {
@@ -273,17 +280,17 @@ export function ImageSelectionScreen() {
           </div>
           <div className="flex-1 flex justify-end">
             <div className={`text-3xl font-bold px-6 py-3 rounded-full ${
-              timeRemaining <= 10 ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-700'
+              selectionTimeRemaining <= 10 ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-700'
             }`}>
-              {timeRemaining}초
+              {selectionTimeRemaining}초
             </div>
           </div>
         </div>
       </motion.div>
 
-      {/* Image Grid - Much Bigger */}
+      {/* Main Content - Large Preview + Thumbnails */}
       <motion.div
-        className="flex-1 flex items-center justify-center w-full px-8"
+        className="flex-1 flex flex-col items-center justify-center w-full px-8 gap-6"
         variants={itemVariants}
       >
         {loadingImages ? (
@@ -291,68 +298,95 @@ export function ImageSelectionScreen() {
             <p className="text-3xl text-gray-500">사진 불러오는 중...</p>
           </div>
         ) : capturedImages.length > 0 ? (
-          <div className="grid grid-cols-3 gap-6 w-full h-full">
-            {capturedImages.map((imagePath, index) => (
-              <motion.div
-                key={imagePath}
-                variants={imageVariants}
-                whileHover="hover"
-                whileTap="tap"
-              >
-                <Card
-                  className={`relative overflow-hidden cursor-pointer transition-all ${
-                    localSelection === imagePath
-                      ? 'border-4 border-black ring-4 ring-black'
-                      : 'border-2 border-gray-300 hover:border-gray-500'
-                  }`}
-                  onClick={() => handleImageSelect(imagePath)}
+          <>
+            {/* Large Preview - Selected Image */}
+            <div className="flex-1 flex items-center justify-center w-full max-h-[60vh]">
+              <Card className="relative overflow-hidden border-4 border-black shadow-2xl">
+                {localSelection && imageDataUrls[localSelection] ? (
+                  <img
+                    src={imageDataUrls[localSelection]}
+                    alt="Selected photo"
+                    className="max-h-[55vh] w-auto object-contain"
+                    onError={(e) => {
+                      console.error('[ImageSelectionScreen] Failed to display selected image');
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
+                ) : (
+                  <div className="flex items-center justify-center h-[55vh] w-[40vh] bg-gray-100">
+                    <p className="text-2xl text-gray-400">사진을 선택해주세요</p>
+                  </div>
+                )}
+                {/* Selected timestamp label */}
+                {localSelection && (
+                  <div className="absolute top-4 left-4 bg-black text-white rounded-full px-5 py-2">
+                    <span className="text-xl font-bold">
+                      {capturedImages.indexOf(localSelection) === 0 ? '5초' :
+                       capturedImages.indexOf(localSelection) === 1 ? '10초' : '15초'}
+                    </span>
+                  </div>
+                )}
+              </Card>
+            </div>
+
+            {/* Thumbnails Row */}
+            <div className="flex gap-4 justify-center">
+              {capturedImages.map((imagePath, index) => (
+                <motion.div
+                  key={imagePath}
+                  variants={imageVariants}
+                  whileHover="hover"
+                  whileTap="tap"
                 >
-                  {/* Image - Natural aspect ratio preserved */}
-                  <div className="bg-gray-100 flex items-center justify-center relative w-full">
+                  <Card
+                    className={`relative overflow-hidden cursor-pointer transition-all ${
+                      localSelection === imagePath
+                        ? 'border-4 border-black ring-4 ring-black scale-105'
+                        : 'border-2 border-gray-300 hover:border-gray-500 opacity-70 hover:opacity-100'
+                    }`}
+                    onClick={() => handleImageSelect(imagePath)}
+                  >
                     {imageDataUrls[imagePath] ? (
                       <img
                         src={imageDataUrls[imagePath]}
-                        alt={`Photo from ${index === 0 ? '5' : index === 1 ? '10' : '15'} seconds`}
-                        className="w-full h-auto object-contain"
+                        alt={`Photo ${index + 1}`}
+                        className="h-32 w-auto object-contain"
                         onError={(e) => {
-                          console.error(`[ImageSelectionScreen] Failed to display image ${index + 1}`);
+                          console.error(`[ImageSelectionScreen] Failed to display thumbnail ${index + 1}`);
                           e.currentTarget.style.display = 'none';
                         }}
                       />
                     ) : (
-                      <div className="text-center p-4">
-                        <div className="text-gray-400 text-2xl mb-2">Photo {index + 1}</div>
-                        <div className="text-gray-400 text-lg">Loading...</div>
+                      <div className="h-32 w-24 bg-gray-100 flex items-center justify-center">
+                        <span className="text-gray-400">...</span>
                       </div>
                     )}
 
-                    {/* Selection Indicator - Smaller */}
+                    {/* Thumbnail label */}
+                    <div className="absolute bottom-1 left-1/2 -translate-x-1/2 bg-white bg-opacity-90 rounded-full px-3 py-1">
+                      <span className="text-sm font-bold">
+                        {index === 0 ? '5초' : index === 1 ? '10초' : '15초'}
+                      </span>
+                    </div>
+
+                    {/* Selection check */}
                     <AnimatePresence>
                       {localSelection === imagePath && (
                         <motion.div
                           initial={{ opacity: 0, scale: 0.5 }}
                           animate={{ opacity: 1, scale: 1 }}
                           exit={{ opacity: 0, scale: 0.5 }}
-                          className="absolute inset-0 bg-black bg-opacity-30 flex items-center justify-center"
+                          className="absolute top-1 right-1 bg-black rounded-full p-1"
                         >
-                          <div className="bg-white rounded-full p-3">
-                            <Check className="w-12 h-12 text-black" strokeWidth={3} />
-                          </div>
+                          <Check className="w-5 h-5 text-white" strokeWidth={3} />
                         </motion.div>
                       )}
                     </AnimatePresence>
-                  </div>
-
-                  {/* Image Timestamp Label - Smaller */}
-                  <div className="absolute top-3 left-3 bg-white bg-opacity-90 rounded-full px-4 py-2 flex items-center justify-center">
-                    <span className="text-lg font-bold">
-                      {index === 0 ? '5s' : index === 1 ? '10s' : '15s'}
-                    </span>
-                  </div>
-                </Card>
-              </motion.div>
-            ))}
-          </div>
+                  </Card>
+                </motion.div>
+              ))}
+            </div>
+          </>
         ) : (
           <div className="text-center">
             <p className="text-3xl text-gray-500">촬영된 사진이 없습니다</p>

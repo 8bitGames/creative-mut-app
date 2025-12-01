@@ -436,9 +436,9 @@ export function CaptureScreen() {
         setCountdown(4); // 4 seconds until first photo
         setPhotoNumber(1);
         startVideoRecording();
-      } else if (elapsedTime > 1 && elapsedTime <= 16) {
-        // Recording phase (1-16s = 16 seconds of recording for 5s, 10s, 15s frame extraction)
-        const recordingElapsed = elapsedTime; // Time since recording started: 1-16
+      } else if (elapsedTime > 1 && elapsedTime <= 15) {
+        // Recording phase (1-15s = 15 seconds of recording for 5s, 10s, 15s frame extraction)
+        const recordingElapsed = elapsedTime;
         setRecordingTime(recordingElapsed);
 
         // Calculate countdown for next photo
@@ -451,8 +451,7 @@ export function CaptureScreen() {
         } else if (recordingElapsed < 15) {
           nextPhotoTime = 15;
         } else {
-          // After 15s, just count down to end
-          nextPhotoTime = 16;
+          nextPhotoTime = 15; // Already at 15s
         }
         const timeUntilNextPhoto = nextPhotoTime - recordingElapsed;
         setCountdown(timeUntilNextPhoto > 0 ? timeUntilNextPhoto : 0);
@@ -465,16 +464,18 @@ export function CaptureScreen() {
           // Update photo number for UI display
           if (recordingElapsed === 5) setPhotoNumber(2);
           if (recordingElapsed === 10) setPhotoNumber(3);
-        }
-      } else if (elapsedTime === 17) {
-        // Stop recording and navigate (after 16s of recording to ensure 15s frame extraction works)
-        console.log('🏁 [CaptureScreen] Recording complete (16s), stopping...');
-        stopVideoRecording();
-        clearInterval(mainTimer);
 
-        setTimeout(() => {
-          setScreen('processing');
-        }, 500);
+          // After 3rd photo, stop recording and navigate immediately
+          if (recordingElapsed === 15) {
+            console.log('🏁 [CaptureScreen] 3rd photo taken, stopping recording...');
+            stopVideoRecording();
+            clearInterval(mainTimer);
+
+            setTimeout(() => {
+              setScreen('processing');
+            }, 500);
+          }
+        }
       }
     }, 1000);
 

@@ -1,5 +1,5 @@
 // src/screens/06-ProcessingScreen.tsx
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
@@ -58,18 +58,41 @@ const progressVariants = {
 
 // Removed: messageVariants (not showing messages anymore)
 
+// CRITICAL: Module-level lock to prevent concurrent processing across all component instances
+// This is needed because split-screen mode may render multiple ProcessingScreen components
+let globalProcessingLock = false;
+
 export function ProcessingScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
   const recordedVideoBlob = useSessionStore((state) => state.recordedVideoBlob);
   const selectedFrame = useSessionStore((state) => state.selectedFrame);
   const setProcessedResult = useSessionStore((state) => state.setProcessedResult);
   const setCapturedImages = useSessionStore((state) => state.setCapturedImages);
+  const setSelectionTimeRemaining = useSessionStore((state) => state.setSelectionTimeRemaining);
   const [progress, setProgress] = useState(0);
-  // Removed: currentMessage state (showing only progress bar now)
+  // Component-level ref to track this instance's processing state
+  const processingStartedRef = useRef(false);
 
   useEffect(() => {
+    // CRITICAL: Global lock to prevent concurrent processing across ALL component instances
+    if (globalProcessingLock) {
+      console.log(`🔒 [ProcessingScreen] Global processing lock active - this instance will not start processing`);
+      return;
+    }
+
+    // CRITICAL: Prevent multiple processing within same component instance
+    if (processingStartedRef.current) {
+      console.log(`⚠️ [ProcessingScreen] Processing already started in this instance, skipping`);
+      return;
+    }
+
+    // Acquire the global lock
+    globalProcessingLock = true;
+    processingStartedRef.current = true;
+    console.log(`🔓 [ProcessingScreen] Acquired global processing lock`);
+
     console.log(`\n${'='.repeat(70)}`);
-    console.log(`🎬 [ProcessingScreen] useEffect MOUNTING - Setting up listeners`);
+    console.log(`🎬 [ProcessingScreen] useEffect MOUNTING`);
     console.log(`${'='.repeat(70)}`);
 
     // Check if running in Electron
@@ -77,23 +100,25 @@ export function ProcessingScreen() {
     if (!window.electron?.video) {
       console.warn('Running in browser - skipping video processing');
       // Mock progress for browser testing
-      let progress = 0;
+      let mockProgress = 0;
       const interval = setInterval(() => {
-        progress += 10;
-        setProgress(progress);
-        if (progress >= 100) {
+        mockProgress += 10;
+        setProgress(mockProgress);
+        if (mockProgress >= 100) {
           clearInterval(interval);
-          // Mock result
+          // Mock result with 3 mock frames for testing
           const mockQrDataUrl = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0id2hpdGUiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZm9udC1zaXplPSIyMCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPk1vY2sgUVIgQ29kZTwvdGV4dD48L3N2Zz4=';
           setProcessedResult({
             videoPath: '/mock/video.mp4',
             s3Url: 'https://mock-s3.com/video.mp4',
             s3Key: 'mock-key',
             qrCodePath: mockQrDataUrl,
-            framePaths: [],
+            framePaths: ['/mock/frame1.jpg', '/mock/frame2.jpg', '/mock/frame3.jpg'],
             compositionTime: 5000,
             totalTime: 5000,
           });
+          setCapturedImages(['/mock/frame1.jpg', '/mock/frame2.jpg', '/mock/frame3.jpg']);
+          setSelectionTimeRemaining(60);
           setTimeout(() => setScreen('image-selection'), 500);
         }
       }, 500);
@@ -101,103 +126,26 @@ export function ProcessingScreen() {
     }
 
     console.log(`   ✓ window.electron.video is available`);
-    console.log(`   → Calling startProcessing() (async, not awaited)`);
+    console.log(`   → Starting video processing...`);
     startProcessing();
 
-    // Set up progress listener
-    console.log(`   → Setting up onProgress listener...`);
+    // Set up progress listener only (result is handled directly by startProcessing via invoke)
     // @ts-ignore
     const removeProgressListener = window.electron.video.onProgress((progressData) => {
       setProgress(progressData.progress);
-      // Progress message removed - only showing progress bar
     });
-    console.log(`   ✓ onProgress listener set up`);
-
-    // Set up completion listener
-    console.log(`   → Setting up onComplete listener...`);
-    // @ts-ignore
-    const removeCompleteListener = window.electron.video.onComplete((result) => {
-      console.log(`\n${'='.repeat(70)}`);
-      console.log(`📥 [ProcessingScreen] RECEIVED video:complete EVENT`);
-      console.log(`${'='.repeat(70)}`);
-      console.log(`   result object:`, JSON.stringify(result, null, 2));
-      console.log(`   result.success: ${result.success}`);
-      console.log(`   result.result exists: ${!!result.result}`);
-      console.log(`   result.error: ${result.error || 'none'}`);
-
-      try {
-        if (result.success && result.result) {
-          console.log(`   ✓ Success path - result.result:`, result.result);
-          console.log(`   ✓ framePaths: ${JSON.stringify(result.result.framePaths)}`);
-          console.log(`   ✓ framePaths.length: ${result.result.framePaths?.length}`);
-
-          // Save the processing result to session store
-          setProcessedResult(result.result);
-
-          // CRITICAL: Validate that exactly 3 frames were extracted
-          const REQUIRED_FRAMES = 3;
-          if (result.result.framePaths && result.result.framePaths.length === REQUIRED_FRAMES) {
-            console.log(`✅ [ProcessingScreen] Received ${result.result.framePaths.length} extracted frames from pipeline`);
-            console.log(`   Frame paths:`, result.result.framePaths);
-            setCapturedImages(result.result.framePaths);
-
-            // Navigate to result screen
-            console.log(`   → Navigating to 'result' screen in 500ms...`);
-            setTimeout(() => {
-              console.log(`   → NOW calling setScreen('result')`);
-              setScreen('result');
-            }, 500);
-          } else {
-            // Frame extraction failed - show error
-            const frameCount = result.result.framePaths ? result.result.framePaths.length : 0;
-            const errorMsg = `프레임 추출 오류: ${REQUIRED_FRAMES}개의 사진이 필요하지만 ${frameCount}개만 추출되었습니다.`;
-            console.error(`❌ [ProcessingScreen] ${errorMsg}`);
-            console.error(`   Expected ${REQUIRED_FRAMES} frames, got ${frameCount}`);
-            if (result.result.framePaths) {
-              console.error(`   Received frames:`, result.result.framePaths);
-            }
-
-            alert(errorMsg + '\n처음부터 다시 시도해주세요.');
-            setTimeout(() => {
-              // Reset hologram to logo before going to idle
-              // @ts-ignore
-              if (window.electron?.hologram) {
-                // @ts-ignore
-                window.electron.hologram.showLogo();
-              }
-              setScreen('idle');
-            }, 2000);
-          }
-        } else {
-          console.error('❌ [ProcessingScreen] Video processing failed:', result.error);
-          console.error('   Full result:', result);
-          // Show error and return to idle
-          alert('비디오 처리 중 오류가 발생했습니다: ' + result.error);
-          setTimeout(() => {
-            // Reset hologram to logo before going to idle
-            // @ts-ignore
-            if (window.electron?.hologram) {
-              // @ts-ignore
-              window.electron.hologram.showLogo();
-            }
-            setScreen('idle');
-          }, 2000);
-        }
-      } catch (handlerError) {
-        console.error(`❌ [ProcessingScreen] EXCEPTION in onComplete handler:`, handlerError);
-        alert('처리 중 오류가 발생했습니다: ' + (handlerError instanceof Error ? handlerError.message : 'Unknown error'));
-      }
-      console.log(`${'='.repeat(70)}\n`);
-    });
-    console.log(`   ✓ onComplete listener set up`);
+    console.log(`   ✓ Progress listener set up`);
     console.log(`${'='.repeat(70)}\n`);
 
     return () => {
-      console.log(`🧹 [ProcessingScreen] UNMOUNTING - Removing listeners`);
+      console.log(`🧹 [ProcessingScreen] UNMOUNTING - Removing progress listener`);
       removeProgressListener();
-      removeCompleteListener();
+      // Release the global lock when component unmounts
+      console.log(`🔓 [ProcessingScreen] Releasing global processing lock`);
+      globalProcessingLock = false;
     };
-  }, [setScreen, recordedVideoBlob, selectedFrame, setProcessedResult, setCapturedImages]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Empty dependency array - run only once on mount
 
   const startProcessing = async () => {
     console.log(`\n${'='.repeat(70)}`);
@@ -247,9 +195,8 @@ export function ProcessingScreen() {
       console.log(`   Blob header (hex): ${hexHeader}`);
       console.log(`   Expected WebM header: 1A45DFA3...`);
 
-      // Convert to array for IPC transfer (avoiding base64 conversion issues)
-      const byteArray = Array.from(bytes);
-      console.log(`   ✓ Byte array length: ${byteArray.length} bytes`);
+      // Pass Uint8Array directly - Electron IPC handles serialization
+      console.log(`   ✓ Uint8Array length: ${bytes.length} bytes`);
 
       // Determine file extension based on blob type
       const extension = recordedVideoBlob.type.includes('mp4') ? 'mp4' : 'webm';
@@ -257,7 +204,7 @@ export function ProcessingScreen() {
       console.log(`   → Saving as: ${filename} (type: ${recordedVideoBlob.type})`);
 
       // @ts-ignore
-      const saveResult = await window.electron.video.saveBuffer(byteArray, filename);
+      const saveResult = await window.electron.video.saveBuffer(bytes, filename);
 
       if (!saveResult.success) {
         throw new Error(`Failed to save video: ${saveResult.error}`);
@@ -301,11 +248,17 @@ export function ProcessingScreen() {
 
       console.log(`✅ [ProcessingScreen] Video processing completed!`);
       console.log(`   Result:`, processResult);
+      console.log(`   Result keys:`, Object.keys(processResult || {}));
+      console.log(`   Result.result keys:`, Object.keys(processResult?.result || {}));
+      console.log(`   framePaths in result.result:`, processResult?.result?.framePaths);
+      console.log(`   framePaths type:`, typeof processResult?.result?.framePaths);
+      console.log(`   framePaths length:`, processResult?.result?.framePaths?.length);
       console.log(`${'='.repeat(70)}\n`);
 
       // Handle result directly from invoke (main.ts returns result directly)
       if (processResult.success && processResult.result) {
         console.log(`✅ [ProcessingScreen] Processing successful, handling result...`);
+        console.log(`   Full result.result:`, JSON.stringify(processResult.result, null, 2));
         setProcessedResult(processResult.result);
 
         // CRITICAL: Validate that exactly 3 frames were extracted
@@ -316,7 +269,8 @@ export function ProcessingScreen() {
           setCapturedImages(processResult.result.framePaths);
           setProgress(100);
 
-          // Navigate to image selection screen first
+          // Reset selection timer to 60 seconds and navigate to image selection screen
+          setSelectionTimeRemaining(60);
           setTimeout(() => {
             setScreen('image-selection');
           }, 500);

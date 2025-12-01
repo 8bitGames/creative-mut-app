@@ -55,7 +55,11 @@ const buttonVariants = {
 export function ResultScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
   const processedResult = useSessionStore((state) => state.processedResult);
-  const [timeRemaining, setTimeRemaining] = useState(60);
+  const clearSession = useSessionStore((state) => state.clearSession);
+
+  // Use shared timer from sessionStore (continues from ImageSelectionScreen)
+  const selectionTimeRemaining = useSessionStore((state) => state.selectionTimeRemaining);
+  const setSelectionTimeRemaining = useSessionStore((state) => state.setSelectionTimeRemaining);
   // const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
   // const [videoDataUrl, setVideoDataUrl] = useState<string | null>(null);
 
@@ -127,29 +131,29 @@ export function ResultScreen() {
     // Only reset when going back to start/idle (handled in PrintingScreen)
   }, [processedResult]);
 
-  // 60-second timeout
+  // Shared countdown timer (continues from ImageSelectionScreen)
   useEffect(() => {
     const countdownTimer = setInterval(() => {
-      setTimeRemaining((prev) => {
-        if (prev <= 1) {
-          clearInterval(countdownTimer);
-          // Reset hologram to logo before going to idle
-          // @ts-ignore
-          if (window.electron?.hologram) {
-            // @ts-ignore
-            window.electron.hologram.showLogo();
-          }
-          setScreen('idle');
-          return 0;
-        }
-        return prev - 1;
-      });
+      setSelectionTimeRemaining(Math.max(0, selectionTimeRemaining - 1));
     }, 1000);
 
-    return () => {
-      clearInterval(countdownTimer);
-    };
-  }, [setScreen]);
+    return () => clearInterval(countdownTimer);
+  }, [selectionTimeRemaining, setSelectionTimeRemaining]);
+
+  // Handle timeout expiry
+  useEffect(() => {
+    if (selectionTimeRemaining === 0) {
+      console.log('⏱️ [ResultScreen] Time expired, returning to idle');
+      // Reset hologram to logo before going to idle
+      // @ts-ignore
+      if (window.electron?.hologram) {
+        // @ts-ignore
+        window.electron.hologram.showLogo();
+      }
+      clearSession();
+      setScreen('idle');
+    }
+  }, [selectionTimeRemaining, setScreen, clearSession]);
 
   // const handleSelect = () => {
   //   setScreen('image-selection');
@@ -191,9 +195,13 @@ export function ResultScreen() {
     >
       {/* Top - Countdown Timer */}
       <motion.div className="w-full flex justify-end" variants={itemVariants}>
-        <div className="flex items-center gap-2 bg-gray-100 px-6 py-3 rounded-full border-2 border-black">
-          <Clock className="w-8 h-8 text-gray-800" />
-          <span className="text-3xl font-bold text-gray-800">{timeRemaining}</span>
+        <div className={`flex items-center gap-2 px-6 py-3 rounded-full border-2 border-black ${
+          selectionTimeRemaining <= 10 ? 'bg-red-100' : 'bg-gray-100'
+        }`}>
+          <Clock className={`w-8 h-8 ${selectionTimeRemaining <= 10 ? 'text-red-600' : 'text-gray-800'}`} />
+          <span className={`text-3xl font-bold ${selectionTimeRemaining <= 10 ? 'text-red-600' : 'text-gray-800'}`}>
+            {selectionTimeRemaining}
+          </span>
         </div>
       </motion.div>
 

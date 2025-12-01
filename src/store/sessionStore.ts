@@ -21,6 +21,8 @@ interface SessionState {
   // Demo mode - use video overlay instead of frame image
   useDemoVideo: boolean;
   demoVideoPath: string | null;
+  // Shared timer for selection flow (ImageSelection -> Result -> Payment)
+  selectionTimeRemaining: number;
 
   // Actions
   addCapturedImage: (imagePath: string) => void;
@@ -31,6 +33,7 @@ interface SessionState {
   setSelectedPrintImage: (imagePath: string | null) => void;
   setLastPaymentResult: (result: LastPaymentResult | null) => void;
   setDemoVideo: (enabled: boolean, videoPath?: string) => void;
+  setSelectionTimeRemaining: (time: number) => void;
   cleanupSessionFiles: () => Promise<void>;
   clearSession: () => void;
 }
@@ -60,6 +63,7 @@ export const useSessionStore = create<SessionState>()(
     sessionStartTime: Date.now(),
     useDemoVideo: false,
     demoVideoPath: null,
+    selectionTimeRemaining: 60,
 
     // Add a single captured image to the list
     addCapturedImage: (imagePath) =>
@@ -109,6 +113,12 @@ export const useSessionStore = create<SessionState>()(
       set((state) => {
         state.useDemoVideo = enabled;
         state.demoVideoPath = videoPath || null;
+      }),
+
+    // Set the shared selection timer (for ImageSelection -> Result -> Payment flow)
+    setSelectionTimeRemaining: (time) =>
+      set((state) => {
+        state.selectionTimeRemaining = time;
       }),
 
     // Cleanup all session files (videos, frames, QR codes)
@@ -172,6 +182,7 @@ export const useSessionStore = create<SessionState>()(
         state.sessionStartTime = Date.now();
         state.useDemoVideo = false;
         state.demoVideoPath = null;
+        state.selectionTimeRemaining = 60;
       }),
   }))
 );
