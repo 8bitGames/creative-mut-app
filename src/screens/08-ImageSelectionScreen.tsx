@@ -57,6 +57,7 @@ export function ImageSelectionScreen() {
   const selectedPrintImage = useSessionStore((state) => state.selectedPrintImage);
   const setSelectedPrintImage = useSessionStore((state) => state.setSelectedPrintImage);
   const processedResult = useSessionStore((state) => state.processedResult);
+  const clearSession = useSessionStore((state) => state.clearSession);
 
   const [localSelection, setLocalSelection] = useState<string | null>(
     selectedPrintImage || (capturedImages.length > 0 ? capturedImages[0] : null)
@@ -70,20 +71,48 @@ export function ImageSelectionScreen() {
   const [timeRemaining, setTimeRemaining] = useState(60);
 
   // CRITICAL: Ensure hologram display (video + QR) persists when entering this screen
-  // AGGRESSIVE APPROACH: Poll every 500ms to ensure hologram stays in correct state
+  // Only poll if we have valid processedResult data
   useEffect(() => {
-    console.log('🎭 [ImageSelectionScreen] Component mounted - setting up hologram persistence');
+    console.log('🎭 [ImageSelectionScreen] Component mounted/updated - setting up hologram persistence');
     console.log(`   processedResult exists: ${!!processedResult}`);
     console.log(`   qrCodePath exists: ${!!processedResult?.qrCodePath}`);
     console.log(`   s3Url exists: ${!!processedResult?.s3Url}`);
 
+    // CRITICAL: Only set up polling if we have valid processedResult
+    // If processedResult is null or missing required fields, don't poll
     if (!processedResult || !processedResult.qrCodePath || !processedResult.s3Url) {
-      console.error('❌ [ImageSelectionScreen] Missing processedResult data - cannot persist hologram!');
+      console.warn('⚠️ [ImageSelectionScreen] Missing processedResult data - skipping hologram persistence');
       return;
     }
 
     const maintainHologram = () => {
+      // Get the latest processedResult from the store to avoid stale closures
+      const latestProcessedResult = useSessionStore.getState().processedResult;
+      
+      // Validate we still have valid data
+      if (!latestProcessedResult || !latestProcessedResult.qrCodePath || !latestProcessedResult.s3Url) {
+        console.warn('⚠️ [ImageSelectionScreen] processedResult became invalid during polling');
+        return;
+      }
+
+      // @ts-ignore - Electron API
+      if (!window.electron?.hologram) {
+        return;
+      }
+
       console.log('🔄 [ImageSelectionScreen] Maintaining hologram display (video + QR)');
+      console.log(`   QR Code: ${latestProcessedResult.qrCodePath}`);
+      console.log(`   Video: ${latestProcessedResult.s3Url}`);
+      
+      // @ts-ignore
+      window.electron.hologram.showQR(
+        latestProcessedResult.qrCodePath,
+        latestProcessedResult.s3Url
+      );
+    };
+
+    // Call immediately with current processedResult
+    if (processedResult.qrCodePath && processedResult.s3Url) {
       // @ts-ignore - Electron API
       if (window.electron?.hologram) {
         // @ts-ignore
@@ -92,13 +121,11 @@ export function ImageSelectionScreen() {
           processedResult.s3Url
         );
       }
-    };
+    }
 
-    // Call immediately
-    maintainHologram();
-
-    // Poll every 500ms to ensure state persists
-    const interval = setInterval(maintainHologram, 500);
+    // Poll every 2 seconds (less aggressive) to ensure state persists
+    // The interval callback will get the latest processedResult from the store
+    const interval = setInterval(maintainHologram, 2000);
 
     return () => {
       console.log('🛑 [ImageSelectionScreen] Stopping hologram polling');
@@ -118,6 +145,14 @@ export function ImageSelectionScreen() {
       if (capturedImages.length !== REQUIRED_IMAGES) {
         console.error(`❌ [ImageSelectionScreen] Expected ${REQUIRED_IMAGES} images, got ${capturedImages.length}`);
         alert(`오류: ${REQUIRED_IMAGES}개의 사진이 필요하지만 ${capturedImages.length}개만 있습니다.\n처음부터 다시 시도해주세요.`);
+        // Reset hologram to logo before going to start
+        // @ts-ignore - Electron API
+        if (window.electron?.hologram) {
+          // @ts-ignore
+          window.electron.hologram.showLogo();
+        }
+        // Clear session data
+        clearSession();
         setTimeout(() => setScreen('start'), 2000);
         setLoadingImages(false);
         return;
@@ -156,12 +191,20 @@ export function ImageSelectionScreen() {
       if (Object.keys(dataUrls).length !== REQUIRED_IMAGES) {
         console.error(`❌ [ImageSelectionScreen] Failed to load all images: ${Object.keys(dataUrls).length}/${REQUIRED_IMAGES}`);
         alert(`오류: 일부 사진을 불러올 수 없습니다.\n처음부터 다시 시도해주세요.`);
+        // Reset hologram to logo before going to start
+        // @ts-ignore - Electron API
+        if (window.electron?.hologram) {
+          // @ts-ignore
+          window.electron.hologram.showLogo();
+        }
+        // Clear session data
+        clearSession();
         setTimeout(() => setScreen('start'), 2000);
       }
     };
 
     loadImages();
-  }, [capturedImages, setScreen]);
+  }, [capturedImages, setScreen, clearSession]);
 
   // 60-second countdown timer
   useEffect(() => {
@@ -176,9 +219,30 @@ export function ImageSelectionScreen() {
   useEffect(() => {
     if (timeRemaining === 0) {
       console.log('⏱️ [ImageSelectionScreen] Time expired, returning to start');
+      // Reset hologram to logo before going to start
+      // @ts-ignore - Electron API
+      if (window.electron?.hologram) {
+        // @ts-ignore
+        window.electron.hologram.showLogo();
+      }
+      // Clear session data to prevent stale data in next session
+      clearSession();
       setScreen('start');
     }
-  }, [timeRemaining, setScreen]);
+  }, [timeRemaining, setScreen, clearSession]);
+
+  // Also handle error cases where we navigate back to start
+  useEffect(() => {
+    const handleErrorNavigation = () => {
+      // If we're navigating away from this screen due to an error, clear session
+      // This is a safety net in case errors occur
+      return () => {
+        // Only clear if we're actually leaving due to an error condition
+        // (Don't clear on normal navigation to payment screen)
+      };
+    };
+    return handleErrorNavigation();
+  }, []);
 
   const handleImageSelect = (imagePath: string) => {
     setLocalSelection(imagePath);

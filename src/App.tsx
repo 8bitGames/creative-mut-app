@@ -65,6 +65,24 @@ function App() {
     }
   }, [currentScreen, isHologramWindow]);
 
+  // ROBUST: Reset hologram to logo whenever main screen goes to idle
+  // This ensures hologram resets regardless of how we got to idle (timeout, error, manual, etc.)
+  useEffect(() => {
+    // Only handle for main window (not hologram window)
+    if (isHologramWindow) return;
+
+    if (currentScreen === 'idle') {
+      console.log('🔄 [App] Main screen is idle - resetting hologram to logo');
+      // @ts-ignore - Electron API
+      if (window.electron?.hologram) {
+        // @ts-ignore
+        window.electron.hologram.showLogo().catch((error: any) => {
+          console.warn('⚠️ [App] Failed to reset hologram to logo:', error);
+        });
+      }
+    }
+  }, [currentScreen, isHologramWindow]);
+
   // Listen for config updates from cloud (optional - for UI awareness)
   useEffect(() => {
     if (!isHologramWindow && window.electron?.app?.onConfigUpdated) {

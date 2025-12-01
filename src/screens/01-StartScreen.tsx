@@ -2,6 +2,7 @@
 import { useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
+import { useSessionStore } from '@/store/sessionStore';
 import { Button } from '@/components/ui/button';
 import { Logo } from '@/components/Logo';
 
@@ -52,6 +53,20 @@ export function StartScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
   const setCameraStream = useAppStore((state) => state.setCameraStream);
   const cameraStream = useAppStore((state) => state.cameraStream);
+  const clearSession = useSessionStore((state) => state.clearSession);
+
+  // Reset hologram to logo and clear session when entering start screen
+  useEffect(() => {
+    console.log('🔄 [StartScreen] Resetting hologram to logo and clearing session');
+    // Reset hologram to logo
+    // @ts-ignore - Electron API
+    if (window.electron?.hologram) {
+      // @ts-ignore
+      window.electron.hologram.showLogo();
+    }
+    // Clear any stale session data
+    clearSession();
+  }, [clearSession]);
 
   // Start webcam IMMEDIATELY when user sees Start screen - keep it running GLOBALLY across all screens
   useEffect(() => {

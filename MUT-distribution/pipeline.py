@@ -19,6 +19,18 @@ from botocore.exceptions import ClientError
 import qrcode
 from dotenv import load_dotenv
 
+# Shadow effect imports (optional - lazy loaded)
+try:
+    import cv2
+    import numpy as np
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
+    print("[WARN] OpenCV not available - shadow effect disabled")
+
+# MediaPipe will be lazy-loaded when needed to avoid startup overhead
+MEDIAPIPE_SEGMENTER = None
+
 # ============================================================================
 # CONFIGURATION & PATH SETUP
 # ============================================================================
@@ -106,46 +118,281 @@ FFMPEG_PATH = get_ffmpeg_path()
 class EncoderType(Enum):
     CPU = "libx264"
     MACOS = "h264_videotoolbox"
+    NVENC = "h264_nvenc"  # NVIDIA GPU encoder
+
+def check_nvenc_available():
+    """Check if NVIDIA NVENC encoder is available and functional.
+
+    This actually tests encoding a single frame because FFmpeg may list
+    NVENC as available even when the driver version is too old.
+    """
+    try:
+        # First check if NVENC is listed
+        result = subprocess.run(
+            [FFMPEG_PATH, '-hide_banner', '-encoders'],
+            capture_output=True, text=True, timeout=10
+        )
+        if 'h264_nvenc' not in result.stdout:
+            return False
+
+        # Actually test NVENC by encoding a single frame
+        # This catches driver version mismatches
+        test_result = subprocess.run(
+            [FFMPEG_PATH, '-hide_banner', '-y',
+             '-f', 'lavfi', '-i', 'color=black:size=64x64:duration=0.1:rate=30',
+             '-c:v', 'h264_nvenc', '-frames:v', '1',
+             '-f', 'null', '-'],
+            capture_output=True, text=True, timeout=10
+        )
+        if test_result.returncode != 0:
+            # Check for driver version error
+            if 'Driver does not support' in test_result.stderr or 'minimum required Nvidia driver' in test_result.stderr:
+                print(f"   [WARN] NVENC listed but driver too old - falling back to CPU")
+            return False
+        return True
+    except Exception as e:
+        print(f"   [WARN] NVENC check failed: {e}")
+        return False
 
 def get_best_encoder():
-    """Detect if we are on macOS and have hardware acceleration"""
+    """Detect the best available encoder (prefer GPU acceleration)"""
     if sys.platform == 'darwin':
         return EncoderType.MACOS
+    # Check for NVIDIA GPU encoder on Windows/Linux
+    if check_nvenc_available():
+        print(f"   [GPU] NVIDIA NVENC encoder available - using hardware acceleration")
+        return EncoderType.NVENC
     return EncoderType.CPU
+
+def verify_video_integrity(video_path, description="Video"):
+    """
+    Verify that a video file is valid and can be decoded.
+
+    Args:
+        video_path: Path to video file
+        description: Description for logging
+
+    Returns:
+        dict with keys: valid, duration, width, height, codec, bitrate, error
+    """
+    print(f"\n[VERIFY] Checking {description} integrity...")
+    print(f"   Path: {video_path}")
+
+    result = {
+        'valid': False,
+        'duration': None,
+        'width': None,
+        'height': None,
+        'codec': None,
+        'bitrate': None,
+        'frame_count': None,
+        'error': None
+    }
+
+    # Check file exists and has content
+    if not os.path.exists(video_path):
+        result['error'] = "File does not exist"
+        print(f"   [FAIL] {result['error']}")
+        return result
+
+    file_size = os.path.getsize(video_path)
+    file_size_mb = file_size / (1024 * 1024)
+    print(f"   File size: {file_size_mb:.2f} MB")
+
+    if file_size == 0:
+        result['error'] = "File is empty (0 bytes)"
+        print(f"   [FAIL] {result['error']}")
+        return result
+
+    # Use ffprobe to get detailed video info
+    # Handle both 'ffmpeg' and 'ffmpeg.exe' paths
+    if FFMPEG_PATH.endswith('.exe'):
+        ffprobe_path = FFMPEG_PATH.replace('ffmpeg.exe', 'ffprobe.exe')
+    else:
+        ffprobe_path = FFMPEG_PATH + '.exe'.replace('ffmpeg.exe', 'ffprobe.exe') if sys.platform == 'win32' else FFMPEG_PATH.replace('ffmpeg', 'ffprobe')
+
+    # Actually, let's just derive it from the directory
+    ffmpeg_dir = os.path.dirname(FFMPEG_PATH)
+    if ffmpeg_dir:
+        ffprobe_path = os.path.join(ffmpeg_dir, 'ffprobe.exe' if sys.platform == 'win32' else 'ffprobe')
+    else:
+        ffprobe_path = 'ffprobe'
+
+    cmd = [
+        ffprobe_path,
+        '-v', 'error',
+        '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height,codec_name,bit_rate,nb_frames,duration',
+        '-show_entries', 'format=duration,bit_rate',
+        '-of', 'json',
+        video_path
+    ]
+
+    try:
+        import json  # Import here to ensure it's available in exception handlers
+
+        probe_result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
+        if probe_result.returncode != 0:
+            result['error'] = f"ffprobe failed: {probe_result.stderr[:200] if probe_result.stderr else 'Unknown error'}"
+            print(f"   [FAIL] {result['error']}")
+            return result
+
+        probe_data = json.loads(probe_result.stdout)
+
+        # Extract stream info
+        if 'streams' in probe_data and len(probe_data['streams']) > 0:
+            stream = probe_data['streams'][0]
+            result['width'] = stream.get('width')
+            result['height'] = stream.get('height')
+            result['codec'] = stream.get('codec_name')
+            result['frame_count'] = int(stream.get('nb_frames', 0)) if stream.get('nb_frames') else None
+            if stream.get('duration'):
+                result['duration'] = float(stream['duration'])
+
+        # Extract format info
+        if 'format' in probe_data:
+            fmt = probe_data['format']
+            if not result['duration'] and fmt.get('duration'):
+                result['duration'] = float(fmt['duration'])
+            if fmt.get('bit_rate'):
+                result['bitrate'] = int(fmt['bit_rate']) / 1000000  # Convert to Mbps
+
+        print(f"   Resolution: {result['width']}x{result['height']}")
+        print(f"   Codec: {result['codec']}")
+        print(f"   Duration: {result['duration']:.2f}s" if result['duration'] else "   Duration: Unknown")
+        print(f"   Bitrate: {result['bitrate']:.1f} Mbps" if result['bitrate'] else "   Bitrate: Unknown")
+        print(f"   Frames: {result['frame_count']}" if result['frame_count'] else "   Frames: Unknown")
+
+    except subprocess.TimeoutExpired:
+        result['error'] = "ffprobe timed out"
+        print(f"   [FAIL] {result['error']}")
+        return result
+    except json.JSONDecodeError as e:
+        result['error'] = f"Failed to parse ffprobe output: {e}"
+        print(f"   [FAIL] {result['error']}")
+        return result
+    except Exception as e:
+        result['error'] = f"ffprobe error: {str(e)}"
+        print(f"   [FAIL] {result['error']}")
+        return result
+
+    # Try to decode a few frames to verify video stream integrity
+    print(f"   [TEST] Attempting to decode frames...")
+
+    test_cmd = [
+        FFMPEG_PATH,
+        '-v', 'error',
+        '-i', video_path,
+        '-vframes', '10',  # Try to decode 10 frames
+        '-f', 'null',
+        '-'
+    ]
+
+    try:
+        decode_result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=60)
+
+        if decode_result.returncode != 0 or decode_result.stderr:
+            # Check if there are actual errors (not just warnings)
+            stderr = decode_result.stderr or ""
+            error_lines = [l for l in stderr.split('\n') if l.strip() and 'error' in l.lower()]
+
+            if error_lines or decode_result.returncode != 0:
+                result['error'] = f"Decode test failed: {stderr[:500] if stderr else 'Unknown error'}"
+                print(f"   [FAIL] Video stream is CORRUPTED!")
+                print(f"   Error details: {result['error'][:200]}")
+                return result
+
+        result['valid'] = True
+        print(f"   [OK] Video stream is valid and decodable")
+
+    except subprocess.TimeoutExpired:
+        result['error'] = "Decode test timed out"
+        print(f"   [FAIL] {result['error']}")
+        return result
+    except Exception as e:
+        result['error'] = f"Decode test error: {str(e)}"
+        print(f"   [FAIL] {result['error']}")
+        return result
+
+    return result
 
 def normalize_to_mp4(input_video):
     """
     Convert any input video to a clean MP4 format.
     This fixes WebM header issues and ensures consistent input.
     """
-    # If already MP4, return as-is
-    if input_video.endswith('.mp4'):
-        print(f"   [OK] Input is already MP4, skipping normalization")
-        return input_video
+    print(f"\n{'─' * 60}")
+    print(f"📹 [NORMALIZE] WebM → MP4 Conversion")
+    print(f"{'─' * 60}")
 
-    print(f"   [CONVERTING] Normalizing {os.path.basename(input_video)} to MP4...")
+    # Check input file
+    if not os.path.exists(input_video):
+        print(f"   [ERROR] Input file does not exist: {input_video}")
+        raise FileNotFoundError(f"Input video not found: {input_video}")
+
+    input_size = os.path.getsize(input_video) / (1024 * 1024)
+    print(f"   Input: {os.path.basename(input_video)}")
+    print(f"   Size:  {input_size:.2f} MB")
+
+    # If already MP4, verify and return
+    if input_video.endswith('.mp4'):
+        print(f"   [SKIP] Input is already MP4, verifying...")
+        verify_result = verify_video_integrity(input_video, "Input MP4")
+        if verify_result['valid']:
+            return input_video
+        else:
+            print(f"   [WARN] Input MP4 may have issues: {verify_result['error']}")
+            # Continue anyway
 
     # Create normalized MP4 in same directory
     normalized_path = input_video.rsplit('.', 1)[0] + '_normalized.mp4'
+    print(f"   Output: {os.path.basename(normalized_path)}")
 
     cmd = [
         FFMPEG_PATH, '-y',
         '-i', input_video,
         '-c:v', 'libx264',       # Re-encode to H.264
-        '-preset', 'fast',       # Better quality than ultrafast (4K needs this)
-        '-crf', '18',            # High quality
+        '-preset', 'medium',     # Balanced speed/quality for intermediate file
+        '-crf', '14',            # Excellent quality (sweet spot for quality/size)
         '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',  # CRITICAL: Proper MP4 structure
         normalized_path
     ]
 
+    print(f"   [RUN] FFmpeg command: {' '.join(cmd[:6])}...")
+
     try:
-        subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+        start_time = time.time()
+        result = subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+        duration = time.time() - start_time
+
         file_size = os.path.getsize(normalized_path) / (1024 * 1024)
-        print(f"   [OK] Normalized to MP4: {file_size:.1f} MB")
+        print(f"   [OK] Normalized in {duration:.1f}s")
+        print(f"   Output size: {file_size:.2f} MB")
+
+        # Verify output
+        verify_result = verify_video_integrity(normalized_path, "Normalized MP4")
+        if not verify_result['valid']:
+            print(f"   [ERROR] Normalization produced invalid video!")
+            print(f"   Error: {verify_result['error']}")
+            raise Exception(f"Normalized video is invalid: {verify_result['error']}")
+
+        print(f"{'─' * 60}\n")
         return normalized_path
+
     except subprocess.CalledProcessError as e:
-        print(f"   [WARN] Normalization failed, using original: {e.stderr.decode() if e.stderr else 'Unknown error'}")
-        return input_video
+        stderr = e.stderr.decode() if e.stderr else 'No error output'
+        print(f"   [ERROR] FFmpeg normalization failed!")
+        print(f"   Exit code: {e.returncode}")
+        print(f"   Stderr: {stderr[:500]}")
+        print(f"{'─' * 60}\n")
+        raise Exception(f"Video normalization failed: {stderr[:200]}")
+
+    except subprocess.TimeoutExpired:
+        print(f"   [ERROR] FFmpeg normalization timed out after 120s!")
+        print(f"{'─' * 60}\n")
+        raise Exception("Video normalization timed out")
 
 def enhance_video(input_video, enhancement_level='medium'):
     """
@@ -159,11 +406,23 @@ def enhance_video(input_video, enhancement_level='medium'):
     Returns:
         Path to enhanced video
     """
-    print(f"\n[ENHANCE] Applying face enhancement to video...")
+    print(f"\n{'─' * 60}")
+    print(f"✨ [ENHANCE] Face Enhancement Filter")
+    print(f"{'─' * 60}")
+
+    # Check input
+    if not os.path.exists(input_video):
+        print(f"   [ERROR] Input file does not exist: {input_video}")
+        raise FileNotFoundError(f"Input video not found: {input_video}")
+
+    input_size = os.path.getsize(input_video) / (1024 * 1024)
+    print(f"   Input: {os.path.basename(input_video)}")
+    print(f"   Size:  {input_size:.2f} MB")
     print(f"   Level: {enhancement_level}")
 
     # Create enhanced video path
     enhanced_path = input_video.rsplit('.', 1)[0] + '_enhanced.mp4'
+    print(f"   Output: {os.path.basename(enhanced_path)}")
 
     # Enhancement parameters
     params = {
@@ -188,6 +447,11 @@ def enhance_video(input_video, enhancement_level='medium'):
     }
 
     current_params = params.get(enhancement_level, params['medium'])
+    print(f"\n   Enhancement Parameters:")
+    print(f"   ├─ Brightness: +{current_params['brightness']*100:.0f}%")
+    print(f"   ├─ Contrast:   {current_params['contrast']:.2f}x")
+    print(f"   ├─ Saturation: {current_params['saturation']:.2f}x")
+    print(f"   └─ Sharpening: {current_params['unsharp']}")
 
     # Build FFmpeg filter chain for face/skin enhancement
     filter_chain = (
@@ -202,101 +466,695 @@ def enhance_video(input_video, enhancement_level='medium'):
         '-i', input_video,
         '-vf', filter_chain,
         '-c:v', 'libx264',
-        '-preset', 'medium',
-        '-crf', '18',
+        '-preset', 'medium',     # Balanced speed/quality for intermediate file
+        '-crf', '14',            # Excellent quality (sweet spot for quality/size)
         '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',  # CRITICAL: Proper MP4 structure
         enhanced_path
     ]
 
+    print(f"\n   [RUN] Applying enhancement filters...")
+
     try:
-        subprocess.run(cmd, check=True, capture_output=True, timeout=60)
+        start_time = time.time()
+        result = subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+        duration = time.time() - start_time
+
         file_size = os.path.getsize(enhanced_path) / (1024 * 1024)
-        print(f"   [OK] Video enhanced: {file_size:.1f} MB")
+        print(f"   [OK] Enhanced in {duration:.1f}s")
+        print(f"   Output size: {file_size:.2f} MB")
+
+        # Verify output
+        verify_result = verify_video_integrity(enhanced_path, "Enhanced Video")
+        if not verify_result['valid']:
+            print(f"   [ERROR] Enhancement produced invalid video!")
+            print(f"   Error: {verify_result['error']}")
+            raise Exception(f"Enhanced video is invalid: {verify_result['error']}")
+
+        print(f"{'─' * 60}\n")
         return enhanced_path
+
     except subprocess.CalledProcessError as e:
-        print(f"   [WARN] Enhancement failed, using original: {e.stderr.decode() if e.stderr else 'Unknown error'}")
+        stderr = e.stderr.decode() if e.stderr else 'No error output'
+        print(f"   [ERROR] FFmpeg enhancement failed!")
+        print(f"   Exit code: {e.returncode}")
+        print(f"   Stderr: {stderr[:500]}")
+        print(f"   [FALLBACK] Using original video without enhancement")
+        print(f"{'─' * 60}\n")
         return input_video
 
-def composite_video(input_video, frame_image, output_path, enhance_faces=True):
+    except subprocess.TimeoutExpired:
+        print(f"   [ERROR] FFmpeg enhancement timed out after 120s!")
+        print(f"   [FALLBACK] Using original video without enhancement")
+        print(f"{'─' * 60}\n")
+        return input_video
+
+
+# ============================================================================
+# SHADOW EFFECT PROCESSING
+# ============================================================================
+
+# Default shadow configuration (matches ShadowEffectScreen.tsx)
+DEFAULT_SHADOW_CONFIG = {
+    'enabled': False,
+    'offsetX': 30,        # Shadow X offset in pixels (scaled to video resolution)
+    'offsetY': 60,        # Shadow Y offset in pixels
+    'blur': 50,           # Blur radius in pixels (increased for softer shadow)
+    'opacity': 0.75,      # Shadow opacity (0-1) - increased for more visible shadow
+    'spread': 15,         # Shadow spread/expansion percentage
+}
+
+
+def get_mediapipe_segmenter():
     """
-    Composites video + frame overlay only.
+    Lazy-load and cache MediaPipe Selfie Segmentation model.
+    This avoids loading the model if shadow effect is not used.
+    """
+    global MEDIAPIPE_SEGMENTER
+
+    if MEDIAPIPE_SEGMENTER is not None:
+        return MEDIAPIPE_SEGMENTER
+
+    try:
+        import mediapipe as mp
+
+        # Initialize MediaPipe Selfie Segmentation
+        # model_selection=0: General model (faster, good for real-time)
+        # model_selection=1: Landscape model (better quality, slower)
+        # Using 0 for speed since we're processing video offline
+        mp_selfie_seg = mp.solutions.selfie_segmentation
+        segmenter = mp_selfie_seg.SelfieSegmentation(model_selection=0)  # 0 = general model (faster)
+
+        MEDIAPIPE_SEGMENTER = segmenter
+        print(f"   [OK] MediaPipe Selfie Segmentation model loaded (fast mode)")
+        return segmenter
+
+    except ImportError:
+        print(f"   [ERROR] MediaPipe not installed. Run: pip install mediapipe")
+        return None
+    except Exception as e:
+        print(f"   [ERROR] Failed to load MediaPipe: {e}")
+        return None
+
+
+def apply_shadow_to_frame(frame, mask, shadow_config):
+    """
+    Apply shadow effect to a single frame using the segmentation mask.
+
+    Algorithm (matching ShadowEffectScreen.tsx):
+    1. Create shadow from inverted mask with offset and blur
+    2. Layer order: video -> shadow -> person on top
+
+    Args:
+        frame: BGR image (numpy array)
+        mask: Segmentation mask (0-1 float, 1=person)
+        shadow_config: Shadow configuration dict
+
+    Returns:
+        Frame with shadow effect applied (BGR numpy array)
+    """
+    h, w = frame.shape[:2]
+
+    # Extract shadow parameters
+    # Scale offsets based on video resolution (base resolution: 1280x720)
+    scale_x = w / 1280
+    scale_y = h / 720
+
+    offset_x = int(shadow_config['offsetX'] * scale_x)
+    offset_y = int(shadow_config['offsetY'] * scale_y)
+    blur_radius = max(1, int(shadow_config['blur'] * min(scale_x, scale_y)))
+    opacity = shadow_config['opacity']
+    spread = shadow_config['spread'] / 100.0  # Convert percentage to fraction
+
+    # Ensure blur radius is odd (required by cv2.GaussianBlur)
+    if blur_radius % 2 == 0:
+        blur_radius += 1
+
+    # Convert mask to uint8 (0-255)
+    mask_uint8 = (mask * 255).astype(np.uint8)
+
+    # STEP 1: Create shadow mask with spread (enlarge the silhouette)
+    if spread > 0:
+        # Dilate the mask to expand the shadow
+        kernel_size = max(3, int(min(w, h) * spread / 10))
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        shadow_mask = cv2.dilate(mask_uint8, kernel)
+    else:
+        shadow_mask = mask_uint8.copy()
+
+    # STEP 2: Create offset shadow
+    # Create a larger canvas to handle offset without clipping
+    pad = max(abs(offset_x), abs(offset_y)) + blur_radius
+    padded_h, padded_w = h + 2 * pad, w + 2 * pad
+
+    shadow_padded = np.zeros((padded_h, padded_w), dtype=np.uint8)
+
+    # Place shadow mask with offset
+    src_y1, src_y2 = 0, h
+    src_x1, src_x2 = 0, w
+    dst_y1 = pad + offset_y
+    dst_x1 = pad + offset_x
+
+    # Handle negative offsets
+    if dst_y1 < 0:
+        src_y1 = -dst_y1
+        dst_y1 = 0
+    if dst_x1 < 0:
+        src_x1 = -dst_x1
+        dst_x1 = 0
+
+    dst_y2 = dst_y1 + (src_y2 - src_y1)
+    dst_x2 = dst_x1 + (src_x2 - src_x1)
+
+    # Clip to bounds
+    if dst_y2 > padded_h:
+        src_y2 -= (dst_y2 - padded_h)
+        dst_y2 = padded_h
+    if dst_x2 > padded_w:
+        src_x2 -= (dst_x2 - padded_w)
+        dst_x2 = padded_w
+
+    if src_y2 > src_y1 and src_x2 > src_x1:
+        shadow_padded[dst_y1:dst_y2, dst_x1:dst_x2] = shadow_mask[src_y1:src_y2, src_x1:src_x2]
+
+    # STEP 3: Apply Gaussian blur to shadow
+    shadow_blurred = cv2.GaussianBlur(shadow_padded, (blur_radius, blur_radius), 0)
+
+    # Crop back to original size
+    shadow_final = shadow_blurred[pad:pad+h, pad:pad+w]
+
+    # STEP 4: Composite - video -> shadow -> person
+    # Create output starting with original frame
+    output = frame.copy().astype(np.float32)
+
+    # Create shadow layer (black with alpha)
+    shadow_alpha = (shadow_final.astype(np.float32) / 255.0) * opacity
+
+    # Remove shadow where person is (person should be on top of shadow)
+    person_mask_float = mask.astype(np.float32)
+    shadow_alpha = shadow_alpha * (1.0 - person_mask_float)
+
+    # Apply shadow (darken the video)
+    shadow_alpha_3ch = np.stack([shadow_alpha] * 3, axis=-1)
+    output = output * (1.0 - shadow_alpha_3ch)  # Darken where shadow is
+
+    # Clip and convert back to uint8
+    output = np.clip(output, 0, 255).astype(np.uint8)
+
+    return output
+
+
+def apply_shadow_effect(input_video, output_video, shadow_config=None):
+    """
+    Apply shadow effect to video using MediaPipe person segmentation.
+
+    OPTIMIZED VERSION:
+    - Processes segmentation at lower resolution (720p max) for speed
+    - Pipes frames directly to FFmpeg (single encoding pass)
+    - Pre-allocates buffers to reduce memory allocation overhead
+
+    Args:
+        input_video: Path to input video
+        output_video: Path to output video with shadow
+        shadow_config: Shadow configuration dict (uses defaults if None)
+
+    Returns:
+        Path to output video, or input_video if shadow processing fails
+    """
+    print(f"\n{'─' * 60}")
+    print(f"🌑 [SHADOW] Person Shadow Effect Processing (Optimized)")
+    print(f"{'─' * 60}")
+
+    # Check dependencies
+    if not CV2_AVAILABLE:
+        print(f"   [SKIP] OpenCV not available, skipping shadow effect")
+        return input_video
+
+    # Use default config if not provided
+    if shadow_config is None:
+        shadow_config = DEFAULT_SHADOW_CONFIG.copy()
+
+    if not shadow_config.get('enabled', False):
+        print(f"   [SKIP] Shadow effect disabled")
+        return input_video
+
+    # Check input
+    if not os.path.exists(input_video):
+        print(f"   [ERROR] Input file does not exist: {input_video}")
+        return input_video
+
+    print(f"   Input: {os.path.basename(input_video)}")
+    print(f"   Output: {os.path.basename(output_video)}")
+    print(f"\n   Shadow Configuration:")
+    print(f"   ├─ Offset X: {shadow_config['offsetX']}px")
+    print(f"   ├─ Offset Y: {shadow_config['offsetY']}px")
+    print(f"   ├─ Blur:     {shadow_config['blur']}px")
+    print(f"   ├─ Opacity:  {shadow_config['opacity']*100:.0f}%")
+    print(f"   └─ Spread:   {shadow_config['spread']}%")
+
+    # Load MediaPipe segmenter
+    segmenter = get_mediapipe_segmenter()
+    if segmenter is None:
+        print(f"   [FALLBACK] Shadow processing unavailable, using original video")
+        return input_video
+
+    try:
+        start_time = time.time()
+
+        # Open input video
+        cap = cv2.VideoCapture(input_video)
+        if not cap.isOpened():
+            print(f"   [ERROR] Failed to open video: {input_video}")
+            return input_video
+
+        # Get video properties
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        # OPTIMIZATION: Calculate processing resolution for segmentation
+        # MediaPipe works well at 720p, no need for full 4K processing
+        MAX_PROC_HEIGHT = 720
+        if height > MAX_PROC_HEIGHT:
+            proc_scale = MAX_PROC_HEIGHT / height
+            proc_width = int(width * proc_scale)
+            proc_height = MAX_PROC_HEIGHT
+        else:
+            proc_scale = 1.0
+            proc_width = width
+            proc_height = height
+
+        print(f"\n   Video Info:")
+        print(f"   ├─ Resolution: {width}x{height}")
+        print(f"   ├─ FPS: {fps:.2f}")
+        print(f"   ├─ Frames: {total_frames}")
+        print(f"   └─ Segmentation at: {proc_width}x{proc_height} ({proc_scale:.2f}x)")
+
+        # OPTIMIZATION: Start FFmpeg subprocess for direct piping
+        # This avoids intermediate file and double-encoding
+        # Check for NVENC GPU encoder
+        encoder = get_best_encoder()
+
+        ffmpeg_cmd = [
+            FFMPEG_PATH, '-y',
+            '-f', 'rawvideo',
+            '-vcodec', 'rawvideo',
+            '-s', f'{width}x{height}',
+            '-pix_fmt', 'bgr24',
+            '-r', str(fps),
+            '-i', '-',  # Read from stdin
+            '-c:v', encoder.value,
+        ]
+
+        # Add encoder-specific options
+        if encoder == EncoderType.NVENC:
+            ffmpeg_cmd.extend([
+                '-preset', 'p4',        # Medium quality/speed
+                '-rc', 'vbr',
+                '-cq', '19',
+                '-b:v', '0',
+            ])
+            print(f"   [GPU] Using NVENC for shadow output encoding")
+        else:
+            ffmpeg_cmd.extend([
+                '-preset', 'medium',
+                '-crf', '14',
+            ])
+
+        ffmpeg_cmd.extend([
+            '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart',  # CRITICAL: Proper MP4 structure
+            output_video
+        ])
+
+        # Use DEVNULL for stdout/stderr to prevent pipe buffer blocking
+        ffmpeg_proc = subprocess.Popen(
+            ffmpeg_cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+
+        print(f"\n   [PROCESSING] Applying shadow effect to {total_frames} frames...")
+        print(f"   [OPTIMIZATION] Direct FFmpeg pipe (single encode pass)")
+
+        frame_count = 0
+        progress_interval = max(1, total_frames // 10)  # Log every 10%
+        segmentation_time = 0
+        shadow_time = 0
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            frame_count += 1
+
+            # OPTIMIZATION: Resize for segmentation if needed
+            if proc_scale < 1.0:
+                small_frame = cv2.resize(frame, (proc_width, proc_height), interpolation=cv2.INTER_LINEAR)
+                small_frame_rgb = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+            else:
+                small_frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            # Process with MediaPipe
+            seg_start = time.time()
+            results = segmenter.process(small_frame_rgb)
+            segmentation_time += time.time() - seg_start
+
+            if results.segmentation_mask is not None:
+                # OPTIMIZATION: Resize mask back to full resolution
+                mask = results.segmentation_mask
+                if proc_scale < 1.0:
+                    mask = cv2.resize(mask, (width, height), interpolation=cv2.INTER_LINEAR)
+
+                # Apply shadow effect
+                shadow_start = time.time()
+                frame_with_shadow = apply_shadow_to_frame(frame, mask, shadow_config)
+                shadow_time += time.time() - shadow_start
+
+                # Write directly to FFmpeg pipe
+                ffmpeg_proc.stdin.write(frame_with_shadow.tobytes())
+            else:
+                # No segmentation, write original frame
+                ffmpeg_proc.stdin.write(frame.tobytes())
+
+            # Progress logging
+            if frame_count % progress_interval == 0:
+                progress = (frame_count / total_frames) * 100
+                elapsed = time.time() - start_time
+                fps_actual = frame_count / elapsed if elapsed > 0 else 0
+                print(f"   Progress: {progress:.0f}% ({frame_count}/{total_frames}) - {fps_actual:.1f} fps")
+
+        # Cleanup
+        cap.release()
+        ffmpeg_proc.stdin.close()
+        ffmpeg_proc.wait()
+
+        duration = time.time() - start_time
+
+        # Check for FFmpeg errors
+        if ffmpeg_proc.returncode != 0:
+            print(f"   [ERROR] FFmpeg encoding failed (exit code: {ffmpeg_proc.returncode})")
+            return input_video
+
+        # Verify output
+        if os.path.exists(output_video) and os.path.getsize(output_video) > 0:
+            output_size = os.path.getsize(output_video) / (1024 * 1024)
+            avg_seg_ms = (segmentation_time / frame_count * 1000) if frame_count > 0 else 0
+            avg_shadow_ms = (shadow_time / frame_count * 1000) if frame_count > 0 else 0
+
+            print(f"\n   [OK] Shadow effect applied in {duration:.1f}s")
+            print(f"   ├─ Processing speed: {frame_count/duration:.1f} fps")
+            print(f"   ├─ Avg segmentation: {avg_seg_ms:.1f}ms/frame")
+            print(f"   ├─ Avg shadow apply: {avg_shadow_ms:.1f}ms/frame")
+            print(f"   └─ Output size: {output_size:.2f} MB")
+            print(f"{'─' * 60}\n")
+
+            return output_video
+        else:
+            print(f"   [ERROR] Output file not created or empty")
+            print(f"{'─' * 60}\n")
+            return input_video
+
+    except Exception as e:
+        print(f"   [ERROR] Shadow processing failed: {e}")
+        import traceback
+        traceback.print_exc()
+        print(f"   [FALLBACK] Using original video")
+        print(f"{'─' * 60}\n")
+        return input_video
+
+
+def composite_video(input_video, frame_image, output_path, enhance_faces=True, shadow_config=None):
+    """
+    Composites video + frame overlay with optional shadow effect.
 
     Args:
         input_video: Path to input video
         frame_image: Path to frame overlay image
         output_path: Path to output composed video
         enhance_faces: Whether to apply face enhancement before frame overlay
+        shadow_config: Shadow effect configuration dict (None = disabled)
 
     Returns:
-        Duration of composition in seconds
+        dict with timing breakdown: {total, normalize, enhance, shadow, compose}
     """
+    print(f"\n{'═' * 70}")
+    print(f"🎬 [COMPOSITE] Video + Frame Overlay Composition")
+    print(f"{'═' * 70}")
+
     start_time = time.time()
+    timing = {
+        'normalize': 0,
+        'enhance': 0,
+        'shadow': 0,
+        'compose': 0,
+        'total': 0
+    }
 
     # Ensure all paths are absolute strings
     input_video = os.path.abspath(input_video)
     frame_image = os.path.abspath(frame_image)
     output_path = os.path.abspath(output_path)
 
-    print(f"\n[VIDEO] Starting Composition")
-    print(f"   Input:  {input_video}")
-    print(f"   Frame:  {frame_image}")
-    print(f"   Output: {output_path}")
+    print(f"\n   Input Video: {os.path.basename(input_video)}")
+    print(f"   Frame Image: {os.path.basename(frame_image)}")
+    print(f"   Output Path: {os.path.basename(output_path)}")
+
+    # Verify frame image exists
+    if not os.path.exists(frame_image):
+        print(f"   [ERROR] Frame image not found: {frame_image}")
+        raise FileNotFoundError(f"Frame image not found: {frame_image}")
+
+    frame_size = os.path.getsize(frame_image) / 1024
+    print(f"   Frame size: {frame_size:.1f} KB")
 
     # CRITICAL: Normalize input to MP4 first (fixes WebM issues)
+    t_normalize_start = time.time()
     input_video = normalize_to_mp4(input_video)
+    timing['normalize'] = time.time() - t_normalize_start
+    print(f"   ⏱️  Normalize: {timing['normalize']:.1f}s")
 
     # === FACE ENHANCEMENT STEP (BEFORE frame overlay) ===
     if enhance_faces:
+        t_enhance_start = time.time()
         input_video = enhance_video(input_video, enhancement_level='medium')
+        timing['enhance'] = time.time() - t_enhance_start
+        print(f"   ⏱️  Enhance: {timing['enhance']:.1f}s")
+
+    # === SHADOW EFFECT STEP (AFTER enhancement, BEFORE frame overlay) ===
+    if shadow_config and shadow_config.get('enabled', False):
+        t_shadow_start = time.time()
+        shadow_output = input_video.rsplit('.', 1)[0] + '_shadow.mp4'
+        input_video = apply_shadow_effect(input_video, shadow_output, shadow_config)
+        timing['shadow'] = time.time() - t_shadow_start
+        print(f"   ⏱️  Shadow: {timing['shadow']:.1f}s")
 
     # Determine Encoder
     encoder = get_best_encoder()
+
+    print(f"\n{'─' * 60}")
+    print(f"🔧 [COMPOSE] Final Frame Overlay")
+    print(f"{'─' * 60}")
+    print(f"   Input: {os.path.basename(input_video)}")
     print(f"   Encoder: {encoder.value}")
+    print(f"   Target: 4K Portrait (2160x3840)")
+    if encoder == EncoderType.CPU:
+        print(f"   Quality: CRF 14 (excellent, balanced quality/size)")
+        print(f"   Preset: medium (balanced speed/quality)")
+    elif encoder == EncoderType.NVENC:
+        print(f"   Quality: CQ 19 (NVENC constant quality)")
+        print(f"   Preset: p4 (GPU accelerated)")
+    else:
+        print(f"   Bitrate: 150 Mbps (near-lossless for hardware encoder)")
 
     # --- FFmpeg Filter Chain ---
     # 1. Scale Input Video to 4K Portrait (2160x3840)
     # 2. Mirror (flip horizontally) the video
     # 3. Scale Frame to 4K Portrait (2160x3840)
-    # 4. Overlay Frame on Video
+    # 4. Remove alpha channel from frame (format=rgba->yuv420p ensures compatibility)
+    # 5. Overlay Frame on Video
 
     filter_chain = (
-        '[0:v]scale=2160:3840:flags=lanczos,hflip,setsar=1[video];'
-        '[1:v]scale=2160:3840:flags=lanczos[frame];'
+        '[0:v]scale=2160:3840:flags=lanczos,hflip,setsar=1,format=yuv420p[video];'
+        '[1:v]scale=2160:3840:flags=lanczos,format=rgba[frame];'
         '[video][frame]overlay=0:0:format=auto[final]'
     )
 
-    # Build Command
-    cmd = [
-        FFMPEG_PATH,                # Use FFmpeg
-        '-y',                       # Overwrite output
-        '-i', input_video,          # Input 0
-        '-i', frame_image,          # Input 1
-        '-filter_complex', filter_chain,
-        '-map', '[final]',
-        '-c:v', encoder.value,      # Codec
-        '-b:v', '40M',              # 40 Mbps bitrate for 4K quality
-        '-pix_fmt', 'yuv420p',      # Pixel format
-    ]
+    # Build Command with retry support
+    max_retries = 2
+    retry_count = 0
+    t_compose_start = time.time()
 
-    # Add macOS-specific options
-    if sys.platform == 'darwin':
-        cmd.extend(['-allow_sw', '1'])  # Allow software fallback if GPU fails (macOS only)
+    while retry_count <= max_retries:
+        cmd = [
+            FFMPEG_PATH,                # Use FFmpeg
+            '-y',                       # Overwrite output
+            '-i', input_video,          # Input 0
+            '-i', frame_image,          # Input 1
+            '-filter_complex', filter_chain,
+            '-map', '[final]',
+            '-c:v', encoder.value,      # Codec
+        ]
 
-    cmd.extend([
-        '-shortest',                # Stop when shortest input ends
-        output_path
-    ])
+        # QUALITY SETTINGS: High quality encoding for 4K output
+        if encoder == EncoderType.CPU:
+            # libx264: Use CRF-based quality (no bitrate cap)
+            cmd.extend([
+                '-preset', 'medium',    # Medium = good balance of speed and quality
+                '-crf', '14',           # Excellent quality (sweet spot for quality/size)
+            ])
+        elif encoder == EncoderType.NVENC:
+            # NVIDIA NVENC: Hardware accelerated encoding (much faster!)
+            cmd.extend([
+                '-preset', 'p4',        # p4 = medium quality/speed (p1=fastest, p7=best quality)
+                '-rc', 'vbr',           # Variable bitrate for better quality
+                '-cq', '19',            # Constant quality mode (similar to CRF 14-15)
+                '-b:v', '0',            # Let CQ mode determine bitrate
+                '-maxrate', '150M',     # Max bitrate cap
+                '-bufsize', '300M',     # Buffer size
+            ])
+        else:
+            # Hardware encoders (h264_videotoolbox, etc): Use very high bitrate
+            # Hardware encoders don't support CRF, so use 150 Mbps for 4K near-lossless
+            cmd.extend([
+                '-b:v', '150M',         # 150 Mbps for near-lossless 4K (was 40M)
+            ])
 
-    try:
-        # Run FFmpeg
-        subprocess.run(cmd, check=True, capture_output=True)
-        duration = time.time() - start_time
-        print(f"[OK] Composition finished in {duration:.2f}s")
-        return duration
-    except subprocess.CalledProcessError as e:
-        print(f"[ERROR] FFmpeg Failed with exit code {e.returncode}")
-        print(f"   Error Log: {e.stderr.decode('utf-8') if e.stderr else 'No stderr'}")
-        raise
+        cmd.extend([
+            '-pix_fmt', 'yuv420p',      # Pixel format
+            '-movflags', '+faststart',  # CRITICAL: Move moov atom to start for proper MP4 structure
+        ])
+
+        # Add macOS-specific options
+        if sys.platform == 'darwin':
+            cmd.extend(['-allow_sw', '1'])  # Allow software fallback if GPU fails (macOS only)
+
+        cmd.extend([
+            '-shortest',                # Stop when shortest input ends
+            output_path
+        ])
+
+        if retry_count > 0:
+            print(f"\n   [RETRY {retry_count}/{max_retries}] Attempting composition again...")
+
+        print(f"\n   [RUN] Compositing video with frame overlay...")
+
+        try:
+            # Run FFmpeg
+            result = subprocess.run(cmd, check=True, capture_output=True, timeout=300)
+            compose_duration = time.time() - start_time
+
+            # Check output exists
+            if not os.path.exists(output_path):
+                print(f"   [ERROR] Output file was not created!")
+                raise Exception("FFmpeg completed but output file not found")
+
+            output_size = os.path.getsize(output_path) / (1024 * 1024)
+            print(f"   [OK] Composition finished in {compose_duration:.1f}s")
+            print(f"   Output size: {output_size:.2f} MB")
+
+            # CRITICAL: Verify the output video is valid
+            print(f"\n   [VERIFY] Checking final video integrity...")
+            verify_result = verify_video_integrity(output_path, "Final Composite Video")
+
+            if not verify_result['valid']:
+                print(f"\n   {'!' * 60}")
+                print(f"   ⚠️  VIDEO CORRUPTION DETECTED!")
+                print(f"   {'!' * 60}")
+                print(f"   Error: {verify_result['error']}")
+
+                # Check if we can retry
+                if retry_count < max_retries:
+                    print(f"   Will retry composition ({retry_count + 1}/{max_retries})...")
+                    # Delete corrupted file before retry
+                    try:
+                        os.remove(output_path)
+                    except:
+                        pass
+                    retry_count += 1
+                    time.sleep(1)  # Brief pause before retry
+                    continue  # Retry the while loop
+                else:
+                    print(f"   {'!' * 60}")
+                    print(f"   ❌ CRITICAL: ALL RETRIES EXHAUSTED - VIDEO STILL CORRUPTED!")
+                    print(f"   {'!' * 60}")
+                    print(f"   The video file exists but cannot be decoded properly.")
+                    print(f"   This may be caused by:")
+                    print(f"   - FFmpeg process being interrupted")
+                    print(f"   - Disk I/O issues")
+                    print(f"   - Memory issues during encoding")
+                    print(f"   - Incompatible input video format")
+                    print(f"   {'!' * 60}\n")
+                    raise Exception(f"Output video is corrupted after {max_retries} retries: {verify_result['error']}")
+
+            # Calculate timing
+            timing['compose'] = time.time() - t_compose_start
+            timing['total'] = time.time() - start_time
+
+            print(f"\n{'═' * 70}")
+            print(f"✅ COMPOSITION COMPLETE")
+            print(f"{'═' * 70}")
+            print(f"   Duration: {verify_result['duration']:.2f}s")
+            print(f"   Resolution: {verify_result['width']}x{verify_result['height']}")
+            print(f"   Size: {output_size:.2f} MB")
+            print(f"   Bitrate: {verify_result['bitrate']:.1f} Mbps" if verify_result['bitrate'] else "")
+            if retry_count > 0:
+                print(f"   Note: Succeeded after {retry_count} retry(s)")
+            print(f"\n   ⏱️  TIMING BREAKDOWN:")
+            print(f"   ├─ Normalize:  {timing['normalize']:.1f}s")
+            print(f"   ├─ Enhance:    {timing['enhance']:.1f}s")
+            print(f"   ├─ Shadow:     {timing['shadow']:.1f}s")
+            print(f"   ├─ Compose:    {timing['compose']:.1f}s")
+            print(f"   └─ TOTAL:      {timing['total']:.1f}s")
+            print(f"{'═' * 70}\n")
+
+            return timing
+
+        except subprocess.CalledProcessError as e:
+            stderr = e.stderr.decode('utf-8') if e.stderr else 'No error output'
+            print(f"\n   {'!' * 60}")
+            print(f"   ❌ FFMPEG COMPOSITION FAILED!")
+            print(f"   {'!' * 60}")
+            print(f"   Exit code: {e.returncode}")
+            print(f"   Error output:")
+            # Print error in chunks for readability
+            for line in stderr.split('\n')[:20]:
+                if line.strip():
+                    print(f"   > {line}")
+            if len(stderr.split('\n')) > 20:
+                print(f"   ... ({len(stderr.split(chr(10))) - 20} more lines)")
+
+            # Check if we can retry
+            if retry_count < max_retries:
+                print(f"   Will retry ({retry_count + 1}/{max_retries})...")
+                retry_count += 1
+                time.sleep(1)
+                continue
+            print(f"   {'!' * 60}\n")
+            raise Exception(f"FFmpeg composition failed: {stderr[:300]}")
+
+        except subprocess.TimeoutExpired:
+            print(f"\n   {'!' * 60}")
+            print(f"   ❌ FFMPEG TIMED OUT!")
+            print(f"   {'!' * 60}")
+            print(f"   The composition process took longer than 5 minutes.")
+
+            # Check if we can retry
+            if retry_count < max_retries:
+                print(f"   Will retry ({retry_count + 1}/{max_retries})...")
+                retry_count += 1
+                time.sleep(1)
+                continue
+            print(f"   {'!' * 60}\n")
+            raise Exception("FFmpeg composition timed out after 5 minutes")
+
+    # Should never reach here, but just in case
+    raise Exception("Composition failed unexpectedly")
 
 # ============================================================================
 # S3 & QR UTILS
@@ -342,12 +1200,51 @@ class S3Uploader:
             return None, None
 
 def generate_qr(data, output_path):
-    qr = qrcode.QRCode(box_size=10, border=4)
-    qr.add_data(data)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    img.save(output_path)
-    return output_path
+    """
+    Generate QR code and save to file.
+    
+    Args:
+        data: URL or data to encode in QR code
+        output_path: Full path where QR code should be saved
+        
+    Returns:
+        output_path if successful, None if failed
+        
+    Raises:
+        Exception if QR code generation fails
+    """
+    try:
+        # Ensure output directory exists
+        output_dir = os.path.dirname(output_path)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+            print(f"   Created directory: {output_dir}")
+        
+        # Generate QR code
+        qr = qrcode.QRCode(box_size=10, border=4)
+        qr.add_data(data)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        
+        # Save to file
+        img.save(output_path)
+        
+        # Verify file was created and is readable
+        if not os.path.exists(output_path):
+            raise Exception(f"QR code file was not created at {output_path}")
+        
+        file_size = os.path.getsize(output_path)
+        if file_size == 0:
+            raise Exception(f"QR code file is empty at {output_path}")
+        
+        print(f"   ✅ QR code saved: {output_path} ({file_size} bytes)")
+        return output_path
+        
+    except Exception as e:
+        print(f"   ❌ QR code generation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
 def get_video_duration(video_path):
     """Get video duration in seconds using ffprobe."""
@@ -579,6 +1476,15 @@ def main():
     parser.add_argument('--output-dir', help="Output directory (uses default if not specified)")
     parser.add_argument('--log-file', help="Log file path for debug output")
     parser.add_argument('--json', action='store_true')
+
+    # Shadow effect arguments
+    parser.add_argument('--shadow', action='store_true', help="Enable person shadow effect")
+    parser.add_argument('--shadow-offset-x', type=int, default=30, help="Shadow X offset (default: 30)")
+    parser.add_argument('--shadow-offset-y', type=int, default=60, help="Shadow Y offset (default: 60)")
+    parser.add_argument('--shadow-blur', type=int, default=50, help="Shadow blur radius (default: 50)")
+    parser.add_argument('--shadow-opacity', type=float, default=0.75, help="Shadow opacity 0-1 (default: 0.75)")
+    parser.add_argument('--shadow-spread', type=int, default=15, help="Shadow spread percentage (default: 15)")
+
     args = parser.parse_args()
 
     # Map chroma to frame if frame is missing
@@ -587,12 +1493,27 @@ def main():
     # Use provided output directory or fall back to default
     output_dir = args.output_dir if args.output_dir else DEFAULT_OUTPUT_DIR
 
+    # Build shadow configuration from arguments
+    shadow_config = {
+        'enabled': args.shadow,
+        'offsetX': args.shadow_offset_x,
+        'offsetY': args.shadow_offset_y,
+        'blur': args.shadow_blur,
+        'opacity': args.shadow_opacity,
+        'spread': args.shadow_spread,
+    }
+
     print("\n[CONFIG] Pipeline Configuration:")
     print(f"   Input video:    {args.input}")
     print(f"   Frame overlay:  {frame_path}")
     print(f"   S3 folder:      {args.s3_folder}")
     print(f"   Output dir:     {output_dir}")
     print(f"   JSON output:    {args.json}")
+    print(f"   Shadow effect:  {'Enabled' if args.shadow else 'Disabled'}")
+    if args.shadow:
+        print(f"      Offset: ({args.shadow_offset_x}, {args.shadow_offset_y})")
+        print(f"      Blur: {args.shadow_blur}px, Opacity: {args.shadow_opacity*100:.0f}%")
+        print(f"      Spread: {args.shadow_spread}%")
 
     # Verify input files exist
     print("\n[VERIFY] Checking input files...")
@@ -641,7 +1562,8 @@ def main():
         "s3Url": None,
         "qrCodePath": None,
         "framePaths": [],
-        "totalTime": 0
+        "totalTime": 0,
+        "shadowEnabled": shadow_config.get('enabled', False)
     }
 
     try:
@@ -656,13 +1578,15 @@ def main():
         print(f"   Output: {output_video_path}")
 
         step1_start = time.time()
-        comp_time = composite_video(
+        comp_timing = composite_video(
             input_video=args.input,
             frame_image=frame_path,
-            output_path=output_video_path
+            output_path=output_video_path,
+            shadow_config=shadow_config
         )
         step1_time = time.time() - step1_start
-        results['compositionTime'] = comp_time
+        results['compositionTime'] = comp_timing['total'] if isinstance(comp_timing, dict) else comp_timing
+        results['timingBreakdown'] = comp_timing if isinstance(comp_timing, dict) else {}
 
         # Verify output
         if os.path.exists(output_video_path):
@@ -733,6 +1657,7 @@ def main():
         frame_paths = extract_frames(output_video_path, frame_timestamps, session_dir)
         step2_time = time.time() - step2_start
         results['framePaths'] = frame_paths
+        results['step2Time'] = step2_time
 
         print(f"   ✅ STEP 2 COMPLETE in {step2_time:.1f}s")
         print(f"   Extracted {len(frame_paths)} frames:")
@@ -756,6 +1681,7 @@ def main():
         uploader = S3Uploader()
         s3_url, s3_key = uploader.upload(output_video_path, args.s3_folder)
         step3_time = time.time() - step3_start
+        results['step3Time'] = step3_time
 
         if s3_url:
             results['s3Url'] = s3_url
@@ -772,18 +1698,40 @@ def main():
             print("=" * 80)
             print(f"   URL to encode: {s3_url}")
             print(f"   Output path: {qr_path}")
+            print(f"   Absolute path: {os.path.abspath(qr_path)}")
 
             step4_start = time.time()
-            generate_qr(s3_url, qr_path)
-            step4_time = time.time() - step4_start
-            results['qrCodePath'] = qr_path
-
-            if os.path.exists(qr_path):
-                qr_size = os.path.getsize(qr_path) / 1024
-                print(f"   ✅ STEP 4 COMPLETE in {step4_time:.1f}s")
-                print(f"   QR Code size: {qr_size:.1f} KB")
-            else:
-                print(f"   ❌ STEP 4 FAILED - QR code not created!")
+            try:
+                # Generate QR code - function will raise exception if it fails
+                generated_path = generate_qr(s3_url, qr_path)
+                step4_time = time.time() - step4_start
+                
+                # CRITICAL: Only set qrCodePath if file actually exists
+                if generated_path and os.path.exists(generated_path):
+                    # Verify file is readable and not empty
+                    qr_size = os.path.getsize(generated_path)
+                    if qr_size > 0:
+                        results['qrCodePath'] = os.path.abspath(generated_path)  # Use absolute path
+                        results['step4Time'] = step4_time
+                        print(f"   ✅ STEP 4 COMPLETE in {step4_time:.1f}s")
+                        print(f"   QR Code size: {qr_size / 1024:.1f} KB")
+                        print(f"   Verified file exists: {os.path.exists(generated_path)}")
+                    else:
+                        print(f"   ❌ STEP 4 FAILED - QR code file is empty!")
+                        results['qrCodePath'] = None
+                else:
+                    print(f"   ❌ STEP 4 FAILED - QR code file was not created!")
+                    print(f"   Expected path: {qr_path}")
+                    print(f"   Absolute path: {os.path.abspath(qr_path)}")
+                    results['qrCodePath'] = None
+            except Exception as qr_error:
+                step4_time = time.time() - step4_start
+                print(f"   ❌ STEP 4 FAILED with exception: {qr_error}")
+                import traceback
+                traceback.print_exc()
+                results['qrCodePath'] = None
+                results['step4Time'] = step4_time
+                results['qrError'] = str(qr_error)
 
             # Keep local video file for playback (don't delete)
             print(f"\n[OK] Local video preserved: {output_video_path}")
@@ -812,7 +1760,7 @@ def main():
     results['totalTime'] = time.time() - start_total
 
     # ================================================================
-    # FINAL SUMMARY
+    # FINAL SUMMARY WITH TIMING
     # ================================================================
     print("\n" + "=" * 80)
     print("🏁 PIPELINE COMPLETE" if results['success'] else "❌ PIPELINE FAILED")
@@ -825,6 +1773,51 @@ def main():
     print(f"   Frames:      {len(results['framePaths'])} extracted")
     if 'error' in results:
         print(f"   Error:       {results['error']}")
+
+    # Comprehensive timing summary
+    print("\n" + "─" * 80)
+    print("⏱️  TIMING SUMMARY")
+    print("─" * 80)
+
+    timing_data = results.get('timingBreakdown', {})
+    step2_t = results.get('step2Time', 0)
+    step3_t = results.get('step3Time', 0)
+    step4_t = results.get('step4Time', 0)
+
+    if timing_data:
+        # Sub-steps of video composition
+        print(f"   STEP 1: VIDEO COMPOSITION ({timing_data.get('total', 0):.1f}s)")
+        print(f"      ├─ WebM→MP4 Normalize:  {timing_data.get('normalize', 0):.1f}s")
+        print(f"      ├─ Face Enhancement:    {timing_data.get('enhance', 0):.1f}s")
+        print(f"      ├─ Shadow Effect:       {timing_data.get('shadow', 0):.1f}s")
+        print(f"      └─ 4K Frame Overlay:    {timing_data.get('compose', 0):.1f}s")
+
+    print(f"   STEP 2: FRAME EXTRACTION:  {step2_t:.1f}s")
+    print(f"   STEP 3: S3 UPLOAD:         {step3_t:.1f}s")
+    print(f"   STEP 4: QR GENERATION:     {step4_t:.1f}s")
+    print(f"\n   ═══ PIPELINE TOTAL: {results['totalTime']:.1f}s ═══")
+
+    # Identify bottleneck across ALL steps
+    all_steps = []
+    if timing_data:
+        all_steps.extend([
+            ('WebM→MP4 Normalize', timing_data.get('normalize', 0)),
+            ('Face Enhancement', timing_data.get('enhance', 0)),
+            ('Shadow Effect', timing_data.get('shadow', 0)),
+            ('4K Frame Overlay', timing_data.get('compose', 0)),
+        ])
+    all_steps.extend([
+        ('Frame Extraction', step2_t),
+        ('S3 Upload', step3_t),
+        ('QR Generation', step4_t),
+    ])
+
+    if all_steps:
+        bottleneck = max(all_steps, key=lambda x: x[1])
+        if bottleneck[1] > 0:
+            pct = (bottleneck[1] / results['totalTime']) * 100
+            print(f"\n   🔍 BOTTLENECK: {bottleneck[0]} ({bottleneck[1]:.1f}s = {pct:.0f}% of total)")
+
     print("=" * 80 + "\n")
 
     # Output for Electron

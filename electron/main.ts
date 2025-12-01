@@ -802,15 +802,26 @@ app.whenReady().then(async () => {
   const config = appConfig.load();
 
   // Apply display settings from config
+  // IMPORTANT: Check .env SPLIT_SCREEN_MODE first to stay in sync with React App
+  // This ensures Electron and React use the same split-screen setting
+  const envSplitScreen = process.env.SPLIT_SCREEN_MODE === 'true' || process.env.VITE_SPLIT_SCREEN_MODE === 'true';
+  const configSplitScreen = config.display.splitScreenMode;
+
+  // Warn if there's a mismatch (helps debugging)
+  if (envSplitScreen !== configSplitScreen) {
+    console.log(`⚠️  Split-screen mismatch: .env=${envSplitScreen}, config.json=${configSplitScreen}`);
+    console.log(`   Using .env setting: ${envSplitScreen}`);
+  }
+
   displaySettings = {
-    splitScreenMode: config.display.splitScreenMode,
+    splitScreenMode: envSplitScreen, // Use .env over config.json for consistency with React
     swapDisplays: config.display.swapDisplays,
     mainWidth: config.display.mainWidth,
     mainHeight: config.display.mainHeight,
     hologramWidth: config.display.hologramWidth,
     hologramHeight: config.display.hologramHeight,
   };
-  console.log(`📺 Display mode: ${displaySettings.splitScreenMode ? 'Split Screen' : 'Dual Monitor'}${displaySettings.swapDisplays ? ' (displays swapped)' : ''}`);
+  console.log(`📺 Display mode: ${displaySettings.splitScreenMode ? 'Split Screen (single window)' : 'Dual Monitor (two windows)'}${displaySettings.swapDisplays ? ' (displays swapped)' : ''}`);
 
   // Initialize analytics database (with error handling for native module issues)
   try {
@@ -1104,20 +1115,40 @@ ipcMain.handle('video:process', async (_event, params) => {
       s3Folder: params.s3Folder || 'mut-hologram',
     });
 
-    // Return result directly (no event - using invoke pattern)
-    return {
+    // Send completion event to renderer (for onComplete listener)
+    const completeResult = {
       success: true,
       result: result
     };
+
+    console.log(`\n${'='.repeat(70)}`);
+    console.log(`📤 [IPC] SENDING video:complete EVENT`);
+    console.log(`${'='.repeat(70)}`);
+    console.log(`   mainWindow exists: ${!!mainWindow}`);
+    console.log(`   result.success: ${completeResult.success}`);
+    console.log(`   result.result exists: ${!!completeResult.result}`);
+    console.log(`   framePaths count: ${completeResult.result?.framePaths?.length || 0}`);
+    console.log(`   s3Url: ${completeResult.result?.s3Url || 'N/A'}`);
+    console.log(`${'='.repeat(70)}\n`);
+
+    mainWindow?.webContents.send('video:complete', completeResult);
+
+    // Also return result directly (for invoke pattern)
+    return completeResult;
   } catch (error) {
     console.error('Video processing error:', error);
 
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
-    return {
+    const errorResult = {
       success: false,
       error: errorMessage
     };
+
+    // Send error event to renderer
+    mainWindow?.webContents.send('video:complete', errorResult);
+
+    return errorResult;
   }
 });
 
@@ -1565,17 +1596,71 @@ ipcMain.handle('hologram:get-state', async () => {
   return { success: true, state: hologramState };
 });
 
+// Check if file exists
+ipcMain.handle('file:exists', async (_event, filePath: string) => {
+  try {
+    // Resolve relative paths relative to MUT-distribution directory
+    let absolutePath = filePath;
+    if (!path.isAbsolute(filePath)) {
+      absolutePath = path.join(app.getAppPath(), 'MUT-distribution', filePath);
+    }
+
+    await fs.access(absolutePath);
+    return { success: true, exists: true };
+  } catch (error) {
+    return { success: true, exists: false };
+  }
+});
+
 // Read local file and return as data URL for secure loading in renderer
 ipcMain.handle('file:read-as-data-url', async (_event, filePath: string) => {
   try {
     console.log(`📂 [IPC] Reading file as data URL: ${filePath}`);
 
-    // Resolve relative paths relative to MUT-distribution directory
-    // (where Python pipeline creates output files)
+    // ROBUST: Try multiple path resolution strategies
     let absolutePath = filePath;
-    if (!path.isAbsolute(filePath)) {
-      absolutePath = path.join(app.getAppPath(), 'MUT-distribution', filePath);
-      console.log(`   Resolved to absolute path: ${absolutePath}`);
+    const attemptedPaths: string[] = [];
+    
+    if (path.isAbsolute(filePath)) {
+      // Already absolute - use as-is
+      absolutePath = filePath;
+      attemptedPaths.push(absolutePath);
+    } else {
+      // Try multiple resolution strategies
+      const basePaths = [
+        app.getAppPath(), // App path (development)
+        process.resourcesPath, // Resources path (production)
+        path.join(app.getAppPath(), 'MUT-distribution'), // MUT-distribution in app
+        path.join(process.resourcesPath, 'MUT-distribution'), // MUT-distribution in resources
+      ];
+      
+      for (const basePath of basePaths) {
+        const candidatePath = path.join(basePath, filePath);
+        attemptedPaths.push(candidatePath);
+        
+        try {
+          await fs.access(candidatePath);
+          absolutePath = candidatePath;
+          console.log(`   ✅ Found file at: ${absolutePath}`);
+          break;
+        } catch {
+          // Continue to next path
+        }
+      }
+    }
+
+    // Check if file exists at resolved path
+    try {
+      await fs.access(absolutePath);
+    } catch (accessError) {
+      console.error(`❌ [IPC] File does not exist at any attempted path:`);
+      attemptedPaths.forEach((p, i) => {
+        console.error(`   ${i + 1}. ${p}`);
+      });
+      return { 
+        success: false, 
+        error: `File not found: ${filePath}. Attempted paths: ${attemptedPaths.join('; ')}` 
+      };
     }
 
     const fileBuffer = await fs.readFile(absolutePath);
@@ -1828,6 +1913,27 @@ ipcMain.on('app:screen-changed', (_event, screen: string) => {
   currentRendererScreen = screen;
 
   console.log(`📱 [App] Screen changed: ${previousScreen} → ${screen}`);
+
+  // ROBUST: Reset hologram to logo whenever main screen goes to idle
+  // This ensures hologram resets regardless of how we got to idle
+  if (screen === 'idle') {
+    console.log('🔄 [App] Main screen transitioned to idle - resetting hologram to logo');
+    // Update persistent state
+    hologramState = {
+      mode: 'logo',
+    };
+    
+    // Send to hologram window
+    const targetWindow = getHologramTargetWindow();
+    const windowName = displaySettings.splitScreenMode ? 'main window' : 'hologram window';
+    
+    if (targetWindow && !targetWindow.isDestroyed()) {
+      targetWindow.webContents.send('hologram:update', hologramState);
+      console.log(`✅ [App] Hologram reset to logo sent to ${windowName}`);
+    } else {
+      console.warn(`⚠️ [App] Cannot reset hologram - ${windowName} not available`);
+    }
+  }
 
   // If we just arrived at idle and have pending config, apply it
   if (screen === 'idle' && pendingConfigChanges && !isApplyingConfig) {

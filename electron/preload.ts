@@ -194,6 +194,7 @@ const paymentAPI = {
 const fileAPI = {
   readAsDataUrl: (filePath: string) => ipcRenderer.invoke('file:read-as-data-url', filePath),
   delete: (filePath: string) => ipcRenderer.invoke('file:delete', filePath),
+  exists: (filePath: string) => ipcRenderer.invoke('file:exists', filePath),
 };
 
 // Analytics API
@@ -313,13 +314,25 @@ const hologramAPI = {
   getState: () => ipcRenderer.invoke('hologram:get-state'),
 };
 
+// Store listener wrappers for proper cleanup
+const listenerMap = new Map<(...args: any[]) => void, (...args: any[]) => void>();
+
 // IPC Renderer API for hologram window
 const ipcRendererAPI = {
   on: (channel: string, callback: (...args: any[]) => void) => {
-    ipcRenderer.on(channel, (_event: IpcRendererEvent, ...args: any[]) => callback(...args));
+    // Create wrapper that strips the event parameter
+    const wrapper = (_event: IpcRendererEvent, ...args: any[]) => callback(...args);
+    // Store mapping so we can remove the correct listener later
+    listenerMap.set(callback, wrapper);
+    ipcRenderer.on(channel, wrapper);
   },
   removeListener: (channel: string, callback: (...args: any[]) => void) => {
-    ipcRenderer.removeListener(channel, callback);
+    // Get the wrapper function we stored
+    const wrapper = listenerMap.get(callback);
+    if (wrapper) {
+      ipcRenderer.removeListener(channel, wrapper);
+      listenerMap.delete(callback);
+    }
   },
 };
 

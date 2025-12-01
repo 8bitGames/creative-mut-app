@@ -1,10 +1,26 @@
 // src/screens/01-IdleScreen.tsx
+import { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
+import { useSessionStore } from '@/store/sessionStore';
 import { Logo } from '@/components/Logo';
 
 export function IdleScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
+  const clearSession = useSessionStore((state) => state.clearSession);
+
+  // Reset hologram to logo and clear session when entering idle screen
+  useEffect(() => {
+    console.log('🔄 [IdleScreen] Resetting hologram to logo and clearing session');
+    // Reset hologram to logo
+    // @ts-ignore - Electron API
+    if (window.electron?.hologram) {
+      // @ts-ignore
+      window.electron.hologram.showLogo();
+    }
+    // Clear any stale session data
+    clearSession();
+  }, [clearSession]);
 
   return (
     <motion.div

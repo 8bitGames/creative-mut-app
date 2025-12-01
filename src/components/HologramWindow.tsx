@@ -25,25 +25,46 @@ export function HologramWindow({ mode, qrCodePath, videoPath }: HologramWindowPr
   }, [mode, qrCodePath, videoPath]);
 
   // Load QR code via IPC when provided
+  // Add retry logic to wait for file to exist (QR code might be generated after path is sent)
   useEffect(() => {
     if (!qrCodePath) {
       setQrCodeDataUrl(null);
       return;
     }
 
-    const loadQRCode = async () => {
+    let retryCount = 0;
+    const MAX_RETRIES = 10;
+    const RETRY_DELAY = 500; // 500ms between retries
+
+    const loadQRCode = async (): Promise<void> => {
       try {
-        console.log(`📂 [HologramWindow] Loading QR code: ${qrCodePath}`);
+        console.log(`📂 [HologramWindow] Loading QR code (attempt ${retryCount + 1}/${MAX_RETRIES}): ${qrCodePath}`);
         // @ts-ignore
         const result = await window.electron.file.readAsDataUrl(qrCodePath);
         if (result.success) {
           setQrCodeDataUrl(result.dataUrl);
           console.log('✅ [HologramWindow] QR code loaded successfully');
         } else {
-          console.error('[HologramWindow] Failed to load QR code:', result.error);
+          // File doesn't exist yet - retry if we haven't exceeded max retries
+          if (retryCount < MAX_RETRIES - 1) {
+            retryCount++;
+            console.log(`⏳ [HologramWindow] QR code file not found yet, retrying in ${RETRY_DELAY}ms... (${retryCount}/${MAX_RETRIES})`);
+            setTimeout(loadQRCode, RETRY_DELAY);
+          } else {
+            console.error('[HologramWindow] Failed to load QR code after all retries:', result.error);
+            console.error(`   File path: ${qrCodePath}`);
+            console.error(`   This might mean the QR code file was never created by the Python pipeline`);
+          }
         }
       } catch (error) {
-        console.error('[HologramWindow] Error loading QR code:', error);
+        // Retry on error if we haven't exceeded max retries
+        if (retryCount < MAX_RETRIES - 1) {
+          retryCount++;
+          console.log(`⏳ [HologramWindow] Error loading QR code, retrying in ${RETRY_DELAY}ms... (${retryCount}/${MAX_RETRIES})`);
+          setTimeout(loadQRCode, RETRY_DELAY);
+        } else {
+          console.error('[HologramWindow] Error loading QR code after all retries:', error);
+        }
       }
     };
 

@@ -4,6 +4,7 @@ import path from 'path';
 import { app } from 'electron';
 import { EventEmitter } from 'events';
 import { getDebugConfig } from '../config';
+import { promises as fs } from 'fs';
 
 export interface VideoProcessingOptions {
   inputVideo: string;
@@ -174,7 +175,77 @@ export class PythonBridge extends EventEmitter {
           const jsonLine = lines[lines.length - 1];
           const result: VideoProcessingResult = JSON.parse(jsonLine);
 
-          resolve(result);
+          // ROBUST: Validate QR code file exists before returning
+          if (result.qrCodePath) {
+            const qrPath = result.qrCodePath;
+            
+            // Normalize path (handle both absolute and relative)
+            const normalizedPath = path.isAbsolute(qrPath) 
+              ? qrPath 
+              : path.join(this.outputDir, qrPath);
+            
+            // Verify file exists and is readable (async)
+            (async () => {
+              try {
+                // Check if file exists
+                await fs.access(normalizedPath);
+                
+                // File exists - verify it's not empty
+                const stats = await fs.stat(normalizedPath);
+                if (stats.size === 0) {
+                  console.error(`❌ [PythonBridge] QR code file is empty: ${normalizedPath}`);
+                  // Don't fail - just log warning, let retry logic handle it
+                } else {
+                  console.log(`✅ [PythonBridge] QR code file verified: ${normalizedPath} (${stats.size} bytes)`);
+                  // Update result with normalized absolute path
+                  result.qrCodePath = path.resolve(normalizedPath);
+                }
+                resolve(result);
+              } catch (error: any) {
+                console.error(`❌ [PythonBridge] QR code file does not exist: ${normalizedPath}`);
+                console.error(`   Error: ${error.message}`);
+                console.error(`   Original path from pipeline: ${qrPath}`);
+                console.error(`   Normalized path: ${normalizedPath}`);
+                console.error(`   Output directory: ${this.outputDir}`);
+                
+                // Check if file exists in alternative locations
+                const altPaths = [
+                  qrPath, // Original path
+                  path.join(this.outputDir, path.basename(qrPath)), // Just filename in output dir
+                  path.join(path.dirname(qrPath), path.basename(qrPath)), // Same dir as original
+                ];
+                
+                console.error(`   Checking alternative paths...`);
+                let found = false;
+                for (const altPath of altPaths) {
+                  try {
+                    await fs.access(altPath);
+                    const stats = await fs.stat(altPath);
+                    if (stats.size > 0) {
+                      console.error(`   ✅ Found at alternative path: ${altPath} (${stats.size} bytes)`);
+                      result.qrCodePath = path.resolve(altPath);
+                      found = true;
+                      break;
+                    }
+                  } catch {
+                    // Continue to next path
+                  }
+                }
+                
+                if (found) {
+                  console.log(`✅ [PythonBridge] QR code found at alternative path`);
+                  resolve(result);
+                } else {
+                  // File truly doesn't exist - but don't fail, let retry logic handle it
+                  console.warn(`⚠️  [PythonBridge] QR code file not found, but continuing (retry logic will handle)`);
+                  resolve(result);
+                }
+              }
+            })();
+          } else {
+            console.warn(`⚠️  [PythonBridge] No QR code path in result`);
+            resolve(result);
+          }
         } catch (error) {
           reject(new Error(`Failed to parse pipeline output: ${error}\n${stdoutData}`));
         }
