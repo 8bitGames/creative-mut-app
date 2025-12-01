@@ -26,7 +26,7 @@ function App() {
   // Check if this is the hologram window (Monitor 2)
   const isHologramWindow = window.location.hash === '#/hologram';
 
-  // F12 shortcut for admin dashboard, F11 for shadow effect demo
+  // F12 shortcut for admin dashboard, F11 for fullscreen, F10 for shadow effect demo
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'F12') {
@@ -37,8 +37,17 @@ function App() {
           setScreen('admin-dashboard');
         }
       }
-      // F11 for shadow effect demo
+      // F11 for fullscreen toggle
       if (e.key === 'F11') {
+        e.preventDefault();
+        if (document.fullscreenElement) {
+          document.exitFullscreen();
+        } else {
+          document.documentElement.requestFullscreen();
+        }
+      }
+      // F10 for shadow effect / camera test
+      if (e.key === 'F10') {
         e.preventDefault();
         if (currentScreen === 'shadow-effect') {
           setScreen('idle');

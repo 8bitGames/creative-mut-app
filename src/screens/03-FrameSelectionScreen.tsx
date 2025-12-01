@@ -75,7 +75,7 @@ const cardVariants = {
 
 export function FrameSelectionScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
-  const resetSession = useSessionStore((state) => state.resetSession);
+  const clearSession = useSessionStore((state) => state.clearSession);
   const selectedFrame = useSessionStore((state) => state.selectedFrame);
   const setSelectedFrame = useSessionStore((state) => state.setSelectedFrame);
   const setDemoVideo = useSessionStore((state) => state.setDemoVideo);
@@ -130,7 +130,7 @@ export function FrameSelectionScreen() {
       setTimeRemaining((prev) => {
         if (prev <= 1) {
           console.log('⏰ [FrameSelectionScreen] Timeout - returning to idle');
-          resetSession();
+          clearSession();
           setScreen('idle');
           return 0;
         }
@@ -141,7 +141,7 @@ export function FrameSelectionScreen() {
     return () => {
       clearInterval(countdownInterval);
     };
-  }, [setScreen, resetSession]);
+  }, [setScreen, clearSession]);
 
   const handleFrameSelect = (frame: Frame) => {
     // Disable demo mode when selecting a regular frame

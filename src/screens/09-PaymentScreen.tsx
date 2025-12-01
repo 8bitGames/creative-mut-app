@@ -91,16 +91,24 @@ export function PaymentScreen() {
   }, [processedResult]);
 
   useEffect(() => {
+    console.log('💳 [PaymentScreen] useEffect running, paymentStartedRef:', paymentStartedRef.current);
+
     // Prevent double-starting payment
-    if (paymentStartedRef.current) return;
+    if (paymentStartedRef.current) {
+      console.log('💳 [PaymentScreen] Payment already started, skipping...');
+      return;
+    }
     paymentStartedRef.current = true;
 
     // Start payment process
+    console.log('💳 [PaymentScreen] Starting payment process...');
     startPayment();
 
     // 30-second timeout timer
+    console.log('💳 [PaymentScreen] Starting 30s countdown timer...');
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
+        console.log(`💳 [PaymentScreen] Timer tick: ${prev}s -> ${prev - 1}s`);
         if (prev <= 1) {
           handleTimeout();
           return 0;
@@ -114,6 +122,8 @@ export function PaymentScreen() {
       // Cleanup event listeners
       cleanupRef.current.forEach(cleanup => cleanup());
       cleanupRef.current = [];
+      // Reset ref for StrictMode re-runs
+      paymentStartedRef.current = false;
     };
   }, []);
 

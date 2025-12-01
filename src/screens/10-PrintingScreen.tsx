@@ -148,25 +148,35 @@ export function PrintingScreen() {
       setProgress(30);
       setStatus('사진 인쇄 중...');
 
-      // Start printing
+      // Set up progress listener BEFORE starting print
+      let removeProgressListener: (() => void) | undefined;
+      // @ts-ignore
+      if (window.electron.printer?.onProgress) {
+        // @ts-ignore
+        removeProgressListener = window.electron.printer.onProgress((progressData: any) => {
+          console.log(`🖨️ [PrintingScreen] Print progress: ${progressData.progress}%`);
+          setProgress(30 + (progressData.progress * 0.7)); // Map 0-100% to 30-100%
+          if (progressData.message) {
+            setStatus(progressData.message);
+          }
+        });
+      }
+
+      // Start printing and wait for completion
       // @ts-ignore
       const printResult = await window.electron.printer.print({
         imagePath: selectedPrintImage,
         copies: 1,
       });
 
+      // Clean up progress listener
+      if (removeProgressListener) {
+        removeProgressListener();
+      }
+
       if (!printResult.success) {
         throw new Error(printResult.error || '인쇄 실패');
       }
-
-      // Set up progress listener
-      // @ts-ignore
-      const removeProgressListener = window.electron.printer?.onProgress?.((progressData: any) => {
-        setProgress(30 + (progressData.progress * 0.7)); // Map 0-100% to 30-100%
-        if (progressData.message) {
-          setStatus(progressData.message);
-        }
-      });
 
       setProgress(100);
       setStatus('인쇄 완료!');

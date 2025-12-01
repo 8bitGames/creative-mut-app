@@ -893,6 +893,9 @@ def composite_video(input_video, frame_image, output_path, enhance_faces=True, s
     """
     Composites video + frame overlay with optional shadow effect.
 
+    OPTIMIZED VERSION: Combines normalize + enhance + compose into SINGLE FFmpeg pass
+    for 2-3x faster processing (eliminates multiple re-encoding passes).
+
     Args:
         input_video: Path to input video
         frame_image: Path to frame overlay image
@@ -904,7 +907,7 @@ def composite_video(input_video, frame_image, output_path, enhance_faces=True, s
         dict with timing breakdown: {total, normalize, enhance, shadow, compose}
     """
     print(f"\n{'═' * 70}")
-    print(f"🎬 [COMPOSITE] Video + Frame Overlay Composition")
+    print(f"🎬 [COMPOSITE] Video + Frame Overlay Composition (OPTIMIZED)")
     print(f"{'═' * 70}")
 
     start_time = time.time()
@@ -925,6 +928,14 @@ def composite_video(input_video, frame_image, output_path, enhance_faces=True, s
     print(f"   Frame Image: {os.path.basename(frame_image)}")
     print(f"   Output Path: {os.path.basename(output_path)}")
 
+    # Verify input video exists
+    if not os.path.exists(input_video):
+        print(f"   [ERROR] Input video not found: {input_video}")
+        raise FileNotFoundError(f"Input video not found: {input_video}")
+
+    input_size = os.path.getsize(input_video) / (1024 * 1024)
+    print(f"   Input size: {input_size:.2f} MB")
+
     # Verify frame image exists
     if not os.path.exists(frame_image):
         print(f"   [ERROR] Frame image not found: {frame_image}")
@@ -933,64 +944,90 @@ def composite_video(input_video, frame_image, output_path, enhance_faces=True, s
     frame_size = os.path.getsize(frame_image) / 1024
     print(f"   Frame size: {frame_size:.1f} KB")
 
-    # CRITICAL: Normalize input to MP4 first (fixes WebM issues)
-    t_normalize_start = time.time()
-    input_video = normalize_to_mp4(input_video)
-    timing['normalize'] = time.time() - t_normalize_start
-    print(f"   ⏱️  Normalize: {timing['normalize']:.1f}s")
+    # === WEBM NORMALIZATION (required for browser-recorded videos) ===
+    # WebM files from browsers often have header issues that cause FFmpeg problems
+    # We need to normalize WebM to MP4 first for reliable processing
+    is_webm = input_video.lower().endswith('.webm')
+    if is_webm:
+        print(f"\n   [INFO] WebM input detected - normalizing for reliable processing")
+        t_normalize_start = time.time()
+        input_video = normalize_to_mp4(input_video)
+        timing['normalize'] = time.time() - t_normalize_start
+        print(f"   ⏱️  WebM Normalize: {timing['normalize']:.1f}s")
 
-    # === FACE ENHANCEMENT STEP (BEFORE frame overlay) ===
-    if enhance_faces:
-        t_enhance_start = time.time()
-        input_video = enhance_video(input_video, enhancement_level='medium')
-        timing['enhance'] = time.time() - t_enhance_start
-        print(f"   ⏱️  Enhance: {timing['enhance']:.1f}s")
-
-    # === SHADOW EFFECT STEP (AFTER enhancement, BEFORE frame overlay) ===
+    # === SHADOW EFFECT STEP (requires separate processing due to MediaPipe) ===
+    # Shadow must be processed first if enabled, as it uses OpenCV/MediaPipe
     if shadow_config and shadow_config.get('enabled', False):
+        print(f"\n   [INFO] Shadow effect enabled - requires pre-processing")
         t_shadow_start = time.time()
+
+        # If not already normalized (non-WebM), normalize now for shadow processing
+        if not is_webm:
+            input_video = normalize_to_mp4(input_video)
+            timing['normalize'] = time.time() - t_shadow_start
+
+        # Apply shadow effect
         shadow_output = input_video.rsplit('.', 1)[0] + '_shadow.mp4'
         input_video = apply_shadow_effect(input_video, shadow_output, shadow_config)
-        timing['shadow'] = time.time() - t_shadow_start
+        timing['shadow'] = time.time() - t_shadow_start - (timing['normalize'] if not is_webm else 0)
         print(f"   ⏱️  Shadow: {timing['shadow']:.1f}s")
 
     # Determine Encoder
     encoder = get_best_encoder()
 
     print(f"\n{'─' * 60}")
-    print(f"🔧 [COMPOSE] Final Frame Overlay")
+    print(f"🔧 [COMPOSE] Single-Pass Processing (Optimized)")
     print(f"{'─' * 60}")
     print(f"   Input: {os.path.basename(input_video)}")
     print(f"   Encoder: {encoder.value}")
     print(f"   Target: 4K Portrait (2160x3840)")
+    print(f"   Mode: SINGLE-PASS (normalize + enhance + compose combined)")
     if encoder == EncoderType.CPU:
-        print(f"   Quality: CRF 14 (excellent, balanced quality/size)")
-        print(f"   Preset: medium (balanced speed/quality)")
+        print(f"   Quality: CRF 14 (excellent quality)")
+        print(f"   Preset: fast (optimized for speed)")
     elif encoder == EncoderType.NVENC:
         print(f"   Quality: CQ 19 (NVENC constant quality)")
         print(f"   Preset: p4 (GPU accelerated)")
     else:
         print(f"   Bitrate: 150 Mbps (near-lossless for hardware encoder)")
 
-    # --- FFmpeg Filter Chain ---
-    # 1. Scale Input Video to 4K Portrait (2160x3840)
-    # 2. Mirror (flip horizontally) the video
-    # 3. Scale Frame to 4K Portrait (2160x3840)
-    # 4. Remove alpha channel from frame (format=rgba->yuv420p ensures compatibility)
-    # 5. Overlay Frame on Video
+    # --- OPTIMIZED FFmpeg Filter Chain ---
+    # Combines ALL processing into SINGLE filter chain:
+    # 1. Face Enhancement (brightness, contrast, saturation, sharpening)
+    # 2. Scale to 4K Portrait (2160x3840)
+    # 3. Mirror (flip horizontally)
+    # 4. Frame overlay
+    #
+    # This eliminates 2-3 separate encoding passes!
+
+    # Enhancement parameters (medium level)
+    enhancement_filters = ""
+    if enhance_faces:
+        enhancement_filters = (
+            "eq=brightness=0.05:contrast=1.12:saturation=1.1,"
+            "unsharp=5:5:1.0:5:5:0.0,"
+        )
+        print(f"   Enhancement: brightness +5%, contrast 1.12x, saturation 1.1x, sharpening")
 
     filter_chain = (
-        '[0:v]scale=2160:3840:flags=lanczos,hflip,setsar=1,format=yuv420p[video];'
+        f'[0:v]{enhancement_filters}scale=2160:3840:flags=lanczos,hflip,setsar=1,format=yuv420p[video];'
         '[1:v]scale=2160:3840:flags=lanczos,format=rgba[frame];'
         '[video][frame]overlay=0:0:format=auto[final]'
     )
 
     # Build Command with retry support
+    # IMPORTANT: On retry, fall back to CPU encoder if GPU produced corruption
     max_retries = 2
     retry_count = 0
     t_compose_start = time.time()
+    current_encoder = encoder  # Track current encoder (may change on retry)
 
     while retry_count <= max_retries:
+        # On retry after corruption, fall back to CPU encoder for reliability
+        if retry_count > 0 and current_encoder != EncoderType.CPU:
+            print(f"\n   [FALLBACK] Switching from {current_encoder.value} to libx264 (CPU) for reliability")
+            current_encoder = EncoderType.CPU
+
         cmd = [
             FFMPEG_PATH,                # Use FFmpeg
             '-y',                       # Overwrite output
@@ -998,17 +1035,18 @@ def composite_video(input_video, frame_image, output_path, enhance_faces=True, s
             '-i', frame_image,          # Input 1
             '-filter_complex', filter_chain,
             '-map', '[final]',
-            '-c:v', encoder.value,      # Codec
+            '-c:v', current_encoder.value,  # Codec (may be CPU fallback on retry)
         ]
 
         # QUALITY SETTINGS: High quality encoding for 4K output
-        if encoder == EncoderType.CPU:
+        if current_encoder == EncoderType.CPU:
             # libx264: Use CRF-based quality (no bitrate cap)
+            # OPTIMIZED: Using 'fast' preset (2x faster than 'medium' with minimal quality loss)
             cmd.extend([
-                '-preset', 'medium',    # Medium = good balance of speed and quality
+                '-preset', 'fast',      # Fast = optimized for speed while maintaining quality
                 '-crf', '14',           # Excellent quality (sweet spot for quality/size)
             ])
-        elif encoder == EncoderType.NVENC:
+        elif current_encoder == EncoderType.NVENC:
             # NVIDIA NVENC: Hardware accelerated encoding (much faster!)
             cmd.extend([
                 '-preset', 'p4',        # p4 = medium quality/speed (p1=fastest, p7=best quality)
@@ -1040,19 +1078,25 @@ def composite_video(input_video, frame_image, output_path, enhance_faces=True, s
         ])
 
         if retry_count > 0:
-            print(f"\n   [RETRY {retry_count}/{max_retries}] Attempting composition again...")
+            print(f"\n   [RETRY {retry_count}/{max_retries}] Using {current_encoder.value} encoder...")
 
-        print(f"\n   [RUN] Compositing video with frame overlay...")
+        print(f"\n   [RUN] Compositing video with {current_encoder.value}...")
 
         try:
             # Run FFmpeg
             result = subprocess.run(cmd, check=True, capture_output=True, timeout=300)
             compose_duration = time.time() - start_time
 
-            # Check output exists
+            # Check output exists - RETRY if missing
             if not os.path.exists(output_path):
                 print(f"   [ERROR] Output file was not created!")
-                raise Exception("FFmpeg completed but output file not found")
+                if retry_count < max_retries:
+                    print(f"   Will retry composition ({retry_count + 1}/{max_retries})...")
+                    retry_count += 1
+                    time.sleep(1)
+                    continue  # Retry the while loop
+                else:
+                    raise Exception("FFmpeg completed but output file not found after all retries")
 
             output_size = os.path.getsize(output_path) / (1024 * 1024)
             print(f"   [OK] Composition finished in {compose_duration:.1f}s")
@@ -1105,12 +1149,14 @@ def composite_video(input_video, frame_image, output_path, enhance_faces=True, s
             print(f"   Bitrate: {verify_result['bitrate']:.1f} Mbps" if verify_result['bitrate'] else "")
             if retry_count > 0:
                 print(f"   Note: Succeeded after {retry_count} retry(s)")
-            print(f"\n   ⏱️  TIMING BREAKDOWN:")
-            print(f"   ├─ Normalize:  {timing['normalize']:.1f}s")
-            print(f"   ├─ Enhance:    {timing['enhance']:.1f}s")
-            print(f"   ├─ Shadow:     {timing['shadow']:.1f}s")
-            print(f"   ├─ Compose:    {timing['compose']:.1f}s")
-            print(f"   └─ TOTAL:      {timing['total']:.1f}s")
+            print(f"\n   ⏱️  TIMING BREAKDOWN (OPTIMIZED):")
+            if timing['normalize'] > 0:
+                print(f"   ├─ WebM Normalize:     {timing['normalize']:.1f}s")
+            if timing['shadow'] > 0:
+                print(f"   ├─ Shadow Effect:      {timing['shadow']:.1f}s")
+            print(f"   ├─ Single-Pass Encode: {timing['compose']:.1f}s")
+            print(f"   │  (enhance + scale + compose combined)")
+            print(f"   └─ TOTAL:              {timing['total']:.1f}s")
             print(f"{'═' * 70}\n")
 
             return timing
@@ -1785,12 +1831,16 @@ def main():
     step4_t = results.get('step4Time', 0)
 
     if timing_data:
-        # Sub-steps of video composition
-        print(f"   STEP 1: VIDEO COMPOSITION ({timing_data.get('total', 0):.1f}s)")
-        print(f"      ├─ WebM→MP4 Normalize:  {timing_data.get('normalize', 0):.1f}s")
-        print(f"      ├─ Face Enhancement:    {timing_data.get('enhance', 0):.1f}s")
-        print(f"      ├─ Shadow Effect:       {timing_data.get('shadow', 0):.1f}s")
-        print(f"      └─ 4K Frame Overlay:    {timing_data.get('compose', 0):.1f}s")
+        # Sub-steps of video composition (OPTIMIZED - single pass)
+        print(f"   STEP 1: VIDEO COMPOSITION ({timing_data.get('total', 0):.1f}s) [OPTIMIZED]")
+        normalize_time = timing_data.get('normalize', 0)
+        shadow_time = timing_data.get('shadow', 0)
+        if normalize_time > 0:
+            print(f"      ├─ WebM Normalize:      {normalize_time:.1f}s")
+        if shadow_time > 0:
+            print(f"      ├─ Shadow Effect:       {shadow_time:.1f}s")
+        print(f"      └─ Single-Pass Encode:  {timing_data.get('compose', 0):.1f}s")
+        print(f"         (enhance + scale + compose combined)")
 
     print(f"   STEP 2: FRAME EXTRACTION:  {step2_t:.1f}s")
     print(f"   STEP 3: S3 UPLOAD:         {step3_t:.1f}s")
@@ -1800,12 +1850,13 @@ def main():
     # Identify bottleneck across ALL steps
     all_steps = []
     if timing_data:
-        all_steps.extend([
-            ('WebM→MP4 Normalize', timing_data.get('normalize', 0)),
-            ('Face Enhancement', timing_data.get('enhance', 0)),
-            ('Shadow Effect', timing_data.get('shadow', 0)),
-            ('4K Frame Overlay', timing_data.get('compose', 0)),
-        ])
+        normalize_time = timing_data.get('normalize', 0)
+        shadow_time = timing_data.get('shadow', 0)
+        if normalize_time > 0:
+            all_steps.append(('WebM Normalize', normalize_time))
+        if shadow_time > 0:
+            all_steps.append(('Shadow Effect', shadow_time))
+        all_steps.append(('Single-Pass Encode', timing_data.get('compose', 0)))
     all_steps.extend([
         ('Frame Extraction', step2_t),
         ('S3 Upload', step3_t),

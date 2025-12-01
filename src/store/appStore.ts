@@ -5,7 +5,18 @@
 
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { Screen } from './types';
+import type { Screen, ShadowConfig } from './types';
+
+// Default shadow configuration
+const DEFAULT_SHADOW_CONFIG: ShadowConfig = {
+  color: '#000000',
+  offsetX: 20,
+  offsetY: 40,
+  blur: 30,
+  opacity: 0.6,
+  spread: 10,
+  enabled: true,
+};
 
 interface AppState {
   // Current screen
@@ -14,9 +25,14 @@ interface AppState {
   // Global camera stream (persists across screens)
   cameraStream: MediaStream | null;
 
+  // Shadow effect configuration (persists across screens, applied to actual camera)
+  shadowConfig: ShadowConfig;
+
   // Actions
   setScreen: (screen: Screen) => void;
   setCameraStream: (stream: MediaStream | null) => void;
+  setShadowConfig: (config: Partial<ShadowConfig>) => void;
+  resetShadowConfig: () => void;
   resetApp: () => void;
 }
 
@@ -29,6 +45,7 @@ export const useAppStore = create<AppState>()(
     // Initial state
     currentScreen: 'idle',
     cameraStream: null,
+    shadowConfig: DEFAULT_SHADOW_CONFIG,
 
     // Navigate to a different screen
     setScreen: (screen) =>
@@ -52,6 +69,20 @@ export const useAppStore = create<AppState>()(
           }
           state.cameraStream = null;
         }
+      }),
+
+    // Update shadow configuration (partial update supported)
+    setShadowConfig: (config) =>
+      set((state) => {
+        console.log('🎨 [AppStore] Updating shadow config:', config);
+        state.shadowConfig = { ...state.shadowConfig, ...config };
+      }),
+
+    // Reset shadow configuration to default
+    resetShadowConfig: () =>
+      set((state) => {
+        console.log('🔄 [AppStore] Resetting shadow config to default');
+        state.shadowConfig = DEFAULT_SHADOW_CONFIG;
       }),
 
     // Reset app to idle state

@@ -407,7 +407,62 @@ ${stderrData}`));
           const lines = stdoutData.trim().split("\n");
           const jsonLine = lines[lines.length - 1];
           const result = JSON.parse(jsonLine);
-          resolve(result);
+          if (result.qrCodePath) {
+            const qrPath = result.qrCodePath;
+            const normalizedPath = path.isAbsolute(qrPath) ? qrPath : path.join(this.outputDir, qrPath);
+            (async () => {
+              try {
+                await fs.promises.access(normalizedPath);
+                const stats = await fs.promises.stat(normalizedPath);
+                if (stats.size === 0) {
+                  console.error(`❌ [PythonBridge] QR code file is empty: ${normalizedPath}`);
+                } else {
+                  console.log(`✅ [PythonBridge] QR code file verified: ${normalizedPath} (${stats.size} bytes)`);
+                  result.qrCodePath = path.resolve(normalizedPath);
+                }
+                resolve(result);
+              } catch (error) {
+                console.error(`❌ [PythonBridge] QR code file does not exist: ${normalizedPath}`);
+                console.error(`   Error: ${error.message}`);
+                console.error(`   Original path from pipeline: ${qrPath}`);
+                console.error(`   Normalized path: ${normalizedPath}`);
+                console.error(`   Output directory: ${this.outputDir}`);
+                const altPaths = [
+                  qrPath,
+                  // Original path
+                  path.join(this.outputDir, path.basename(qrPath)),
+                  // Just filename in output dir
+                  path.join(path.dirname(qrPath), path.basename(qrPath))
+                  // Same dir as original
+                ];
+                console.error(`   Checking alternative paths...`);
+                let found = false;
+                for (const altPath of altPaths) {
+                  try {
+                    await fs.promises.access(altPath);
+                    const stats = await fs.promises.stat(altPath);
+                    if (stats.size > 0) {
+                      console.error(`   ✅ Found at alternative path: ${altPath} (${stats.size} bytes)`);
+                      result.qrCodePath = path.resolve(altPath);
+                      found = true;
+                      break;
+                    }
+                  } catch {
+                  }
+                }
+                if (found) {
+                  console.log(`✅ [PythonBridge] QR code found at alternative path`);
+                  resolve(result);
+                } else {
+                  console.warn(`⚠️  [PythonBridge] QR code file not found, but continuing (retry logic will handle)`);
+                  resolve(result);
+                }
+              }
+            })();
+          } else {
+            console.warn(`⚠️  [PythonBridge] No QR code path in result`);
+            resolve(result);
+          }
         } catch (error) {
           reject(new Error(`Failed to parse pipeline output: ${error}
 ${stdoutData}`));
@@ -3325,20 +3380,44 @@ function closeDatabase() {
   }
 }
 let _store = null;
-function getStore() {
-  if (!_store) {
-    const Store = require("electron-store");
-    _store = new Store({
-      name: "cloud-credentials"
-    });
+let _storePromise = null;
+async function getStore() {
+  if (_store) {
+    return _store;
   }
-  return _store;
+  if (!_storePromise) {
+    _storePromise = (async () => {
+      try {
+        const { default: Store } = await Promise.resolve().then(() => require("./index-DD3fUCw_.js"));
+        _store = new Store({
+          name: "cloud-credentials"
+        });
+        return _store;
+      } catch (error) {
+        console.error("[CloudClient] Failed to initialize electron-store:", error);
+        throw error;
+      }
+    })();
+  }
+  return _storePromise;
 }
 const store = {
-  get: (key) => getStore().get(key),
-  set: (key, value) => getStore().set(key, value),
-  delete: (key) => getStore().delete(key),
-  clear: () => getStore().clear()
+  get: async (key) => {
+    const s = await getStore();
+    return s.get(key);
+  },
+  set: async (key, value) => {
+    const s = await getStore();
+    s.set(key, value);
+  },
+  delete: async (key) => {
+    const s = await getStore();
+    s.delete(key);
+  },
+  clear: async () => {
+    const s = await getStore();
+    s.clear();
+  }
 };
 const INVALID_TOKEN_ERRORS = ["INVALID_TOKEN", "TOKEN_EXPIRED", "MACHINE_NOT_FOUND", "UNAUTHORIZED"];
 const _CloudClient = class _CloudClient extends events.EventEmitter {
@@ -3364,56 +3443,57 @@ const _CloudClient = class _CloudClient extends events.EventEmitter {
     return _CloudClient.instance;
   }
   // =========================================
-  // Token Management
+  // Token Management (async for ESM electron-store)
   // =========================================
-  getStoredToken() {
-    const token = store.get("machineToken");
-    const expiresAt = store.get("tokenExpiresAt");
+  async getStoredToken() {
+    const token = await store.get("machineToken");
+    const expiresAt = await store.get("tokenExpiresAt");
     if (!token || !expiresAt) return null;
     if (new Date(expiresAt).getTime() - 36e5 < Date.now()) {
       return null;
     }
     return token;
   }
-  storeToken(token, machineId, expiresAt) {
-    store.set("machineToken", token);
-    store.set("machineId", machineId);
-    store.set("tokenExpiresAt", expiresAt);
+  async storeToken(token, machineId, expiresAt) {
+    await store.set("machineToken", token);
+    await store.set("machineId", machineId);
+    await store.set("tokenExpiresAt", expiresAt);
   }
-  getMachineId() {
+  async getMachineId() {
     return store.get("machineId");
   }
-  isRegistered() {
-    return !!this.getStoredToken();
+  async isRegistered() {
+    const token = await this.getStoredToken();
+    return !!token;
   }
-  clearCredentials() {
-    store.delete("machineToken");
-    store.delete("machineId");
-    store.delete("tokenExpiresAt");
+  async clearCredentials() {
+    await store.delete("machineToken");
+    await store.delete("machineId");
+    await store.delete("tokenExpiresAt");
   }
   /**
    * Clear all stored data including hardware info
    * Use this for complete reset
    */
-  clearAllData() {
-    store.clear();
+  async clearAllData() {
+    await store.clear();
   }
   /**
    * Get stored hardware info for re-registration
    */
-  getStoredHardwareInfo() {
+  async getStoredHardwareInfo() {
     return {
-      hardwareId: store.get("hardwareId"),
-      hardwareInfo: store.get("hardwareInfo")
+      hardwareId: await store.get("hardwareId"),
+      hardwareInfo: await store.get("hardwareInfo")
     };
   }
   /**
    * Store hardware info for future re-registration
    */
-  storeHardwareInfo(hardwareId, hardwareInfo) {
-    store.set("hardwareId", hardwareId);
+  async storeHardwareInfo(hardwareId, hardwareInfo) {
+    await store.set("hardwareId", hardwareId);
     if (hardwareInfo) {
-      store.set("hardwareInfo", hardwareInfo);
+      await store.set("hardwareInfo", hardwareInfo);
     }
   }
   // =========================================
@@ -3425,7 +3505,7 @@ const _CloudClient = class _CloudClient extends events.EventEmitter {
       "Content-Type": "application/json"
     };
     if (requiresAuth) {
-      const token = this.getStoredToken();
+      const token = await this.getStoredToken();
       if (!token) {
         if (!isRetryAfterReregister) {
           const reregistered = await this.attemptReregistration();
@@ -3492,7 +3572,7 @@ const _CloudClient = class _CloudClient extends events.EventEmitter {
         const checkInterval = setInterval(() => {
           if (!this.isReregistering) {
             clearInterval(checkInterval);
-            resolve(this.isRegistered());
+            this.isRegistered().then(resolve);
           }
         }, 100);
         setTimeout(() => {
@@ -3503,13 +3583,13 @@ const _CloudClient = class _CloudClient extends events.EventEmitter {
     }
     this.isReregistering = true;
     try {
-      const { hardwareId, hardwareInfo } = this.getStoredHardwareInfo();
+      const { hardwareId, hardwareInfo } = await this.getStoredHardwareInfo();
       if (!hardwareId) {
         console.log("[CloudClient] No stored hardware info for re-registration");
         return false;
       }
       console.log("[CloudClient] Clearing old credentials...");
-      this.clearCredentials();
+      await this.clearCredentials();
       console.log("[CloudClient] Re-registering with stored hardware info...");
       const result = await this.register(hardwareId, hardwareInfo || void 0);
       if (result.success) {
@@ -3561,7 +3641,7 @@ const _CloudClient = class _CloudClient extends events.EventEmitter {
   // Public API Methods
   // =========================================
   async register(hardwareId, hardwareInfo) {
-    this.storeHardwareInfo(hardwareId, hardwareInfo);
+    await this.storeHardwareInfo(hardwareId, hardwareInfo);
     const response = await this.request(
       "POST",
       "/machines/register",
@@ -3574,7 +3654,7 @@ const _CloudClient = class _CloudClient extends events.EventEmitter {
       // No auth required for registration
     );
     if (response.success && response.data) {
-      this.storeToken(
+      await this.storeToken(
         response.data.machineToken,
         response.data.machineId,
         response.data.expiresAt
@@ -3583,7 +3663,7 @@ const _CloudClient = class _CloudClient extends events.EventEmitter {
     return response;
   }
   async getConfig(currentVersion) {
-    const machineId = this.getMachineId();
+    const machineId = await this.getMachineId();
     if (!machineId) {
       return { success: false, error: { code: "NOT_REGISTERED", message: "Machine not registered" } };
     }
@@ -3591,42 +3671,42 @@ const _CloudClient = class _CloudClient extends events.EventEmitter {
     return this.request("GET", `/machines/${machineId}/config${query}`);
   }
   async sendLogs(logs) {
-    const machineId = this.getMachineId();
+    const machineId = await this.getMachineId();
     if (!machineId) {
       return { success: false, error: { code: "NOT_REGISTERED", message: "Machine not registered" } };
     }
     return this.request("POST", `/machines/${machineId}/logs`, { logs });
   }
   async sendHeartbeat(status) {
-    const machineId = this.getMachineId();
+    const machineId = await this.getMachineId();
     if (!machineId) {
       return { success: false, error: { code: "NOT_REGISTERED", message: "Machine not registered" } };
     }
     return this.request("POST", `/machines/${machineId}/heartbeat`, status);
   }
   async getPendingCommands() {
-    const machineId = this.getMachineId();
+    const machineId = await this.getMachineId();
     if (!machineId) {
       return { success: false, error: { code: "NOT_REGISTERED", message: "Machine not registered" } };
     }
     return this.request("GET", `/machines/${machineId}/commands/pending`);
   }
   async acknowledgeCommand(commandId, ack) {
-    const machineId = this.getMachineId();
+    const machineId = await this.getMachineId();
     if (!machineId) {
       return { success: false, error: { code: "NOT_REGISTERED", message: "Machine not registered" } };
     }
     return this.request("POST", `/machines/${machineId}/commands/${commandId}/ack`, ack);
   }
   async createSession(session) {
-    const machineId = this.getMachineId();
+    const machineId = await this.getMachineId();
     if (!machineId) {
       return { success: false, error: { code: "NOT_REGISTERED", message: "Machine not registered" } };
     }
     return this.request("POST", `/machines/${machineId}/sessions`, session);
   }
   async updateSession(sessionId, update) {
-    const machineId = this.getMachineId();
+    const machineId = await this.getMachineId();
     if (!machineId) {
       return { success: false, error: { code: "NOT_REGISTERED", message: "Machine not registered" } };
     }
@@ -4656,6 +4736,9 @@ let sessionSync = null;
 let commandHandler = null;
 let heartbeatManager = null;
 const isCloudEnabled = !!(process.env.CLOUD_API_URL && process.env.CLOUD_API_KEY);
+let currentRendererScreen = "idle";
+let pendingConfigChanges = null;
+let isApplyingConfig = false;
 let hologramState = {
   mode: "logo"
 };
@@ -4693,7 +4776,7 @@ async function initializeCloudIntegration() {
     const hardwareId = await getHardwareId();
     const hardwareInfo = await getHardwareInfo();
     logger.info("system", "Hardware ID generated", { hardwareId });
-    if (!cloudClient.isRegistered()) {
+    if (!await cloudClient.isRegistered()) {
       logger.info("system", "Registering machine with cloud...");
       const result = await cloudClient.register(hardwareId, hardwareInfo);
       if (result.success) {
@@ -4730,6 +4813,22 @@ async function initializeCloudIntegration() {
     });
     heartbeatManager.start();
     logger.info("system", "Heartbeat manager started");
+    configSync.onChange(async (newConfig, oldConfig) => {
+      console.log("\n☁️ ═══════════════════════════════════════════════════");
+      console.log("☁️  CLOUD CONFIG CHANGE DETECTED");
+      console.log("☁️ ═══════════════════════════════════════════════════");
+      console.log(`   Current screen: ${currentRendererScreen}`);
+      if (currentRendererScreen === "idle" && !isApplyingConfig) {
+        console.log("   → Applying immediately (at idle screen)");
+        await applyConfigChanges(newConfig, oldConfig);
+      } else {
+        console.log("   → Queuing for later (not at idle screen)");
+        pendingConfigChanges = { newConfig, oldConfig };
+        console.log("   Pending config stored - will apply when returning to idle");
+      }
+      console.log("☁️ ═══════════════════════════════════════════════════\n");
+    });
+    logger.info("system", "Live config change listener registered");
     cloudClient.onReregistered(async (data) => {
       logger.info("system", "Machine was automatically re-registered", {
         machineId: data.machineId
@@ -4766,6 +4865,217 @@ function updatePeripheralStatus() {
   if (cardReader) {
     const readerStatus = cardReader.getStatus();
     heartbeatManager.setCardReaderStatus(readerStatus.connected ? "ok" : "offline");
+  }
+}
+async function reinitializeCamera(newCameraConfig) {
+  console.log("\n📷 ═══════════════════════════════════════════════════");
+  console.log("📷  REINITIALIZING CAMERA");
+  console.log("📷 ═══════════════════════════════════════════════════");
+  console.log(`   useWebcam: ${newCameraConfig.useWebcam}`);
+  console.log(`   mockMode: ${newCameraConfig.mockMode}`);
+  try {
+    if (cameraController) {
+      console.log("   Disconnecting existing camera...");
+      await cameraController.disconnect();
+      cameraController = null;
+    }
+    cameraController = new CameraController({
+      useWebcam: newCameraConfig.useWebcam,
+      mockMode: newCameraConfig.mockMode && !newCameraConfig.useWebcam
+    });
+    const result = await cameraController.connect();
+    if (result.success) {
+      console.log("✅ Camera reinitialized successfully");
+    } else {
+      console.error("⚠️  Camera reinitialization failed:", result.error);
+    }
+    updatePeripheralStatus();
+  } catch (error) {
+    console.error("❌ Camera reinitialization error:", error);
+  }
+  console.log("📷 ═══════════════════════════════════════════════════\n");
+}
+async function reinitializeCardReader(config) {
+  console.log("\n💳 ═══════════════════════════════════════════════════");
+  console.log("💳  REINITIALIZING CARD READER");
+  console.log("💳 ═══════════════════════════════════════════════════");
+  console.log(`   mockMode: ${config.payment.useMockMode}`);
+  console.log(`   port: ${config.tl3600.port}`);
+  console.log(`   terminalId: ${config.tl3600.terminalId}`);
+  try {
+    if (cardReader) {
+      console.log("   Disconnecting existing card reader...");
+      await cardReader.disconnect();
+      cardReader = null;
+    }
+    const useMockCardReader = config.payment.useMockMode || isDevelopment;
+    cardReader = new CardReaderController({
+      mockMode: useMockCardReader,
+      mockApprovalRate: config.payment.mockApprovalRate,
+      readerPort: config.tl3600.port,
+      terminalId: config.tl3600.terminalId
+    });
+    const result = await cardReader.connect();
+    if (result.success) {
+      const mode = useMockCardReader ? "mock mode" : `TL3600 on ${config.tl3600.port}`;
+      console.log(`✅ Card reader reinitialized (${mode})`);
+      cardReader.on("status", (statusUpdate) => {
+        mainWindow == null ? void 0 : mainWindow.webContents.send("payment:status", statusUpdate);
+      });
+      if (!useMockCardReader) {
+        cardReader.on("cardRemoved", () => {
+          mainWindow == null ? void 0 : mainWindow.webContents.send("payment:card-removed");
+        });
+        cardReader.on("paymentComplete", (result2) => {
+          mainWindow == null ? void 0 : mainWindow.webContents.send("payment:complete", result2);
+        });
+        cardReader.on("error", (error) => {
+          mainWindow == null ? void 0 : mainWindow.webContents.send("payment:error", {
+            message: error instanceof Error ? error.message : "Unknown error"
+          });
+        });
+        cardReader.on("disconnected", () => {
+          mainWindow == null ? void 0 : mainWindow.webContents.send("payment:disconnected");
+        });
+      }
+    } else {
+      console.error("⚠️  Card reader reinitialization failed:", result.error);
+    }
+    updatePeripheralStatus();
+  } catch (error) {
+    console.error("❌ Card reader reinitialization error:", error);
+  }
+  console.log("💳 ═══════════════════════════════════════════════════\n");
+}
+async function reconfigureWindows(newDisplayConfig) {
+  console.log("\n🖥️  ═══════════════════════════════════════════════════");
+  console.log("🖥️   RECONFIGURING WINDOWS");
+  console.log("🖥️  ═══════════════════════════════════════════════════");
+  console.log(`   splitScreenMode: ${newDisplayConfig.splitScreenMode}`);
+  console.log(`   swapDisplays: ${newDisplayConfig.swapDisplays}`);
+  console.log(`   mainSize: ${newDisplayConfig.mainWidth}x${newDisplayConfig.mainHeight}`);
+  console.log(`   hologramSize: ${newDisplayConfig.hologramWidth}x${newDisplayConfig.hologramHeight}`);
+  const displays = electron.screen.getAllDisplays();
+  const oldSplitScreenMode = displaySettings.splitScreenMode;
+  displaySettings = {
+    splitScreenMode: newDisplayConfig.splitScreenMode,
+    swapDisplays: newDisplayConfig.swapDisplays,
+    mainWidth: newDisplayConfig.mainWidth,
+    mainHeight: newDisplayConfig.mainHeight,
+    hologramWidth: newDisplayConfig.hologramWidth,
+    hologramHeight: newDisplayConfig.hologramHeight
+  };
+  if (newDisplayConfig.splitScreenMode) {
+    console.log("   Switching to split-screen mode...");
+    if (hologramWindow && !hologramWindow.isDestroyed()) {
+      hologramWindow.hide();
+      console.log("   Hologram window hidden");
+    }
+    if (mainWindow && !mainWindow.isDestroyed() && !isDevelopment) {
+      mainWindow.setSize(newDisplayConfig.mainWidth, newDisplayConfig.mainHeight);
+      console.log(`   Main window resized to ${newDisplayConfig.mainWidth}x${newDisplayConfig.mainHeight}`);
+    }
+  } else {
+    console.log("   Switching to dual-monitor mode...");
+    const mainDisplayIndex = newDisplayConfig.swapDisplays && displays.length > 1 ? 1 : 0;
+    const hologramDisplayIndex = newDisplayConfig.swapDisplays ? 0 : displays.length > 1 ? 1 : 0;
+    const mainDisplay = displays[mainDisplayIndex];
+    const hologramDisplay = displays[hologramDisplayIndex];
+    if (mainWindow && !mainWindow.isDestroyed() && !isDevelopment && mainDisplay) {
+      mainWindow.setBounds({
+        x: mainDisplay.bounds.x,
+        y: mainDisplay.bounds.y,
+        width: newDisplayConfig.mainWidth,
+        height: newDisplayConfig.mainHeight
+      });
+      console.log(`   Main window: ${newDisplayConfig.mainWidth}x${newDisplayConfig.mainHeight} on display ${mainDisplayIndex + 1}`);
+    }
+    if (hologramWindow && !hologramWindow.isDestroyed()) {
+      if (!isDevelopment && hologramDisplay) {
+        hologramWindow.setBounds({
+          x: hologramDisplay.bounds.x,
+          y: hologramDisplay.bounds.y,
+          width: newDisplayConfig.hologramWidth,
+          height: newDisplayConfig.hologramHeight
+        });
+      }
+      hologramWindow.show();
+      console.log(`   Hologram window: ${newDisplayConfig.hologramWidth}x${newDisplayConfig.hologramHeight} on display ${hologramDisplayIndex + 1}`);
+    } else if (!oldSplitScreenMode === false) {
+      console.log("   Creating hologram window...");
+      await createHologramWindow();
+    }
+  }
+  console.log("✅ Windows reconfigured successfully");
+  console.log("🖥️  ═══════════════════════════════════════════════════\n");
+}
+async function applyConfigChanges(newConfig, oldConfig) {
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J, _K, _L, _M, _N, _O, _P, _Q, _R, _S, _T;
+  console.log("\n" + "═".repeat(70));
+  console.log("⚡ APPLYING LIVE CONFIG CHANGES");
+  console.log("═".repeat(70));
+  console.log(`   Current screen: ${currentRendererScreen}`);
+  console.log(`   Time: ${(/* @__PURE__ */ new Date()).toLocaleString()}`);
+  mainWindow == null ? void 0 : mainWindow.webContents.send("app:config-applying");
+  try {
+    const cameraChanged = ((_a = newConfig.camera) == null ? void 0 : _a.useWebcam) !== ((_b = oldConfig.camera) == null ? void 0 : _b.useWebcam) || ((_c = newConfig.camera) == null ? void 0 : _c.mockMode) !== ((_d = oldConfig.camera) == null ? void 0 : _d.mockMode);
+    if (cameraChanged) {
+      console.log("\n📷 Camera config changed");
+      await reinitializeCamera({
+        useWebcam: ((_e = newConfig.camera) == null ? void 0 : _e.useWebcam) ?? ((_f = oldConfig.camera) == null ? void 0 : _f.useWebcam),
+        mockMode: ((_g = newConfig.camera) == null ? void 0 : _g.mockMode) ?? ((_h = oldConfig.camera) == null ? void 0 : _h.mockMode)
+      });
+    }
+    const cardReaderChanged = ((_i = newConfig.tl3600) == null ? void 0 : _i.port) !== ((_j = oldConfig.tl3600) == null ? void 0 : _j.port) || ((_k = newConfig.tl3600) == null ? void 0 : _k.terminalId) !== ((_l = oldConfig.tl3600) == null ? void 0 : _l.terminalId) || ((_m = newConfig.payment) == null ? void 0 : _m.useMockMode) !== ((_n = oldConfig.payment) == null ? void 0 : _n.useMockMode);
+    if (cardReaderChanged) {
+      console.log("\n💳 Card reader config changed");
+      await reinitializeCardReader({
+        payment: {
+          useMockMode: ((_o = newConfig.payment) == null ? void 0 : _o.useMockMode) ?? ((_p = oldConfig.payment) == null ? void 0 : _p.useMockMode),
+          mockApprovalRate: ((_q = newConfig.payment) == null ? void 0 : _q.mockApprovalRate) ?? ((_r = oldConfig.payment) == null ? void 0 : _r.mockApprovalRate) ?? 0.8
+        },
+        tl3600: {
+          port: ((_s = newConfig.tl3600) == null ? void 0 : _s.port) ?? ((_t = oldConfig.tl3600) == null ? void 0 : _t.port),
+          terminalId: ((_u = newConfig.tl3600) == null ? void 0 : _u.terminalId) ?? ((_v = oldConfig.tl3600) == null ? void 0 : _v.terminalId)
+        }
+      });
+    }
+    const displayChanged = ((_w = newConfig.display) == null ? void 0 : _w.splitScreenMode) !== ((_x = oldConfig.display) == null ? void 0 : _x.splitScreenMode) || ((_y = newConfig.display) == null ? void 0 : _y.swapDisplays) !== ((_z = oldConfig.display) == null ? void 0 : _z.swapDisplays) || ((_A = newConfig.display) == null ? void 0 : _A.mainWidth) !== ((_B = oldConfig.display) == null ? void 0 : _B.mainWidth) || ((_C = newConfig.display) == null ? void 0 : _C.mainHeight) !== ((_D = oldConfig.display) == null ? void 0 : _D.mainHeight) || ((_E = newConfig.display) == null ? void 0 : _E.hologramWidth) !== ((_F = oldConfig.display) == null ? void 0 : _F.hologramWidth) || ((_G = newConfig.display) == null ? void 0 : _G.hologramHeight) !== ((_H = oldConfig.display) == null ? void 0 : _H.hologramHeight);
+    if (displayChanged) {
+      console.log("\n🖥️  Display config changed");
+      await reconfigureWindows({
+        splitScreenMode: ((_I = newConfig.display) == null ? void 0 : _I.splitScreenMode) ?? ((_J = oldConfig.display) == null ? void 0 : _J.splitScreenMode),
+        swapDisplays: ((_K = newConfig.display) == null ? void 0 : _K.swapDisplays) ?? ((_L = oldConfig.display) == null ? void 0 : _L.swapDisplays),
+        mainWidth: ((_M = newConfig.display) == null ? void 0 : _M.mainWidth) ?? ((_N = oldConfig.display) == null ? void 0 : _N.mainWidth),
+        mainHeight: ((_O = newConfig.display) == null ? void 0 : _O.mainHeight) ?? ((_P = oldConfig.display) == null ? void 0 : _P.mainHeight),
+        hologramWidth: ((_Q = newConfig.display) == null ? void 0 : _Q.hologramWidth) ?? ((_R = oldConfig.display) == null ? void 0 : _R.hologramWidth),
+        hologramHeight: ((_S = newConfig.display) == null ? void 0 : _S.hologramHeight) ?? ((_T = oldConfig.display) == null ? void 0 : _T.hologramHeight)
+      });
+    }
+    mainWindow == null ? void 0 : mainWindow.webContents.send("app:config-applied");
+    mainWindow == null ? void 0 : mainWindow.webContents.send("app:config-updated", newConfig);
+    console.log("\n" + "═".repeat(70));
+    console.log("✅ LIVE CONFIG CHANGES APPLIED SUCCESSFULLY");
+    console.log("═".repeat(70) + "\n");
+  } catch (error) {
+    console.error("❌ Error applying config changes:", error);
+  }
+}
+async function applyPendingConfig() {
+  if (!pendingConfigChanges || isApplyingConfig) {
+    return;
+  }
+  isApplyingConfig = true;
+  console.log("\n📋 ═══════════════════════════════════════════════════");
+  console.log("📋  APPLYING PENDING CONFIG CHANGES");
+  console.log("📋 ═══════════════════════════════════════════════════\n");
+  try {
+    await applyConfigChanges(pendingConfigChanges.newConfig, pendingConfigChanges.oldConfig);
+    pendingConfigChanges = null;
+  } catch (error) {
+    console.error("❌ Failed to apply pending config:", error);
+  } finally {
+    isApplyingConfig = false;
   }
 }
 async function runDiagnostics(tests) {
@@ -4924,15 +5234,22 @@ electron.app.whenReady().then(async () => {
   });
   console.log("📷 Camera permissions handler configured");
   const config = appConfig.load();
+  const envSplitScreen = process.env.SPLIT_SCREEN_MODE === "true" || process.env.VITE_SPLIT_SCREEN_MODE === "true";
+  const configSplitScreen = config.display.splitScreenMode;
+  if (envSplitScreen !== configSplitScreen) {
+    console.log(`⚠️  Split-screen mismatch: .env=${envSplitScreen}, config.json=${configSplitScreen}`);
+    console.log(`   Using .env setting: ${envSplitScreen}`);
+  }
   displaySettings = {
-    splitScreenMode: config.display.splitScreenMode,
+    splitScreenMode: envSplitScreen,
+    // Use .env over config.json for consistency with React
     swapDisplays: config.display.swapDisplays,
     mainWidth: config.display.mainWidth,
     mainHeight: config.display.mainHeight,
     hologramWidth: config.display.hologramWidth,
     hologramHeight: config.display.hologramHeight
   };
-  console.log(`📺 Display mode: ${displaySettings.splitScreenMode ? "Split Screen" : "Dual Monitor"}${displaySettings.swapDisplays ? " (displays swapped)" : ""}`);
+  console.log(`📺 Display mode: ${displaySettings.splitScreenMode ? "Split Screen (single window)" : "Dual Monitor (two windows)"}${displaySettings.swapDisplays ? " (displays swapped)" : ""}`);
   try {
     initDatabase();
   } catch (error) {
@@ -5120,6 +5437,7 @@ electron.ipcMain.handle("printer:print", async (_event, options) => {
   }
 });
 electron.ipcMain.handle("video:process", async (_event, params) => {
+  var _a, _b, _c;
   console.log("Video processing requested:", params);
   if (!pythonBridge) {
     return {
@@ -5149,17 +5467,32 @@ electron.ipcMain.handle("video:process", async (_event, params) => {
       subtitleText: params.subtitleText,
       s3Folder: params.s3Folder || "mut-hologram"
     });
-    return {
+    const completeResult = {
       success: true,
       result
     };
+    console.log(`
+${"=".repeat(70)}`);
+    console.log(`📤 [IPC] SENDING video:complete EVENT`);
+    console.log(`${"=".repeat(70)}`);
+    console.log(`   mainWindow exists: ${!!mainWindow}`);
+    console.log(`   result.success: ${completeResult.success}`);
+    console.log(`   result.result exists: ${!!completeResult.result}`);
+    console.log(`   framePaths count: ${((_b = (_a = completeResult.result) == null ? void 0 : _a.framePaths) == null ? void 0 : _b.length) || 0}`);
+    console.log(`   s3Url: ${((_c = completeResult.result) == null ? void 0 : _c.s3Url) || "N/A"}`);
+    console.log(`${"=".repeat(70)}
+`);
+    mainWindow == null ? void 0 : mainWindow.webContents.send("video:complete", completeResult);
+    return completeResult;
   } catch (error) {
     console.error("Video processing error:", error);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    return {
+    const errorResult = {
       success: false,
       error: errorMessage
     };
+    mainWindow == null ? void 0 : mainWindow.webContents.send("video:complete", errorResult);
+    return errorResult;
   }
 });
 electron.ipcMain.handle("video:cancel", async (_event, taskId) => {
@@ -5282,18 +5615,19 @@ electron.ipcMain.handle("video:extract-frames", async (_event, videoPath, timest
     };
   }
 });
-electron.ipcMain.handle("video:save-buffer", async (_event, byteArray, filename) => {
+electron.ipcMain.handle("video:save-buffer", async (_event, data, filename) => {
   console.log(`
 ${"=".repeat(70)}`);
   console.log(`💾 [IPC] SAVING VIDEO BUFFER TO FILE`);
   console.log(`${"=".repeat(70)}`);
   console.log(`   Filename: ${filename}`);
-  console.log(`   Buffer size: ${(byteArray.length / 1024).toFixed(2)} KB`);
+  console.log(`   Data type: ${data.constructor.name}, length: ${data.length}`);
+  console.log(`   Buffer size: ${(data.length / 1024).toFixed(2)} KB`);
   try {
     const tempDir = path__namespace.join(electron.app.getPath("temp"), "mut-captures");
     await fs__namespace$1.mkdir(tempDir, { recursive: true });
     console.log(`   ✓ Temp directory: ${tempDir}`);
-    const buffer = Buffer.from(byteArray);
+    const buffer = Buffer.from(data);
     console.log(`   ✓ Buffer created: ${(buffer.length / 1024).toFixed(2)} KB`);
     const hexHeader = buffer.slice(0, 16).toString("hex").toUpperCase();
     console.log(`   File header (hex): ${hexHeader}`);
@@ -5503,13 +5837,60 @@ electron.ipcMain.handle("hologram:get-state", async () => {
   console.log("🎭 Hologram state requested:", hologramState);
   return { success: true, state: hologramState };
 });
+electron.ipcMain.handle("file:exists", async (_event, filePath) => {
+  try {
+    let absolutePath = filePath;
+    if (!path__namespace.isAbsolute(filePath)) {
+      absolutePath = path__namespace.join(electron.app.getAppPath(), "MUT-distribution", filePath);
+    }
+    await fs__namespace$1.access(absolutePath);
+    return { success: true, exists: true };
+  } catch (error) {
+    return { success: true, exists: false };
+  }
+});
 electron.ipcMain.handle("file:read-as-data-url", async (_event, filePath) => {
   try {
     console.log(`📂 [IPC] Reading file as data URL: ${filePath}`);
     let absolutePath = filePath;
-    if (!path__namespace.isAbsolute(filePath)) {
-      absolutePath = path__namespace.join(electron.app.getAppPath(), "MUT-distribution", filePath);
-      console.log(`   Resolved to absolute path: ${absolutePath}`);
+    const attemptedPaths = [];
+    if (path__namespace.isAbsolute(filePath)) {
+      absolutePath = filePath;
+      attemptedPaths.push(absolutePath);
+    } else {
+      const basePaths = [
+        electron.app.getAppPath(),
+        // App path (development)
+        process.resourcesPath,
+        // Resources path (production)
+        path__namespace.join(electron.app.getAppPath(), "MUT-distribution"),
+        // MUT-distribution in app
+        path__namespace.join(process.resourcesPath, "MUT-distribution")
+        // MUT-distribution in resources
+      ];
+      for (const basePath of basePaths) {
+        const candidatePath = path__namespace.join(basePath, filePath);
+        attemptedPaths.push(candidatePath);
+        try {
+          await fs__namespace$1.access(candidatePath);
+          absolutePath = candidatePath;
+          console.log(`   ✅ Found file at: ${absolutePath}`);
+          break;
+        } catch {
+        }
+      }
+    }
+    try {
+      await fs__namespace$1.access(absolutePath);
+    } catch (accessError) {
+      console.error(`❌ [IPC] File does not exist at any attempted path:`);
+      attemptedPaths.forEach((p, i) => {
+        console.error(`   ${i + 1}. ${p}`);
+      });
+      return {
+        success: false,
+        error: `File not found: ${filePath}. Attempted paths: ${attemptedPaths.join("; ")}`
+      };
     }
     const fileBuffer = await fs__namespace$1.readFile(absolutePath);
     const base64 = fileBuffer.toString("base64");
@@ -5710,6 +6091,32 @@ electron.ipcMain.handle("config:get-path", async () => {
     success: true,
     path: appConfig.getConfigPath()
   };
+});
+electron.ipcMain.on("app:screen-changed", (_event, screen2) => {
+  const previousScreen = currentRendererScreen;
+  currentRendererScreen = screen2;
+  console.log(`📱 [App] Screen changed: ${previousScreen} → ${screen2}`);
+  if (screen2 === "idle") {
+    console.log("🔄 [App] Main screen transitioned to idle - resetting hologram to logo");
+    hologramState = {
+      mode: "logo"
+    };
+    const targetWindow = getHologramTargetWindow();
+    const windowName = displaySettings.splitScreenMode ? "main window" : "hologram window";
+    if (targetWindow && !targetWindow.isDestroyed()) {
+      targetWindow.webContents.send("hologram:update", hologramState);
+      console.log(`✅ [App] Hologram reset to logo sent to ${windowName}`);
+    } else {
+      console.warn(`⚠️ [App] Cannot reset hologram - ${windowName} not available`);
+    }
+  }
+  if (screen2 === "idle" && pendingConfigChanges && !isApplyingConfig) {
+    console.log("📱 [App] At idle screen with pending config - applying...");
+    applyPendingConfig();
+  }
+});
+electron.ipcMain.handle("app:get-current-screen", async () => {
+  return { screen: currentRendererScreen };
 });
 electron.app.on("before-quit", async () => {
   if (heartbeatManager) {

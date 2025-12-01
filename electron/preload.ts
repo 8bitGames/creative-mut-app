@@ -13,6 +13,12 @@ const printerAPI = {
   getStatus: () => ipcRenderer.invoke('printer:get-status'),
   print: (options: { imagePath: string; copies?: number }) =>
     ipcRenderer.invoke('printer:print', options),
+  // Progress listener for print jobs
+  onProgress: (callback: (data: { jobId: string; progress: number; message?: string }) => void) => {
+    const listener = (_event: IpcRendererEvent, data: { jobId: string; progress: number; message?: string }) => callback(data);
+    ipcRenderer.on('printer:progress', listener);
+    return () => ipcRenderer.removeListener('printer:progress', listener);
+  },
 };
 
 // Image API
@@ -23,8 +29,8 @@ const imageAPI = {
 
 // Video Processing API
 const videoAPI = {
-  saveBuffer: (byteArray: number[], filename: string) =>
-    ipcRenderer.invoke('video:save-buffer', byteArray, filename),
+  saveBuffer: (data: Uint8Array | number[], filename: string) =>
+    ipcRenderer.invoke('video:save-buffer', data, filename),
 
   process: (params: {
     inputVideo: string;

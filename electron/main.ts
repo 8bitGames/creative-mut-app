@@ -1303,12 +1303,13 @@ ipcMain.handle('video:extract-frames', async (_event, videoPath: string, timesta
 });
 
 // Save video buffer (raw bytes) directly to file
-ipcMain.handle('video:save-buffer', async (_event, byteArray: number[], filename: string) => {
+ipcMain.handle('video:save-buffer', async (_event, data: Uint8Array | number[], filename: string) => {
   console.log(`\n${'='.repeat(70)}`);
   console.log(`💾 [IPC] SAVING VIDEO BUFFER TO FILE`);
   console.log(`${'='.repeat(70)}`);
   console.log(`   Filename: ${filename}`);
-  console.log(`   Buffer size: ${(byteArray.length / 1024).toFixed(2)} KB`);
+  console.log(`   Data type: ${data.constructor.name}, length: ${data.length}`);
+  console.log(`   Buffer size: ${(data.length / 1024).toFixed(2)} KB`);
 
   try {
     // Create temp directory if it doesn't exist
@@ -1316,8 +1317,8 @@ ipcMain.handle('video:save-buffer', async (_event, byteArray: number[], filename
     await fs.mkdir(tempDir, { recursive: true });
     console.log(`   ✓ Temp directory: ${tempDir}`);
 
-    // Convert array to Buffer
-    const buffer = Buffer.from(byteArray);
+    // Convert to Buffer - handles both Uint8Array and number[]
+    const buffer = Buffer.from(data);
     console.log(`   ✓ Buffer created: ${(buffer.length / 1024).toFixed(2)} KB`);
 
     // Log first 16 bytes for debugging

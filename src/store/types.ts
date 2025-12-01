@@ -18,8 +18,8 @@ export type Screen =
   | 'image-selection'   // Screen 7
   | 'payment'           // Screen 8
   | 'printing'          // Screen 9
-  | 'admin-dashboard'   // Admin Dashboard
-  | 'shadow-effect';    // Shadow Effect Demo (F11)
+  | 'admin-dashboard'   // Admin Dashboard (F12)
+  | 'shadow-effect';    // Shadow Effect / Camera Test (F10)
 
 // ============================================
 // Frame Types
@@ -132,4 +132,18 @@ export interface PrintState {
   status: PrintStatus;
   progress: number;
   error: string | null;
+}
+
+// ============================================
+// Shadow Effect Types
+// ============================================
+
+export interface ShadowConfig {
+  color: string;        // Shadow color (hex or rgba)
+  offsetX: number;      // X offset in pixels
+  offsetY: number;      // Y offset in pixels
+  blur: number;         // Blur radius in pixels
+  opacity: number;      // Shadow opacity (0-1)
+  spread: number;       // Shadow spread/expansion in pixels
+  enabled: boolean;     // Enable/disable shadow effect
 }

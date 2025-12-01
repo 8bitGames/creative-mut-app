@@ -7,13 +7,19 @@ const cameraAPI = {
 };
 const printerAPI = {
   getStatus: () => ipcRenderer.invoke("printer:get-status"),
-  print: (options) => ipcRenderer.invoke("printer:print", options)
+  print: (options) => ipcRenderer.invoke("printer:print", options),
+  // Progress listener for print jobs
+  onProgress: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on("printer:progress", listener);
+    return () => ipcRenderer.removeListener("printer:progress", listener);
+  }
 };
 const imageAPI = {
   saveBlob: (blobData, filename) => ipcRenderer.invoke("image:save-blob", blobData, filename)
 };
 const videoAPI = {
-  saveBuffer: (byteArray, filename) => ipcRenderer.invoke("video:save-buffer", byteArray, filename),
+  saveBuffer: (data, filename) => ipcRenderer.invoke("video:save-buffer", data, filename),
   process: (params) => ipcRenderer.invoke("video:process", params),
   processFromImages: (params) => ipcRenderer.invoke("video:process-from-images", params),
   extractFrames: (videoPath, timestamps) => ipcRenderer.invoke("video:extract-frames", videoPath, timestamps),
@@ -70,7 +76,8 @@ const paymentAPI = {
 };
 const fileAPI = {
   readAsDataUrl: (filePath) => ipcRenderer.invoke("file:read-as-data-url", filePath),
-  delete: (filePath) => ipcRenderer.invoke("file:delete", filePath)
+  delete: (filePath) => ipcRenderer.invoke("file:delete", filePath),
+  exists: (filePath) => ipcRenderer.invoke("file:exists", filePath)
 };
 const analyticsAPI = {
   sessionStart: (sessionId, startTime) => ipcRenderer.invoke("analytics:session-start", sessionId, startTime),
@@ -107,13 +114,46 @@ const hologramAPI = {
   showLogo: () => ipcRenderer.invoke("hologram:show-logo"),
   getState: () => ipcRenderer.invoke("hologram:get-state")
 };
+const listenerMap = /* @__PURE__ */ new Map();
 const ipcRendererAPI = {
   on: (channel, callback) => {
-    ipcRenderer.on(channel, (_event, ...args) => callback(...args));
+    const wrapper = (_event, ...args) => callback(...args);
+    listenerMap.set(callback, wrapper);
+    ipcRenderer.on(channel, wrapper);
   },
   removeListener: (channel, callback) => {
-    ipcRenderer.removeListener(channel, callback);
+    const wrapper = listenerMap.get(callback);
+    if (wrapper) {
+      ipcRenderer.removeListener(channel, wrapper);
+      listenerMap.delete(callback);
+    }
   }
+};
+const appAPI = {
+  // Notify main process when screen changes (for live config application)
+  notifyScreenChange: (screen) => {
+    ipcRenderer.send("app:screen-changed", screen);
+  },
+  // Listen for config updates from cloud (main → renderer)
+  onConfigUpdated: (callback) => {
+    const listener = (_event, config) => callback(config);
+    ipcRenderer.on("app:config-updated", listener);
+    return () => ipcRenderer.removeListener("app:config-updated", listener);
+  },
+  // Listen for config apply notification (when config is about to be applied)
+  onConfigApplying: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("app:config-applying", listener);
+    return () => ipcRenderer.removeListener("app:config-applying", listener);
+  },
+  // Listen for config applied notification (when config has been applied)
+  onConfigApplied: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("app:config-applied", listener);
+    return () => ipcRenderer.removeListener("app:config-applied", listener);
+  },
+  // Get current screen state (for debugging)
+  getCurrentScreen: () => ipcRenderer.invoke("app:get-current-screen")
 };
 contextBridge.exposeInMainWorld("electron", {
   camera: cameraAPI,
@@ -125,5 +165,6 @@ contextBridge.exposeInMainWorld("electron", {
   analytics: analyticsAPI,
   config: configAPI,
   hologram: hologramAPI,
-  ipcRenderer: ipcRendererAPI
+  ipcRenderer: ipcRendererAPI,
+  app: appAPI
 });

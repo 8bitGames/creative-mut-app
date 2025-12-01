@@ -400,10 +400,10 @@ export function ImageSelectionScreen() {
           size="lg"
           onClick={handleConfirm}
           disabled={!localSelection}
-          className="w-full bg-black text-white hover:bg-gray-800 px-12 py-8 text-3xl font-bold touch-target border-3 border-black disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full py-10 text-4xl font-bold bg-black text-white hover:bg-gray-800 rounded-2xl touch-target transition-all shadow-xl border-2 border-black disabled:opacity-50 disabled:cursor-not-allowed"
         >
           다음
-          <ArrowRight className="w-8 h-8 ml-3" strokeWidth={2.5} />
+          <ArrowRight className="w-10 h-10 ml-4" strokeWidth={2.5} />
         </Button>
       </motion.div>
 

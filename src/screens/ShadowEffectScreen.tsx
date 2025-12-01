@@ -1,28 +1,19 @@
 // src/screens/ShadowEffectScreen.tsx
 // Real-time shadow effect using MediaPipe Selfie Segmentation
+// F10 to open this screen - shadow settings are saved and applied to actual camera capture
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
+import type { ShadowConfig } from '@/store/types';
 
-// Shadow effect configuration interface
-interface ShadowConfig {
-  color: string;        // Shadow color (hex or rgba)
-  offsetX: number;      // X offset in pixels
-  offsetY: number;      // Y offset in pixels
-  blur: number;         // Blur radius in pixels
-  opacity: number;      // Shadow opacity (0-1)
-  spread: number;       // Shadow spread/expansion in pixels (dilates the mask)
-  enabled: boolean;     // Enable/disable shadow effect
-}
-
-// Default shadow configuration
+// Default shadow configuration (same as appStore default)
 const DEFAULT_SHADOW_CONFIG: ShadowConfig = {
   color: '#000000',
   offsetX: 20,
   offsetY: 40,
   blur: 30,
   opacity: 0.6,
-  spread: 10,           // Default spread for softer edges
+  spread: 10,
   enabled: true,
 };
 
@@ -41,12 +32,15 @@ export function ShadowEffectScreen() {
   const setScreen = useAppStore((state) => state.setScreen);
   const cameraStream = useAppStore((state) => state.cameraStream);
   const setCameraStream = useAppStore((state) => state.setCameraStream);
+  // Get shadow config from store (persisted across screens)
+  const storeShadowConfig = useAppStore((state) => state.shadowConfig);
+  const setStoreShadowConfig = useAppStore((state) => state.setShadowConfig);
 
-  // State
+  // State - initialize from store
   const [isLoading, setIsLoading] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState('MediaPipe loading...');
   const [fps, setFps] = useState(0);
-  const [shadowConfig, setShadowConfig] = useState<ShadowConfig>(DEFAULT_SHADOW_CONFIG);
+  const [shadowConfig, setShadowConfig] = useState<ShadowConfig>(storeShadowConfig);
   const [showControls, setShowControls] = useState(true);
   const [debugInfo, setDebugInfo] = useState('');
 
@@ -452,9 +446,20 @@ export function ShadowEffectScreen() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [setScreen]);
 
+  // Sync shadow config to store whenever it changes (for persistence)
+  useEffect(() => {
+    setStoreShadowConfig(shadowConfig);
+  }, [shadowConfig, setStoreShadowConfig]);
+
   // Update shadow config handler
   const updateConfig = (key: keyof ShadowConfig, value: any) => {
     setShadowConfig(prev => ({ ...prev, [key]: value }));
+  };
+
+  // Reset to default and sync to store
+  const handleReset = () => {
+    setShadowConfig(DEFAULT_SHADOW_CONFIG);
+    // Store will be updated via the useEffect sync above
   };
 
   // Preset shadow styles
@@ -661,16 +666,25 @@ export function ShadowEffectScreen() {
 
           {/* Reset Button */}
           <button
-            onClick={() => setShadowConfig(DEFAULT_SHADOW_CONFIG)}
+            onClick={handleReset}
             className="w-full py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
           >
             Reset to Default
           </button>
 
+          {/* Save Note */}
+          <div className="mt-4 p-3 bg-green-900 bg-opacity-30 rounded-lg border border-green-700">
+            <p className="text-xs text-green-400">
+              Settings are automatically saved and will be applied to the actual camera capture.
+            </p>
+          </div>
+
           {/* Keyboard Shortcuts */}
           <div className="mt-6 pt-4 border-t border-gray-700">
             <h3 className="text-sm text-gray-400 mb-2">Keyboard Shortcuts</h3>
             <ul className="text-xs text-gray-500 space-y-1">
+              <li><kbd className="bg-gray-700 px-1 rounded">F10</kbd> Open/Close this screen</li>
+              <li><kbd className="bg-gray-700 px-1 rounded">F11</kbd> Toggle fullscreen</li>
               <li><kbd className="bg-gray-700 px-1 rounded">ESC</kbd> Exit</li>
               <li><kbd className="bg-gray-700 px-1 rounded">H</kbd> Toggle controls</li>
               <li><kbd className="bg-gray-700 px-1 rounded">S</kbd> Toggle shadow</li>
