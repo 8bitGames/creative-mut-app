@@ -354,6 +354,18 @@ export class TL3600Controller extends EventEmitter {
       return { success: false, error: result.error || 'Request failed' };
     }
 
+    // Handle card inquiry response (d) when no transaction history or already cancelled
+    if (result.response.header.jobCode === JobCode.CARD_INQUIRY_RESPONSE) {
+      console.error(`❌ [TL3600] Card inquiry response received - no cancellable transaction`);
+      const cardInfo = parseCardInquiryResponse(result.response.data);
+      if (cardInfo.transactionStatus === '0') {
+        return { success: false, error: '취소 가능한 거래 내역이 없습니다' };
+      } else if (cardInfo.transactionStatus === 'X') {
+        return { success: false, error: '이미 취소된 거래입니다' };
+      }
+      return { success: false, error: '취소할 수 없는 카드입니다' };
+    }
+
     if (result.response.header.jobCode !== JobCode.TRANSACTION_CANCEL_RESPONSE) {
       console.error(`❌ [TL3600] Unexpected response: ${result.response.header.jobCode}`);
       return { success: false, error: 'Unexpected response' };
