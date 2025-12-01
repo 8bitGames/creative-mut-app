@@ -49,225 +49,30 @@ export function ShadowEffectScreen() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const shadowCanvasRef = useRef<HTMLCanvasElement>(null);
   const tempCanvasRef = useRef<HTMLCanvasElement>(null); // Temp canvas for mask processing
+  const processedCanvasRef = useRef<HTMLCanvasElement>(null); // Shadow-processed output (before rotation)
+  const cachedShadowCanvasRef = useRef<HTMLCanvasElement>(null); // Cached shadow for performance
   const selfieSegmentationRef = useRef<any>(null);
   const animationFrameRef = useRef<number | null>(null);
   const fpsCountRef = useRef({ frames: 0, lastTime: performance.now() });
   const frameCountRef = useRef(0);
+  const lastMaskRef = useRef<any>(null);
+  const latestMaskRef = useRef<any>(null);
+  const isProcessingRef = useRef<boolean>(false);
 
 
   // Ref to store current shadow config (avoids recreating callbacks)
   const shadowConfigRef = useRef(shadowConfig);
   shadowConfigRef.current = shadowConfig;
 
-  // Process segmentation results and render shadow
-  // Shadow is drawn BEHIND the person - shadow first, then video on top
+  // Store segmentation mask for use in render loop (same pattern as CaptureScreen)
   const onResults = useCallback((results: any) => {
-    frameCountRef.current++;
-
-    const canvas = canvasRef.current;
-    const shadowCanvas = shadowCanvasRef.current;
-    const tempCanvas = tempCanvasRef.current;
-    const video = videoRef.current;
-    const config = shadowConfigRef.current;
-
-    // Log first few frames for debugging
-    if (frameCountRef.current <= 3) {
-      console.log(`[ShadowEffect] Frame ${frameCountRef.current}:`, {
-        hasCanvas: !!canvas,
-        hasShadowCanvas: !!shadowCanvas,
-        hasTempCanvas: !!tempCanvas,
-        hasVideo: !!video,
-        hasSegMask: !!results?.segmentationMask,
-        hasImage: !!results?.image,
-        videoWidth: video?.videoWidth,
-        videoHeight: video?.videoHeight
-      });
+    if (results.segmentationMask) {
+      latestMaskRef.current = results.segmentationMask;
     }
-
-    // Check for required elements
-    if (!canvas || !shadowCanvas || !tempCanvas || !video) {
-      if (frameCountRef.current <= 5) {
-        console.log('[ShadowEffect] Missing canvas or video');
-      }
-      return;
-    }
-
-    // MediaPipe returns segmentationMask
-    if (!results.segmentationMask) {
-      if (frameCountRef.current <= 5) {
-        console.log('[ShadowEffect] No segmentation mask in results, keys:', Object.keys(results || {}));
-      }
-      return;
-    }
-
-    const ctx = canvas.getContext('2d');
-    const shadowCtx = shadowCanvas.getContext('2d');
-    const tempCtx = tempCanvas.getContext('2d');
-
-    if (!ctx || !shadowCtx || !tempCtx) {
-      console.log('[ShadowEffect] Could not get canvas context');
-      return;
-    }
-
-    // Update canvas dimensions if needed (check video has valid dimensions)
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-
-    if (vw === 0 || vh === 0) {
-      console.log('[ShadowEffect] Video dimensions not ready:', vw, vh);
-      return;
-    }
-
-    if (canvas.width !== vw || canvas.height !== vh) {
-      canvas.width = vw;
-      canvas.height = vh;
-      shadowCanvas.width = vw;
-      shadowCanvas.height = vh;
-      tempCanvas.width = vw;
-      tempCanvas.height = vh;
-      console.log('[ShadowEffect] Canvas resized to:', vw, vh);
-    }
-
-    // Clear canvases
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    shadowCtx.clearRect(0, 0, shadowCanvas.width, shadowCanvas.height);
-    tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
-
-    // Shadow rendering: Create shadow BEHIND person using RGB-based mask
-    // MediaPipe mask: person=WHITE (RGB 255,255,255), background=BLACK (RGB 0,0,0)
-    // Note: Alpha channel is always 255 (opaque), so we must work with RGB values
-    //
-    // Strategy using multiply blend:
-    //   1. Create inverted mask: person=BLACK, bg=WHITE
-    //   2. Multiply inverted mask with shadow color to get colored shadow
-    //   3. Fill shadow canvas white, then multiply with offset shadow
-    //   4. Draw mask directly (person=white) to erase shadow under person
-    //   5. Apply final shadow with multiply blend to video
-
-    // CLEANER APPROACH: Create shadow, cut out person area, then composite
-    // Strategy:
-    // 1. Create shadow shape on shadowCanvas
-    // 2. Use destination-out to remove person area from shadow
-    // 3. Draw video on main canvas
-    // 4. Draw shadow (with person hole) on top of video
-
-    if (config.enabled) {
-      // Debug: Check mask type
-      if (frameCountRef.current <= 5) {
-        const mask = results.segmentationMask;
-        console.log('[ShadowEffect] Mask:', mask?.constructor?.name,
-          'size:', mask?.width, 'x', mask?.height);
-      }
-
-      // Calculate spread scale for shadow expansion
-      const spreadScale = 1 + (config.spread / 100);
-      const spreadOffsetX = (canvas.width * (spreadScale - 1)) / 2;
-      const spreadOffsetY = (canvas.height * (spreadScale - 1)) / 2;
-
-      // STEP 1: Create shadow shape on temp canvas
-      tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
-      tempCtx.fillStyle = '#ffffff';
-      tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-
-      // Draw inverted mask (person=black silhouette) with offset and blur
-      tempCtx.save();
-      tempCtx.globalCompositeOperation = 'multiply';
-      tempCtx.filter = `grayscale(1) invert(1) blur(${config.blur}px)`;
-      tempCtx.drawImage(
-        results.segmentationMask,
-        config.offsetX - spreadOffsetX,
-        config.offsetY - spreadOffsetY,
-        tempCanvas.width * spreadScale,
-        tempCanvas.height * spreadScale
-      );
-      tempCtx.filter = 'none';
-      tempCtx.restore();
-
-      // STEP 2: Convert shadow to alpha-based on shadowCanvas
-      const shadowImageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-      const shadowData = shadowImageData.data;
-
-      for (let i = 0; i < shadowData.length; i += 4) {
-        const brightness = (shadowData[i] + shadowData[i + 1] + shadowData[i + 2]) / 3;
-        const alpha = Math.round((255 - brightness) * config.opacity);
-        shadowData[i] = 0;
-        shadowData[i + 1] = 0;
-        shadowData[i + 2] = 0;
-        shadowData[i + 3] = alpha;
-      }
-
-      shadowCtx.clearRect(0, 0, shadowCanvas.width, shadowCanvas.height);
-      shadowCtx.putImageData(shadowImageData, 0, 0);
-
-      // STEP 3: Cut out person area from shadow using destination-out
-      // This ensures shadow NEVER appears on top of person
-      // Use blur(5px) to slightly expand the cutout for clean edges
-      shadowCtx.globalCompositeOperation = 'destination-out';
-      shadowCtx.filter = 'grayscale(1) blur(5px)';
-      shadowCtx.drawImage(results.segmentationMask, 0, 0, shadowCanvas.width, shadowCanvas.height);
-      shadowCtx.filter = 'none';
-      shadowCtx.globalCompositeOperation = 'source-over';
-
-      // STEP 4: Draw video on main canvas
-      ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-
-      // STEP 5: Draw shadow (with person hole) on top of video
-      ctx.drawImage(shadowCanvas, 0, 0);
-
-      // Debug: Log success on first frames
-      if (frameCountRef.current <= 5) {
-        console.log('[ShadowEffect] Shadow created with person cutout');
-      }
-    } else {
-      // No shadow - just draw video
-      ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-    }
-
-    // Debug: Draw previews to diagnose mask and shadow rendering
-    if (frameCountRef.current <= 200 && config.enabled) {
-      ctx.save();
-      const previewSize = 160;
-      const previewHeight = Math.floor(previewSize * (canvas.height / canvas.width));
-
-      // Preview 1: Raw segmentation mask (bottom-left)
-      // Shows: white=person, black=background (if RGB mask) OR person shape with alpha
-      ctx.globalAlpha = 1.0;
-      ctx.fillStyle = '#333333';
-      ctx.fillRect(8, canvas.height - previewHeight - 12, previewSize + 4, previewHeight + 4);
-      ctx.drawImage(results.segmentationMask, 10, canvas.height - previewHeight - 10, previewSize, previewHeight);
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '10px sans-serif';
-      ctx.fillText('Raw Mask', 12, canvas.height - previewHeight - 14);
-
-      // Preview 2: Processed shadow (tempCanvas) - next to mask
-      // Shows: what we're using as shadow
-      ctx.fillStyle = '#333333';
-      ctx.fillRect(previewSize + 18, canvas.height - previewHeight - 12, previewSize + 4, previewHeight + 4);
-      ctx.drawImage(tempCanvas, previewSize + 20, canvas.height - previewHeight - 10, previewSize, previewHeight);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText('Shadow Mask', previewSize + 22, canvas.height - previewHeight - 14);
-
-      // Preview 3: Shadow canvas with blur applied
-      ctx.fillStyle = '#333333';
-      ctx.fillRect(previewSize * 2 + 28, canvas.height - previewHeight - 12, previewSize + 4, previewHeight + 4);
-      ctx.drawImage(shadowCanvas, previewSize * 2 + 30, canvas.height - previewHeight - 10, previewSize, previewHeight);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText('Final Shadow', previewSize * 2 + 32, canvas.height - previewHeight - 14);
-
-      ctx.restore();
-    }
-
-    // Update FPS counter
-    fpsCountRef.current.frames++;
-    const now = performance.now();
-    if (now - fpsCountRef.current.lastTime >= 1000) {
-      setFps(fpsCountRef.current.frames);
-      fpsCountRef.current.frames = 0;
-      fpsCountRef.current.lastTime = now;
-    }
-  }, []); // No dependencies - uses refs
+  }, []);
 
   // Initialize on mount (runs only once)
+  // Uses SAME settings as CaptureScreen: 4K resolution, 90° rotation, low-res shadow processing
   useEffect(() => {
     let isMounted = true;
 
@@ -324,8 +129,8 @@ export function ShadowEffectScreen() {
 
         if (!isMounted) return;
 
-        // Start camera
-        setLoadingMessage('Starting camera...');
+        // Start camera - USE 4K RESOLUTION (same as CaptureScreen)
+        setLoadingMessage('Starting 4K camera...');
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(d => d.kind === 'videoinput');
         console.log('[ShadowEffect] Available cameras:', videoDevices.map(d => d.label));
@@ -335,8 +140,8 @@ export function ShadowEffectScreen() {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             deviceId: deviceId ? { exact: deviceId } : undefined,
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
+            width: { ideal: 3840 },  // 4K - same as CaptureScreen
+            height: { ideal: 2160 }, // 4K - same as CaptureScreen
             frameRate: { ideal: 30 }
           },
           audio: false
@@ -363,43 +168,205 @@ export function ShadowEffectScreen() {
           });
 
           await videoRef.current.play();
-          console.log('[ShadowEffect] Camera started, dimensions:', videoRef.current.videoWidth, 'x', videoRef.current.videoHeight);
-        }
 
-        if (!isMounted) return;
+          const video = videoRef.current;
+          const videoWidth = video.videoWidth;
+          const videoHeight = video.videoHeight;
+          console.log('[ShadowEffect] Camera started at 4K:', videoWidth, 'x', videoHeight);
 
-        // Set up processing
-        setLoadingMessage('Starting segmentation...');
+          // Set up canvas with ROTATION (same as CaptureScreen)
+          // Canvas size = rotated dimensions (swap width/height for 90° rotation)
+          const canvas = canvasRef.current!;
+          const ctx = canvas.getContext('2d')!;
+          canvas.width = videoHeight;  // Swapped for 90° rotation
+          canvas.height = videoWidth;  // Swapped for 90° rotation
+          console.log('[ShadowEffect] Canvas dimensions (rotated):', canvas.width, 'x', canvas.height);
 
-        // Register the results callback
-        selfieSegmentationRef.current.onResults((results: any) => {
-          // Call our onResults function
-          onResults(results);
-        });
+          // Create processed canvas at full resolution (for shadow compositing before rotation)
+          const processedCanvas = document.createElement('canvas');
+          processedCanvas.width = videoWidth;
+          processedCanvas.height = videoHeight;
+          processedCanvasRef.current = processedCanvas;
 
-        console.log('[ShadowEffect] onResults callback registered');
-        if (isMounted) setDebugInfo('Segmentation ready');
+          // LOW RESOLUTION shadow processing (same as CaptureScreen)
+          const SHADOW_SCALE = 0.125; // 1/8 resolution for performance
+          const shadowWidth = Math.floor(videoWidth * SHADOW_SCALE);
+          const shadowHeight = Math.floor(videoHeight * SHADOW_SCALE);
 
-        const processFrame = async () => {
-          if (!isMounted) return;
+          const shadowCanvas = shadowCanvasRef.current!;
+          shadowCanvas.width = shadowWidth;
+          shadowCanvas.height = shadowHeight;
 
-          if (videoRef.current && selfieSegmentationRef.current && videoRef.current.readyState >= 2) {
-            try {
-              await selfieSegmentationRef.current.send({ image: videoRef.current });
-            } catch (e) {
-              console.error('[ShadowEffect] Frame processing error:', e);
+          const tempCanvas = tempCanvasRef.current!;
+          tempCanvas.width = shadowWidth;
+          tempCanvas.height = shadowHeight;
+
+          // Cached shadow canvas at low resolution
+          const cachedShadow = document.createElement('canvas');
+          cachedShadow.width = shadowWidth;
+          cachedShadow.height = shadowHeight;
+          cachedShadowCanvasRef.current = cachedShadow;
+
+          console.log('[ShadowEffect] Shadow processing at LOW RES:', shadowWidth, 'x', shadowHeight);
+
+          // Register the results callback
+          selfieSegmentationRef.current.onResults(onResults);
+
+          // Send frames to MediaPipe (throttled to ~10fps to avoid WebGL crash)
+          let lastSendTime = 0;
+          const sendToMediaPipe = () => {
+            if (isProcessingRef.current || video.paused || video.ended || !selfieSegmentationRef.current) {
+              return;
             }
-          }
+            const now = performance.now();
+            if (now - lastSendTime < 100) return; // ~10fps
+            lastSendTime = now;
+            isProcessingRef.current = true;
+            selfieSegmentationRef.current.send({ image: video })
+              .then(() => { isProcessingRef.current = false; })
+              .catch((e: any) => {
+                isProcessingRef.current = false;
+                if (e && !String(e).includes('abort')) {
+                  console.warn('[ShadowEffect] MediaPipe error:', e);
+                }
+              });
+          };
 
-          if (isMounted) {
-            animationFrameRef.current = requestAnimationFrame(processFrame);
-          }
-        };
+          // Shadow computation function (same algorithm as CaptureScreen)
+          const computeShadow = (mask: any, config: ShadowConfig) => {
+            const shadowCtx = shadowCanvas.getContext('2d')!;
+            const tempCtx = tempCanvas.getContext('2d')!;
+            const cachedCtx = cachedShadow.getContext('2d')!;
 
-        // Start processing loop
-        console.log('[ShadowEffect] Starting frame processing loop');
-        processFrame();
-        setIsLoading(false);
+            shadowCtx.imageSmoothingEnabled = false;
+            tempCtx.imageSmoothingEnabled = false;
+            cachedCtx.imageSmoothingEnabled = false;
+
+            // Scale factors - shadow config values work directly at shadow resolution
+            const scaleX = shadowWidth / videoWidth;
+            const scaleY = shadowHeight / videoHeight;
+            // Use positive offsetX - the flip transform will handle direction
+            const scaledOffsetX = config.offsetX * scaleX;
+            const scaledOffsetY = config.offsetY * scaleY;
+            const scaledBlur = Math.max(1, config.blur * Math.min(scaleX, scaleY));
+
+            shadowCtx.clearRect(0, 0, shadowWidth, shadowHeight);
+            tempCtx.clearRect(0, 0, shadowWidth, shadowHeight);
+
+            const spreadScale = 1 + (config.spread / 100);
+            const spreadOffsetX = (shadowWidth * (spreadScale - 1)) / 2;
+            const spreadOffsetY = (shadowHeight * (spreadScale - 1)) / 2;
+
+            // STEP 1: Create shadow shape
+            // Draw inverted mask (person=black silhouette) with offset and blur
+            // Apply horizontal flip to mask so shadow matches mirrored view
+            tempCtx.fillStyle = '#ffffff';
+            tempCtx.fillRect(0, 0, shadowWidth, shadowHeight);
+            tempCtx.save();
+            tempCtx.globalCompositeOperation = 'multiply';
+            tempCtx.filter = `grayscale(1) invert(1) blur(${scaledBlur}px)`;
+            // Flip mask horizontally: translate to right edge, then scale -1 on X
+            tempCtx.translate(shadowWidth, 0);
+            tempCtx.scale(-1, 1);
+            // After flip: positive offsetX = shadow moves RIGHT, negative = LEFT
+            tempCtx.drawImage(
+              mask,
+              scaledOffsetX - spreadOffsetX,
+              scaledOffsetY - spreadOffsetY,
+              shadowWidth * spreadScale,
+              shadowHeight * spreadScale
+            );
+            tempCtx.filter = 'none';
+            tempCtx.restore();
+
+            // STEP 2: Convert to alpha
+            const shadowImageData = tempCtx.getImageData(0, 0, shadowWidth, shadowHeight);
+            const shadowData = shadowImageData.data;
+            for (let i = 0; i < shadowData.length; i += 4) {
+              const brightness = (shadowData[i] + shadowData[i + 1] + shadowData[i + 2]) / 3;
+              const alpha = Math.round((255 - brightness) * config.opacity);
+              shadowData[i] = 0;
+              shadowData[i + 1] = 0;
+              shadowData[i + 2] = 0;
+              shadowData[i + 3] = alpha;
+            }
+            shadowCtx.putImageData(shadowImageData, 0, 0);
+
+            // STEP 3: Cut out person area from shadow - also flipped
+            shadowCtx.globalCompositeOperation = 'destination-out';
+            const scaledCutBlur = Math.max(1, 5 * Math.min(scaleX, scaleY));
+            shadowCtx.filter = `grayscale(1) blur(${scaledCutBlur}px)`;
+            shadowCtx.save();
+            shadowCtx.translate(shadowWidth, 0);
+            shadowCtx.scale(-1, 1);
+            shadowCtx.drawImage(mask, 0, 0, shadowWidth, shadowHeight);
+            shadowCtx.restore();
+            shadowCtx.filter = 'none';
+            shadowCtx.globalCompositeOperation = 'source-over';
+
+            // STEP 4: Cache
+            cachedCtx.clearRect(0, 0, shadowWidth, shadowHeight);
+            cachedCtx.drawImage(shadowCanvas, 0, 0);
+          };
+
+          // Main render loop with ROTATION (same as CaptureScreen)
+          // OPTIMIZED: Skip MediaPipe and processedCanvas when shadow is disabled
+          const drawRotatedFrame = () => {
+            if (!isMounted) return;
+
+            if (!video.paused && !video.ended) {
+              const config = shadowConfigRef.current;
+
+              // Apply 90° rotation + mirror
+              ctx.save();
+              ctx.translate(canvas.width / 2, canvas.height / 2);
+              ctx.rotate(90 * Math.PI / 180);
+              ctx.scale(-1, 1); // Mirror for selfie
+
+              if (config.enabled) {
+                // Shadow enabled: Use MediaPipe + processedCanvas pipeline
+                sendToMediaPipe();
+                const mask = latestMaskRef.current;
+                const processedCtx = processedCanvas.getContext('2d')!;
+
+                if (mask) {
+                  if (mask !== lastMaskRef.current) {
+                    lastMaskRef.current = mask;
+                    computeShadow(mask, config);
+                  }
+                  processedCtx.drawImage(video, 0, 0, videoWidth, videoHeight);
+                  processedCtx.drawImage(cachedShadow, 0, 0, videoWidth, videoHeight);
+                } else {
+                  processedCtx.drawImage(video, 0, 0, videoWidth, videoHeight);
+                }
+                ctx.drawImage(processedCanvas, -videoWidth / 2, -videoHeight / 2, videoWidth, videoHeight);
+              } else {
+                // Shadow disabled: Draw video directly (skip MediaPipe and processedCanvas)
+                // This is MUCH faster - direct video to canvas
+                ctx.drawImage(video, -videoWidth / 2, -videoHeight / 2, videoWidth, videoHeight);
+              }
+
+              ctx.restore();
+
+              // Update FPS counter
+              fpsCountRef.current.frames++;
+              const now = performance.now();
+              if (now - fpsCountRef.current.lastTime >= 1000) {
+                setFps(fpsCountRef.current.frames);
+                fpsCountRef.current.frames = 0;
+                fpsCountRef.current.lastTime = now;
+              }
+            }
+
+            animationFrameRef.current = requestAnimationFrame(drawRotatedFrame);
+          };
+
+          // Start render loop
+          console.log('[ShadowEffect] Starting render loop (4K + rotation + low-res shadow)');
+          drawRotatedFrame();
+          setIsLoading(false);
+          setDebugInfo('4K + 90° rotation active');
+        }
 
       } catch (error) {
         console.error('[ShadowEffect] Initialization error:', error);
@@ -414,6 +381,7 @@ export function ShadowEffectScreen() {
     // Cleanup
     return () => {
       isMounted = false;
+      isProcessingRef.current = false;
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
@@ -507,11 +475,11 @@ export function ShadowEffectScreen() {
       {/* Hidden temp canvas for mask color processing */}
       <canvas ref={tempCanvasRef} className="hidden" />
 
-      {/* Main output canvas */}
+      {/* Main output canvas - 90° rotated portrait view (same as CaptureScreen) */}
+      {/* Mirror is applied in code via ctx.scale(-1, 1), no CSS transform needed */}
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full object-contain"
-        style={{ transform: 'scaleX(-1)' }} // Mirror for selfie view
       />
 
       {/* Loading overlay */}
@@ -589,31 +557,39 @@ export function ShadowEffectScreen() {
           {/* Offset X */}
           <div className="mb-4">
             <label className="block text-sm text-gray-400 mb-2">
-              Offset X: {shadowConfig.offsetX}px
+              Offset X (좌우): {shadowConfig.offsetX}px
             </label>
             <input
               type="range"
-              min="-100"
-              max="100"
+              min="-300"
+              max="300"
               value={shadowConfig.offsetX}
               onChange={(e) => updateConfig('offsetX', Number(e.target.value))}
               className="w-full accent-blue-500"
             />
+            <div className="flex justify-between text-xs text-gray-500 mt-1">
+              <span>왼쪽</span>
+              <span>오른쪽</span>
+            </div>
           </div>
 
           {/* Offset Y */}
           <div className="mb-4">
             <label className="block text-sm text-gray-400 mb-2">
-              Offset Y: {shadowConfig.offsetY}px
+              Offset Y (상하): {shadowConfig.offsetY}px
             </label>
             <input
               type="range"
-              min="-100"
-              max="100"
+              min="-300"
+              max="300"
               value={shadowConfig.offsetY}
               onChange={(e) => updateConfig('offsetY', Number(e.target.value))}
               className="w-full accent-blue-500"
             />
+            <div className="flex justify-between text-xs text-gray-500 mt-1">
+              <span>위</span>
+              <span>아래</span>
+            </div>
           </div>
 
           {/* Blur */}
