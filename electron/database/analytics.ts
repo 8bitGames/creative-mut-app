@@ -29,9 +29,10 @@ export interface PaymentRecord {
   payment_time: number;
   error_message?: string;
   // Cancellation-related fields (from TL3600)
-  approval_number?: string;      // 승인번호
-  sales_date?: string;           // 매출일 (YYYYMMDD)
+  approval_number?: string;      // 승인번호 (12자리)
+  sales_date?: string;           // 매출일 (YYYYMMDD, 8자리)
   sales_time?: string;           // 매출시간 (hhmmss)
+  transaction_id?: string;       // 거래일련번호 (12자리, 취소시 뒷 6자리 사용)
   transaction_media?: string;    // 거래매체: '1' IC, '2' RF/MS, '3' RF
   card_number?: string;          // 카드번호 (마스킹)
   created_at?: string;
@@ -103,6 +104,7 @@ export interface DashboardStats {
     approval_number?: string;
     sales_date?: string;
     sales_time?: string;
+    transaction_id?: string;       // 거래일련번호 (12자리, 취소시 뒷 6자리 사용)
     transaction_media?: string;
     card_number?: string;
   }>;
@@ -192,6 +194,7 @@ function migratePaymentsTable(): void {
     { name: 'approval_number', type: 'TEXT' },
     { name: 'sales_date', type: 'TEXT' },
     { name: 'sales_time', type: 'TEXT' },
+    { name: 'transaction_id', type: 'TEXT' },
     { name: 'transaction_media', type: 'TEXT' },
     { name: 'card_number', type: 'TEXT' },
   ];
@@ -272,9 +275,10 @@ export function recordSessionEnd(sessionId: string, endTime: number): void {
  * Payment details for cancellation support
  */
 export interface PaymentDetails {
-  approvalNumber?: string;      // 승인번호
-  salesDate?: string;           // 매출일 (YYYYMMDD)
+  approvalNumber?: string;      // 승인번호 (12자리)
+  salesDate?: string;           // 매출일 (YYYYMMDD, 8자리)
   salesTime?: string;           // 매출시간 (hhmmss)
+  transactionId?: string;       // 거래일련번호 (12자리, 취소시 뒷 6자리 사용)
   transactionMedia?: string;    // 거래매체: '1' IC, '2' RF/MS, '3' RF
   cardNumber?: string;          // 카드번호 (마스킹)
 }
@@ -291,9 +295,23 @@ export function recordPayment(
 ): void {
   if (!db) return;
 
+  // Ensure session exists before recording payment (prevents foreign key constraint failure)
+  const checkSession = db.prepare('SELECT session_id FROM sessions WHERE session_id = ?');
+  const existingSession = checkSession.get(sessionId);
+
+  if (!existingSession) {
+    // Auto-create session if it doesn't exist
+    console.log(`[Analytics] Auto-creating session for payment: ${sessionId}`);
+    const createSession = db.prepare(`
+      INSERT OR IGNORE INTO sessions (session_id, start_time, images_captured, completed)
+      VALUES (?, ?, 0, 0)
+    `);
+    createSession.run(sessionId, Date.now());
+  }
+
   const stmt = db.prepare(`
-    INSERT INTO payments (session_id, amount, status, payment_time, error_message, approval_number, sales_date, sales_time, transaction_media, card_number)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO payments (session_id, amount, status, payment_time, error_message, approval_number, sales_date, sales_time, transaction_id, transaction_media, card_number)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   stmt.run(
@@ -305,10 +323,11 @@ export function recordPayment(
     details?.approvalNumber || null,
     details?.salesDate || null,
     details?.salesTime || null,
+    details?.transactionId || null,
     details?.transactionMedia || null,
     details?.cardNumber || null
   );
-  console.log(`📊 [Analytics] Payment recorded: ${sessionId} - ${status} - ${amount}원 (approval: ${details?.approvalNumber || 'N/A'})`);
+  console.log(`📊 [Analytics] Payment recorded: ${sessionId} - ${status} - ${amount}원 (approval: ${details?.approvalNumber || 'N/A'}, txId: ${details?.transactionId || 'N/A'})`);
 }
 
 /**
@@ -329,6 +348,50 @@ export function recordPrint(
 
   stmt.run(sessionId, imagePath, Date.now(), success ? 1 : 0, errorMessage || null);
   console.log(`📊 [Analytics] Print recorded: ${sessionId} - ${success ? 'success' : 'failed'}`);
+}
+
+/**
+ * Update payment status (e.g., mark as cancelled)
+ */
+export function updatePaymentStatus(
+  sessionId: string,
+  newStatus: PaymentRecord['status']
+): boolean {
+  if (!db) return false;
+
+  try {
+    const stmt = db.prepare(`
+      UPDATE payments SET status = ? WHERE session_id = ?
+    `);
+    const result = stmt.run(newStatus, sessionId);
+    console.log(`📊 [Analytics] Payment status updated: ${sessionId} -> ${newStatus}`);
+    return result.changes > 0;
+  } catch (error) {
+    console.error(`📊 [Analytics] Failed to update payment status:`, error);
+    return false;
+  }
+}
+
+/**
+ * Update payment status by approval number (for cancellation from dashboard)
+ */
+export function updatePaymentStatusByApproval(
+  approvalNumber: string,
+  newStatus: PaymentRecord['status']
+): boolean {
+  if (!db) return false;
+
+  try {
+    const stmt = db.prepare(`
+      UPDATE payments SET status = ? WHERE approval_number = ?
+    `);
+    const result = stmt.run(newStatus, approvalNumber);
+    console.log(`📊 [Analytics] Payment status updated by approval: ${approvalNumber} -> ${newStatus}`);
+    return result.changes > 0;
+  } catch (error) {
+    console.error(`📊 [Analytics] Failed to update payment status by approval:`, error);
+    return false;
+  }
 }
 
 /**
@@ -402,6 +465,7 @@ export function getDashboardStats(): DashboardStats {
   `).all() as Array<{ frame: string; count: number }>;
 
   // Recent sessions with payment info (including cancellation fields)
+  // Use subquery to get only the latest payment record per session
   const recentSessions = db.prepare(`
     SELECT
       s.session_id,
@@ -413,10 +477,19 @@ export function getDashboardStats(): DashboardStats {
       p.approval_number,
       p.sales_date,
       p.sales_time,
+      p.transaction_id,
       p.transaction_media,
       p.card_number
     FROM sessions s
-    LEFT JOIN payments p ON s.session_id = p.session_id
+    LEFT JOIN (
+      SELECT * FROM payments p1
+      WHERE p1.id = (
+        SELECT p2.id FROM payments p2
+        WHERE p2.session_id = p1.session_id
+        ORDER BY p2.payment_time DESC
+        LIMIT 1
+      )
+    ) p ON s.session_id = p.session_id
     ORDER BY s.start_time DESC
     LIMIT 20
   `).all() as Array<{
@@ -429,6 +502,7 @@ export function getDashboardStats(): DashboardStats {
     approval_number?: string;
     sales_date?: string;
     sales_time?: string;
+    transaction_id?: string;
     transaction_media?: string;
     card_number?: string;
   }>;

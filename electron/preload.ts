@@ -226,6 +226,8 @@ const analyticsAPI = {
   getDashboardStats: () => ipcRenderer.invoke('analytics:get-dashboard-stats'),
   getFlowStatistics: () => ipcRenderer.invoke('analytics:get-flow-statistics'),
   insertSampleData: () => ipcRenderer.invoke('analytics:insert-sample-data'),
+  updatePaymentStatus: (approvalNumber: string, newStatus: string) =>
+    ipcRenderer.invoke('analytics:update-payment-status', approvalNumber, newStatus),
 };
 
 // Configuration API - allows runtime configuration changes without rebuilding

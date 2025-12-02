@@ -8,8 +8,8 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 
-// Payment amount is fixed at 5,000원
-const PAYMENT_AMOUNT = 5000;
+// Default payment amount (will be overridden by config)
+const DEFAULT_PAYMENT_AMOUNT = 5000;
 
 enum PaymentStatus {
   IDLE = 'idle',
@@ -76,8 +76,26 @@ export function PaymentScreen() {
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>(PaymentStatus.WAITING);
   const [timeLeft, setTimeLeft] = useState(30);
   const [message, setMessage] = useState('');
+  const [paymentAmount, setPaymentAmount] = useState(DEFAULT_PAYMENT_AMOUNT);
   const cleanupRef = useRef<(() => void)[]>([]);
   const paymentStartedRef = useRef(false);
+
+  // Load payment amount from config
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        // @ts-ignore - Electron API
+        const result = await window.electron?.config?.get();
+        if (result?.config?.payment?.defaultAmount) {
+          setPaymentAmount(result.config.payment.defaultAmount);
+          console.log(`💰 [PaymentScreen] Payment amount loaded from config: ${result.config.payment.defaultAmount}원`);
+        }
+      } catch (error) {
+        console.warn('⚠️ [PaymentScreen] Failed to load config, using default amount:', DEFAULT_PAYMENT_AMOUNT);
+      }
+    };
+    loadConfig();
+  }, []);
 
   // Show hologram display once when entering this screen
   useEffect(() => {
@@ -193,7 +211,7 @@ export function PaymentScreen() {
           approvalNumber: result.approvalNumber,
           salesDate: result.salesDate,
           salesTime: result.salesTime,
-          amount: result.amount || PAYMENT_AMOUNT,
+          amount: result.amount || paymentAmount,
           transactionMedia: result.transactionMedia,
           cardType: result.cardType,
           cardLast4: result.cardLast4,
@@ -205,13 +223,14 @@ export function PaymentScreen() {
           // @ts-ignore
           window.electron.analytics.recordPayment(
             sessionId,
-            result.amount || PAYMENT_AMOUNT,
+            result.amount || paymentAmount,
             'approved',
             undefined,
             {
               approvalNumber: result.approvalNumber,
               salesDate: result.salesDate,
               salesTime: result.salesTime,
+              transactionId: result.transactionId,
               transactionMedia: result.transactionMedia,
               cardNumber: result.cardLast4 ? `****-****-****-${result.cardLast4}` : undefined,
             }
@@ -230,7 +249,7 @@ export function PaymentScreen() {
           // @ts-ignore
           window.electron.analytics.recordPayment(
             sessionId,
-            PAYMENT_AMOUNT,
+            paymentAmount,
             'declined',
             result.rejectMessage || result.error
           );
@@ -248,9 +267,9 @@ export function PaymentScreen() {
 
     // Start the actual payment process
     try {
-      console.log(`💳 [PaymentScreen] Starting payment: ${PAYMENT_AMOUNT}원`);
+      console.log(`💳 [PaymentScreen] Starting payment: ${paymentAmount}원`);
       const result = await electron.payment.process({
-        amount: PAYMENT_AMOUNT,
+        amount: paymentAmount,
         currency: 'KRW',
         description: 'MUT 홀로그램 사진 인쇄',
       });
@@ -393,7 +412,7 @@ export function PaymentScreen() {
 
               <h2 className="text-4xl font-bold mb-6">카드를 삽입해주세요</h2>
               <p className="text-2xl text-gray-600 mb-12">
-                결제 금액: <span className="font-bold text-black">5,000원</span>
+                결제 금액: <span className="font-bold text-black">{paymentAmount.toLocaleString()}원</span>
               </p>
 
               <div className="w-full space-y-4">

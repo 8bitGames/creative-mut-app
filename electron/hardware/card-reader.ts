@@ -287,6 +287,7 @@ export class CardReaderController extends EventEmitter {
 
   /**
    * Process payment using TL3600
+   * Sends Transaction Approval (B) directly - this shows payment screen and waits for card
    */
   private async tl3600ProcessPayment(options: PaymentOptions): Promise<PaymentResult> {
     if (!this.tl3600) {
@@ -304,36 +305,29 @@ export class CardReaderController extends EventEmitter {
       message: `카드를 삽입해주세요\n금액: ${options.amount.toLocaleString()}원`,
     });
 
-    // Enter payment mode (terminal will emit events when card is detected)
-    const success = await this.tl3600.enterPaymentMode({
+    // Send Transaction Approval (B) directly - this shows payment screen with amount
+    // and waits for card input, then returns the result
+    const result = await this.tl3600.requestApproval({
       amount: options.amount,
     });
 
-    if (!success) {
-      return {
-        success: false,
-        status: PaymentStatus.ERROR,
-        error: 'Failed to enter payment mode',
-      };
-    }
-
-    // The actual result will come through events (paymentApproved/paymentRejected)
-    // Return a pending result - the caller should listen for events
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        this.removeAllListeners('paymentComplete');
-        resolve({
-          success: false,
-          status: PaymentStatus.TIMEOUT,
-          error: '결제 시간이 초과되었습니다',
-        });
-      }, 30000);
-
-      this.once('paymentComplete', (result: PaymentResult) => {
-        clearTimeout(timeout);
-        resolve(result);
+    if (result.success) {
+      const paymentResult = this.convertTL3600Result(result, true);
+      this.emit('status', {
+        status: PaymentStatus.APPROVED,
+        message: '결제가 완료되었습니다!',
       });
-    });
+      this.emit('paymentComplete', paymentResult);
+      return paymentResult;
+    } else {
+      const paymentResult = this.convertTL3600Result(result, false);
+      this.emit('status', {
+        status: PaymentStatus.DECLINED,
+        message: result.rejectMessage || result.error || '결제가 거부되었습니다',
+      });
+      this.emit('paymentComplete', paymentResult);
+      return paymentResult;
+    }
   }
 
   /**

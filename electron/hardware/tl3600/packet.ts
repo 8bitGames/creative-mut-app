@@ -3,6 +3,7 @@
  * Handles packet construction and parsing for serial communication
  */
 
+import * as iconv from 'iconv-lite';
 import {
   STX,
   ETX,
@@ -134,6 +135,23 @@ export function extractString(buf: Buffer, start: number, length: number): strin
   const slice = buf.slice(start, start + length);
   // Remove null bytes and trim spaces
   return slice.toString('ascii').replace(/\x00/g, '').trim();
+}
+
+/**
+ * Extract Korean string from buffer using EUC-KR encoding
+ * Used for error messages and Korean text from TL3600
+ */
+export function extractKoreanString(buf: Buffer, start: number, length: number): string {
+  const slice = buf.slice(start, start + length);
+  // Decode from EUC-KR (Korean encoding used by TL3600)
+  try {
+    const decoded = iconv.decode(slice, 'euc-kr');
+    // Remove null bytes and trim spaces
+    return decoded.replace(/\x00/g, '').trim();
+  } catch {
+    // Fallback to ASCII if decoding fails
+    return slice.toString('ascii').replace(/\x00/g, '').trim();
+  }
 }
 
 /**
@@ -480,12 +498,12 @@ export function parseApprovalResponse(data: Buffer): ApprovalResponse {
   const terminalNumber = extractString(data, offset, 14);
   offset += 14;
 
-  // Issuer/Reject info (20 bytes)
-  const issuerOrRejectData = extractString(data, offset, 20);
+  // Issuer/Reject info (20 bytes) - may contain Korean text
+  const issuerOrRejectData = extractKoreanString(data, offset, 20);
   offset += 20;
 
-  // Acquirer info (20 bytes)
-  const acquirerData = extractString(data, offset, 20);
+  // Acquirer info (20 bytes) - may contain Korean error message
+  const acquirerData = extractKoreanString(data, offset, 20);
 
   // Check if rejected
   const isRejected = transactionType === TransactionResponseType.REJECTED;
@@ -498,16 +516,29 @@ export function parseApprovalResponse(data: Buffer): ApprovalResponse {
   let rejectMessage: string | undefined;
 
   if (isRejected) {
-    // Parse rejection info from issuer field
-    // Format: Response message (may contain error code)
+    // Parse rejection info from issuer field (EUC-KR Korean text)
     rejectMessage = issuerOrRejectData;
+
     // Try to extract error code from acquirer field (format: "-XX+message")
     if (acquirerData.startsWith('-')) {
       rejectCode = acquirerData.substring(1, 3);
       const errorInfo = ERROR_CODES[rejectCode];
       if (errorInfo) {
+        // Use predefined user-friendly message
         rejectMessage = errorInfo.userMessage;
+      } else {
+        // No predefined message - use the Korean message from acquirer field
+        // Skip the error code prefix (e.g., "-X0" or "-XX") and use the rest
+        const koreanMessage = acquirerData.substring(3).trim();
+        if (koreanMessage) {
+          rejectMessage = koreanMessage;
+        }
       }
+    }
+
+    // If issuer field has content and we don't have a good reject message, use issuer
+    if (!rejectMessage && issuerOrRejectData) {
+      rejectMessage = issuerOrRejectData;
     }
   } else {
     // Normal approval - parse issuer/acquirer

@@ -322,9 +322,9 @@ def normalize_to_mp4(input_video):
     Convert any input video to a clean MP4 format.
     This fixes WebM header issues and ensures consistent input.
     """
-    print(f"\n{'─' * 60}")
-    print(f"📹 [NORMALIZE] WebM → MP4 Conversion")
-    print(f"{'─' * 60}")
+    print(f"\n{'-' * 60}")
+    print(f"[NORMALIZE] WebM -> MP4 Conversion")
+    print(f"{'-' * 60}")
 
     # Check input file
     if not os.path.exists(input_video):
@@ -378,7 +378,7 @@ def normalize_to_mp4(input_video):
             print(f"   Error: {verify_result['error']}")
             raise Exception(f"Normalized video is invalid: {verify_result['error']}")
 
-        print(f"{'─' * 60}\n")
+        print(f"{'-' * 60}\n")
         return normalized_path
 
     except subprocess.CalledProcessError as e:
@@ -386,12 +386,12 @@ def normalize_to_mp4(input_video):
         print(f"   [ERROR] FFmpeg normalization failed!")
         print(f"   Exit code: {e.returncode}")
         print(f"   Stderr: {stderr[:500]}")
-        print(f"{'─' * 60}\n")
+        print(f"{'-' * 60}\n")
         raise Exception(f"Video normalization failed: {stderr[:200]}")
 
     except subprocess.TimeoutExpired:
         print(f"   [ERROR] FFmpeg normalization timed out after 120s!")
-        print(f"{'─' * 60}\n")
+        print(f"{'-' * 60}\n")
         raise Exception("Video normalization timed out")
 
 def enhance_video(input_video, enhancement_level='medium'):
@@ -406,9 +406,9 @@ def enhance_video(input_video, enhancement_level='medium'):
     Returns:
         Path to enhanced video
     """
-    print(f"\n{'─' * 60}")
-    print(f"✨ [ENHANCE] Face Enhancement Filter")
-    print(f"{'─' * 60}")
+    print(f"\n{'-' * 60}")
+    print(f"[ENHANCE] Face Enhancement Filter")
+    print(f"{'-' * 60}")
 
     # Check input
     if not os.path.exists(input_video):
@@ -448,10 +448,10 @@ def enhance_video(input_video, enhancement_level='medium'):
 
     current_params = params.get(enhancement_level, params['medium'])
     print(f"\n   Enhancement Parameters:")
-    print(f"   ├─ Brightness: +{current_params['brightness']*100:.0f}%")
-    print(f"   ├─ Contrast:   {current_params['contrast']:.2f}x")
-    print(f"   ├─ Saturation: {current_params['saturation']:.2f}x")
-    print(f"   └─ Sharpening: {current_params['unsharp']}")
+    print(f"   |- Brightness: +{current_params['brightness']*100:.0f}%")
+    print(f"   |- Contrast:   {current_params['contrast']:.2f}x")
+    print(f"   |- Saturation: {current_params['saturation']:.2f}x")
+    print(f"   +-- Sharpening: {current_params['unsharp']}")
 
     # Build FFmpeg filter chain for face/skin enhancement
     filter_chain = (
@@ -491,7 +491,7 @@ def enhance_video(input_video, enhancement_level='medium'):
             print(f"   Error: {verify_result['error']}")
             raise Exception(f"Enhanced video is invalid: {verify_result['error']}")
 
-        print(f"{'─' * 60}\n")
+        print(f"{'-' * 60}\n")
         return enhanced_path
 
     except subprocess.CalledProcessError as e:
@@ -500,13 +500,13 @@ def enhance_video(input_video, enhancement_level='medium'):
         print(f"   Exit code: {e.returncode}")
         print(f"   Stderr: {stderr[:500]}")
         print(f"   [FALLBACK] Using original video without enhancement")
-        print(f"{'─' * 60}\n")
+        print(f"{'-' * 60}\n")
         return input_video
 
     except subprocess.TimeoutExpired:
         print(f"   [ERROR] FFmpeg enhancement timed out after 120s!")
         print(f"   [FALLBACK] Using original video without enhancement")
-        print(f"{'─' * 60}\n")
+        print(f"{'-' * 60}\n")
         return input_video
 
 
@@ -683,9 +683,9 @@ def apply_shadow_effect(input_video, output_video, shadow_config=None):
     Returns:
         Path to output video, or input_video if shadow processing fails
     """
-    print(f"\n{'─' * 60}")
-    print(f"🌑 [SHADOW] Person Shadow Effect Processing (Optimized)")
-    print(f"{'─' * 60}")
+    print(f"\n{'-' * 60}")
+    print(f"[SHADOW] Person Shadow Effect Processing (Optimized)")
+    print(f"{'-' * 60}")
 
     # Check dependencies
     if not CV2_AVAILABLE:
@@ -708,11 +708,11 @@ def apply_shadow_effect(input_video, output_video, shadow_config=None):
     print(f"   Input: {os.path.basename(input_video)}")
     print(f"   Output: {os.path.basename(output_video)}")
     print(f"\n   Shadow Configuration:")
-    print(f"   ├─ Offset X: {shadow_config['offsetX']}px")
-    print(f"   ├─ Offset Y: {shadow_config['offsetY']}px")
-    print(f"   ├─ Blur:     {shadow_config['blur']}px")
-    print(f"   ├─ Opacity:  {shadow_config['opacity']*100:.0f}%")
-    print(f"   └─ Spread:   {shadow_config['spread']}%")
+    print(f"   |- Offset X: {shadow_config['offsetX']}px")
+    print(f"   |- Offset Y: {shadow_config['offsetY']}px")
+    print(f"   |- Blur:     {shadow_config['blur']}px")
+    print(f"   |- Opacity:  {shadow_config['opacity']*100:.0f}%")
+    print(f"   +-- Spread:   {shadow_config['spread']}%")
 
     # Load MediaPipe segmenter
     segmenter = get_mediapipe_segmenter()
@@ -748,10 +748,10 @@ def apply_shadow_effect(input_video, output_video, shadow_config=None):
             proc_height = height
 
         print(f"\n   Video Info:")
-        print(f"   ├─ Resolution: {width}x{height}")
-        print(f"   ├─ FPS: {fps:.2f}")
-        print(f"   ├─ Frames: {total_frames}")
-        print(f"   └─ Segmentation at: {proc_width}x{proc_height} ({proc_scale:.2f}x)")
+        print(f"   |- Resolution: {width}x{height}")
+        print(f"   |- FPS: {fps:.2f}")
+        print(f"   |- Frames: {total_frames}")
+        print(f"   +-- Segmentation at: {proc_width}x{proc_height} ({proc_scale:.2f}x)")
 
         # OPTIMIZATION: Start FFmpeg subprocess for direct piping
         # This avoids intermediate file and double-encoding
@@ -868,16 +868,16 @@ def apply_shadow_effect(input_video, output_video, shadow_config=None):
             avg_shadow_ms = (shadow_time / frame_count * 1000) if frame_count > 0 else 0
 
             print(f"\n   [OK] Shadow effect applied in {duration:.1f}s")
-            print(f"   ├─ Processing speed: {frame_count/duration:.1f} fps")
-            print(f"   ├─ Avg segmentation: {avg_seg_ms:.1f}ms/frame")
-            print(f"   ├─ Avg shadow apply: {avg_shadow_ms:.1f}ms/frame")
-            print(f"   └─ Output size: {output_size:.2f} MB")
-            print(f"{'─' * 60}\n")
+            print(f"   |- Processing speed: {frame_count/duration:.1f} fps")
+            print(f"   |- Avg segmentation: {avg_seg_ms:.1f}ms/frame")
+            print(f"   |- Avg shadow apply: {avg_shadow_ms:.1f}ms/frame")
+            print(f"   +-- Output size: {output_size:.2f} MB")
+            print(f"{'-' * 60}\n")
 
             return output_video
         else:
             print(f"   [ERROR] Output file not created or empty")
-            print(f"{'─' * 60}\n")
+            print(f"{'-' * 60}\n")
             return input_video
 
     except Exception as e:
@@ -885,7 +885,7 @@ def apply_shadow_effect(input_video, output_video, shadow_config=None):
         import traceback
         traceback.print_exc()
         print(f"   [FALLBACK] Using original video")
-        print(f"{'─' * 60}\n")
+        print(f"{'-' * 60}\n")
         return input_video
 
 
@@ -906,9 +906,9 @@ def composite_video(input_video, frame_image, output_path, enhance_faces=True, s
     Returns:
         dict with timing breakdown: {total, normalize, enhance, shadow, compose}
     """
-    print(f"\n{'═' * 70}")
-    print(f"🎬 [COMPOSITE] Video + Frame Overlay Composition (OPTIMIZED)")
-    print(f"{'═' * 70}")
+    print(f"\n{'=' * 70}")
+    print(f"[COMPOSITE] Video + Frame Overlay Composition (OPTIMIZED)")
+    print(f"{'=' * 70}")
 
     start_time = time.time()
     timing = {
@@ -953,7 +953,7 @@ def composite_video(input_video, frame_image, output_path, enhance_faces=True, s
         t_normalize_start = time.time()
         input_video = normalize_to_mp4(input_video)
         timing['normalize'] = time.time() - t_normalize_start
-        print(f"   ⏱️  WebM Normalize: {timing['normalize']:.1f}s")
+        print(f"   [TIME] WebM Normalize: {timing['normalize']:.1f}s")
 
     # === SHADOW EFFECT STEP (requires separate processing due to MediaPipe) ===
     # Shadow must be processed first if enabled, as it uses OpenCV/MediaPipe
@@ -970,14 +970,14 @@ def composite_video(input_video, frame_image, output_path, enhance_faces=True, s
         shadow_output = input_video.rsplit('.', 1)[0] + '_shadow.mp4'
         input_video = apply_shadow_effect(input_video, shadow_output, shadow_config)
         timing['shadow'] = time.time() - t_shadow_start - (timing['normalize'] if not is_webm else 0)
-        print(f"   ⏱️  Shadow: {timing['shadow']:.1f}s")
+        print(f"   [TIME] Shadow: {timing['shadow']:.1f}s")
 
     # Determine Encoder
     encoder = get_best_encoder()
 
-    print(f"\n{'─' * 60}")
-    print(f"🔧 [COMPOSE] Single-Pass Processing (Optimized)")
-    print(f"{'─' * 60}")
+    print(f"\n{'-' * 60}")
+    print(f"[COMPOSE] Single-Pass Processing (Optimized)")
+    print(f"{'-' * 60}")
     print(f"   Input: {os.path.basename(input_video)}")
     print(f"   Encoder: {encoder.value}")
     print(f"   Target: 4K Portrait (2160x3840)")
@@ -1108,7 +1108,7 @@ def composite_video(input_video, frame_image, output_path, enhance_faces=True, s
 
             if not verify_result['valid']:
                 print(f"\n   {'!' * 60}")
-                print(f"   ⚠️  VIDEO CORRUPTION DETECTED!")
+                print(f"   [WARN] VIDEO CORRUPTION DETECTED!")
                 print(f"   {'!' * 60}")
                 print(f"   Error: {verify_result['error']}")
 
@@ -1125,7 +1125,7 @@ def composite_video(input_video, frame_image, output_path, enhance_faces=True, s
                     continue  # Retry the while loop
                 else:
                     print(f"   {'!' * 60}")
-                    print(f"   ❌ CRITICAL: ALL RETRIES EXHAUSTED - VIDEO STILL CORRUPTED!")
+                    print(f"   [ERROR] CRITICAL: ALL RETRIES EXHAUSTED - VIDEO STILL CORRUPTED!")
                     print(f"   {'!' * 60}")
                     print(f"   The video file exists but cannot be decoded properly.")
                     print(f"   This may be caused by:")
@@ -1140,31 +1140,31 @@ def composite_video(input_video, frame_image, output_path, enhance_faces=True, s
             timing['compose'] = time.time() - t_compose_start
             timing['total'] = time.time() - start_time
 
-            print(f"\n{'═' * 70}")
-            print(f"✅ COMPOSITION COMPLETE")
-            print(f"{'═' * 70}")
+            print(f"\n{'=' * 70}")
+            print(f"[OK] COMPOSITION COMPLETE")
+            print(f"{'=' * 70}")
             print(f"   Duration: {verify_result['duration']:.2f}s")
             print(f"   Resolution: {verify_result['width']}x{verify_result['height']}")
             print(f"   Size: {output_size:.2f} MB")
             print(f"   Bitrate: {verify_result['bitrate']:.1f} Mbps" if verify_result['bitrate'] else "")
             if retry_count > 0:
                 print(f"   Note: Succeeded after {retry_count} retry(s)")
-            print(f"\n   ⏱️  TIMING BREAKDOWN (OPTIMIZED):")
+            print(f"\n   [TIME] TIMING BREAKDOWN (OPTIMIZED):")
             if timing['normalize'] > 0:
-                print(f"   ├─ WebM Normalize:     {timing['normalize']:.1f}s")
+                print(f"   |- WebM Normalize:     {timing['normalize']:.1f}s")
             if timing['shadow'] > 0:
-                print(f"   ├─ Shadow Effect:      {timing['shadow']:.1f}s")
-            print(f"   ├─ Single-Pass Encode: {timing['compose']:.1f}s")
-            print(f"   │  (enhance + scale + compose combined)")
-            print(f"   └─ TOTAL:              {timing['total']:.1f}s")
-            print(f"{'═' * 70}\n")
+                print(f"   |- Shadow Effect:      {timing['shadow']:.1f}s")
+            print(f"   |- Single-Pass Encode: {timing['compose']:.1f}s")
+            print(f"   |  (enhance + scale + compose combined)")
+            print(f"   +-- TOTAL:              {timing['total']:.1f}s")
+            print(f"{'=' * 70}\n")
 
             return timing
 
         except subprocess.CalledProcessError as e:
             stderr = e.stderr.decode('utf-8') if e.stderr else 'No error output'
             print(f"\n   {'!' * 60}")
-            print(f"   ❌ FFMPEG COMPOSITION FAILED!")
+            print(f"   [ERROR] FFMPEG COMPOSITION FAILED!")
             print(f"   {'!' * 60}")
             print(f"   Exit code: {e.returncode}")
             print(f"   Error output:")
@@ -1186,7 +1186,7 @@ def composite_video(input_video, frame_image, output_path, enhance_faces=True, s
 
         except subprocess.TimeoutExpired:
             print(f"\n   {'!' * 60}")
-            print(f"   ❌ FFMPEG TIMED OUT!")
+            print(f"   [ERROR] FFMPEG TIMED OUT!")
             print(f"   {'!' * 60}")
             print(f"   The composition process took longer than 5 minutes.")
 
@@ -1283,11 +1283,11 @@ def generate_qr(data, output_path):
         if file_size == 0:
             raise Exception(f"QR code file is empty at {output_path}")
         
-        print(f"   ✅ QR code saved: {output_path} ({file_size} bytes)")
+        print(f"   [OK] QR code saved: {output_path} ({file_size} bytes)")
         return output_path
         
     except Exception as e:
-        print(f"   ❌ QR code generation failed: {e}")
+        print(f"   [ERROR] QR code generation failed: {e}")
         import traceback
         traceback.print_exc()
         raise
@@ -1472,7 +1472,7 @@ def cleanup_output_directory(current_session_timestamp, output_dir=None):
     target_dir = output_dir if output_dir else DEFAULT_OUTPUT_DIR
 
     if os.path.exists(target_dir):
-        print(f"\n🧹 Cleaning up previous outputs in: {target_dir}")
+        print(f"\n[CLEANUP] Cleaning up previous outputs in: {target_dir}")
         try:
             # Remove all subdirectories EXCEPT the current session and any in-use sessions
             for item in os.listdir(target_dir):
@@ -1480,7 +1480,7 @@ def cleanup_output_directory(current_session_timestamp, output_dir=None):
 
                 # Skip current session directory
                 if item == current_session_timestamp:
-                    print(f"   → Skipping current session: {item}")
+                    print(f"   -> Skipping current session: {item}")
                     continue
 
                 # Skip if it's a file (not a session directory)
@@ -1489,7 +1489,7 @@ def cleanup_output_directory(current_session_timestamp, output_dir=None):
 
                 # Skip if session is currently in use (has lock file)
                 if is_session_in_use(item_path):
-                    print(f"   → Skipping in-use session: {item}")
+                    print(f"   -> Skipping in-use session: {item}")
                     continue
 
                 try:
@@ -1510,7 +1510,7 @@ def cleanup_output_directory(current_session_timestamp, output_dir=None):
 
 def main():
     print("\n" + "=" * 80)
-    print("🎬 MUT HOLOGRAM PIPELINE - STARTING")
+    print("[PIPELINE] MUT HOLOGRAM PIPELINE - STARTING")
     print("=" * 80)
 
     parser = argparse.ArgumentParser()
@@ -1565,15 +1565,15 @@ def main():
     print("\n[VERIFY] Checking input files...")
     if os.path.exists(args.input):
         input_size = os.path.getsize(args.input) / (1024 * 1024)
-        print(f"   ✅ Input video exists: {input_size:.2f} MB")
+        print(f"   [OK] Input video exists: {input_size:.2f} MB")
     else:
-        print(f"   ❌ Input video NOT FOUND: {args.input}")
+        print(f"   [ERROR] Input video NOT FOUND: {args.input}")
 
     if os.path.exists(frame_path):
         frame_size = os.path.getsize(frame_path) / 1024
-        print(f"   ✅ Frame overlay exists: {frame_size:.2f} KB")
+        print(f"   [OK] Frame overlay exists: {frame_size:.2f} KB")
     else:
-        print(f"   ❌ Frame overlay NOT FOUND: {frame_path}")
+        print(f"   [ERROR] Frame overlay NOT FOUND: {frame_path}")
 
     start_total = time.time()
 
@@ -1585,11 +1585,11 @@ def main():
     print(f"   Session directory: {session_dir}")
 
     os.makedirs(session_dir, exist_ok=True)
-    print(f"   ✅ Session directory created")
+    print(f"   [OK] Session directory created")
 
     # 2. Create lock file to prevent other processes from cleaning up this session
     create_session_lock(session_dir)
-    print(f"   ✅ Session lock created")
+    print(f"   [OK] Session lock created")
 
     # 3. Clean up previous outputs (but preserve current session and any in-use sessions)
     print(f"\n[CLEANUP] Cleaning previous sessions...")
@@ -1617,7 +1617,7 @@ def main():
         # STEP 1: VIDEO COMPOSITION
         # ================================================================
         print("\n" + "=" * 80)
-        print("📹 STEP 1/4: VIDEO COMPOSITION")
+        print("[STEP] STEP 1/4: VIDEO COMPOSITION")
         print("=" * 80)
         print(f"   Input:  {args.input}")
         print(f"   Frame:  {frame_path}")
@@ -1637,16 +1637,16 @@ def main():
         # Verify output
         if os.path.exists(output_video_path):
             output_size = os.path.getsize(output_video_path) / (1024 * 1024)
-            print(f"   ✅ STEP 1 COMPLETE in {step1_time:.1f}s")
+            print(f"   [OK] STEP 1 COMPLETE in {step1_time:.1f}s")
             print(f"   Output video size: {output_size:.2f} MB")
         else:
-            print(f"   ❌ STEP 1 FAILED - Output video not created!")
+            print(f"   [ERROR] STEP 1 FAILED - Output video not created!")
 
         # ================================================================
         # STEP 2: FRAME EXTRACTION
         # ================================================================
         print("\n" + "=" * 80)
-        print("🖼️  STEP 2/4: FRAME EXTRACTION")
+        print("[STEP] STEP 2/4: FRAME EXTRACTION")
         print("=" * 80)
 
         step2_start = time.time()
@@ -1665,7 +1665,7 @@ def main():
 
             if max_safe_timestamp < desired_timestamps[-1]:
                 # Video is too short for default timestamps - need to adjust
-                print(f"   ⚠️  Video ({video_duration:.1f}s) too short for default timestamps {desired_timestamps}s")
+                print(f"   [WARN] Video ({video_duration:.1f}s) too short for default timestamps {desired_timestamps}s")
 
                 if max_safe_timestamp >= 10:
                     # Can use first two, adjust last one
@@ -1698,14 +1698,14 @@ def main():
         else:
             # No duration info - use safe defaults
             frame_timestamps = [3, 7, 12]
-            print(f"   ⚠️  Could not get video duration, using safe timestamps: {frame_timestamps}s")
+            print(f"   [WARN] Could not get video duration, using safe timestamps: {frame_timestamps}s")
 
         frame_paths = extract_frames(output_video_path, frame_timestamps, session_dir)
         step2_time = time.time() - step2_start
         results['framePaths'] = frame_paths
         results['step2Time'] = step2_time
 
-        print(f"   ✅ STEP 2 COMPLETE in {step2_time:.1f}s")
+        print(f"   [OK] STEP 2 COMPLETE in {step2_time:.1f}s")
         print(f"   Extracted {len(frame_paths)} frames:")
         for i, fp in enumerate(frame_paths):
             if os.path.exists(fp):
@@ -1718,7 +1718,7 @@ def main():
         # STEP 3: S3 UPLOAD
         # ================================================================
         print("\n" + "=" * 80)
-        print("☁️  STEP 3/4: S3 UPLOAD")
+        print("[STEP] STEP 3/4: S3 UPLOAD")
         print("=" * 80)
         print(f"   File: {output_video_path}")
         print(f"   Folder: {args.s3_folder}")
@@ -1732,7 +1732,7 @@ def main():
         if s3_url:
             results['s3Url'] = s3_url
             results['s3Key'] = s3_key
-            print(f"   ✅ STEP 3 COMPLETE in {step3_time:.1f}s")
+            print(f"   [OK] STEP 3 COMPLETE in {step3_time:.1f}s")
             print(f"   S3 URL: {s3_url}")
             print(f"   S3 Key: {s3_key}")
 
@@ -1740,7 +1740,7 @@ def main():
             # STEP 4: QR CODE GENERATION
             # ================================================================
             print("\n" + "=" * 80)
-            print("📱 STEP 4/4: QR CODE GENERATION")
+            print("[STEP] STEP 4/4: QR CODE GENERATION")
             print("=" * 80)
             print(f"   URL to encode: {s3_url}")
             print(f"   Output path: {qr_path}")
@@ -1759,20 +1759,20 @@ def main():
                     if qr_size > 0:
                         results['qrCodePath'] = os.path.abspath(generated_path)  # Use absolute path
                         results['step4Time'] = step4_time
-                        print(f"   ✅ STEP 4 COMPLETE in {step4_time:.1f}s")
+                        print(f"   [OK] STEP 4 COMPLETE in {step4_time:.1f}s")
                         print(f"   QR Code size: {qr_size / 1024:.1f} KB")
                         print(f"   Verified file exists: {os.path.exists(generated_path)}")
                     else:
-                        print(f"   ❌ STEP 4 FAILED - QR code file is empty!")
+                        print(f"   [ERROR] STEP 4 FAILED - QR code file is empty!")
                         results['qrCodePath'] = None
                 else:
-                    print(f"   ❌ STEP 4 FAILED - QR code file was not created!")
+                    print(f"   [ERROR] STEP 4 FAILED - QR code file was not created!")
                     print(f"   Expected path: {qr_path}")
                     print(f"   Absolute path: {os.path.abspath(qr_path)}")
                     results['qrCodePath'] = None
             except Exception as qr_error:
                 step4_time = time.time() - step4_start
-                print(f"   ❌ STEP 4 FAILED with exception: {qr_error}")
+                print(f"   [ERROR] STEP 4 FAILED with exception: {qr_error}")
                 import traceback
                 traceback.print_exc()
                 results['qrCodePath'] = None
@@ -1783,7 +1783,7 @@ def main():
             print(f"\n[OK] Local video preserved: {output_video_path}")
             results['videoDeleted'] = False
         else:
-            print(f"   ❌ STEP 3 FAILED - S3 upload failed!")
+            print(f"   [ERROR] STEP 3 FAILED - S3 upload failed!")
 
         results['success'] = True
 
@@ -1791,7 +1791,7 @@ def main():
         import traceback
         results['error'] = str(e)
         print(f"\n{'=' * 80}")
-        print(f"❌ PIPELINE ERROR")
+        print(f"[ERROR] PIPELINE ERROR")
         print(f"{'=' * 80}")
         print(f"   Error: {e}")
         print(f"   Traceback:")
@@ -1801,7 +1801,7 @@ def main():
     finally:
         # Always remove the session lock when done (success or failure)
         remove_session_lock(session_dir)
-        print(f"\n   🔓 Session lock removed")
+        print(f"\n   [OK] Session lock removed")
 
     results['totalTime'] = time.time() - start_total
 
@@ -1809,7 +1809,7 @@ def main():
     # FINAL SUMMARY WITH TIMING
     # ================================================================
     print("\n" + "=" * 80)
-    print("🏁 PIPELINE COMPLETE" if results['success'] else "❌ PIPELINE FAILED")
+    print("[DONE] PIPELINE COMPLETE" if results['success'] else "[ERROR] PIPELINE FAILED")
     print("=" * 80)
     print(f"   Success:     {results['success']}")
     print(f"   Total time:  {results['totalTime']:.2f}s")
@@ -1821,9 +1821,9 @@ def main():
         print(f"   Error:       {results['error']}")
 
     # Comprehensive timing summary
-    print("\n" + "─" * 80)
-    print("⏱️  TIMING SUMMARY")
-    print("─" * 80)
+    print("\n" + "-" * 80)
+    print("[TIME] TIMING SUMMARY")
+    print("-" * 80)
 
     timing_data = results.get('timingBreakdown', {})
     step2_t = results.get('step2Time', 0)
@@ -1836,16 +1836,16 @@ def main():
         normalize_time = timing_data.get('normalize', 0)
         shadow_time = timing_data.get('shadow', 0)
         if normalize_time > 0:
-            print(f"      ├─ WebM Normalize:      {normalize_time:.1f}s")
+            print(f"      |- WebM Normalize:      {normalize_time:.1f}s")
         if shadow_time > 0:
-            print(f"      ├─ Shadow Effect:       {shadow_time:.1f}s")
-        print(f"      └─ Single-Pass Encode:  {timing_data.get('compose', 0):.1f}s")
+            print(f"      |- Shadow Effect:       {shadow_time:.1f}s")
+        print(f"      +-- Single-Pass Encode:  {timing_data.get('compose', 0):.1f}s")
         print(f"         (enhance + scale + compose combined)")
 
     print(f"   STEP 2: FRAME EXTRACTION:  {step2_t:.1f}s")
     print(f"   STEP 3: S3 UPLOAD:         {step3_t:.1f}s")
     print(f"   STEP 4: QR GENERATION:     {step4_t:.1f}s")
-    print(f"\n   ═══ PIPELINE TOTAL: {results['totalTime']:.1f}s ═══")
+    print(f"\n   === PIPELINE TOTAL: {results['totalTime']:.1f}s ===")
 
     # Identify bottleneck across ALL steps
     all_steps = []
@@ -1867,7 +1867,7 @@ def main():
         bottleneck = max(all_steps, key=lambda x: x[1])
         if bottleneck[1] > 0:
             pct = (bottleneck[1] / results['totalTime']) * 100
-            print(f"\n   🔍 BOTTLENECK: {bottleneck[0]} ({bottleneck[1]:.1f}s = {pct:.0f}% of total)")
+            print(f"\n   [INFO] BOTTLENECK: {bottleneck[0]} ({bottleneck[1]:.1f}s = {pct:.0f}% of total)")
 
     print("=" * 80 + "\n")
 

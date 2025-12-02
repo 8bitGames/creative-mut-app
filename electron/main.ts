@@ -37,6 +37,7 @@ import {
   getDashboardStats,
   getFlowStatistics,
   insertSampleData,
+  updatePaymentStatusByApproval,
 } from './database/analytics';
 
 // Cloud integration imports
@@ -328,8 +329,8 @@ async function reinitializeCardReader(config: {
   console.log('💳  REINITIALIZING CARD READER');
   console.log('💳 ═══════════════════════════════════════════════════');
   console.log(`   mockMode: ${config.payment.useMockMode}`);
-  console.log(`   port: ${config.tl3600.port}`);
-  console.log(`   terminalId: ${config.tl3600.terminalId}`);
+  console.log(`   port: ${process.env.TL3600_PORT || config.tl3600.port}`);
+  console.log(`   terminalId: ${process.env.TL3600_TERMINAL_ID || config.tl3600.terminalId}`);
 
   try {
     // Disconnect existing card reader
@@ -339,21 +340,24 @@ async function reinitializeCardReader(config: {
       cardReader = null;
     }
 
-    // Determine mock mode: config forces mock, or development mode uses mock
-    const useMockCardReader = config.payment.useMockMode || isDevelopment;
+    // Determine mock mode: respect MOCK_CARD_READER=false env setting
+    const envMockSetting = process.env.MOCK_CARD_READER;
+    const useMockCardReader = envMockSetting === 'false'
+      ? false  // Explicitly disabled - use real hardware
+      : (config.payment.useMockMode || isDevelopment);
 
     // Create new card reader controller
     cardReader = new CardReaderController({
       mockMode: useMockCardReader,
       mockApprovalRate: config.payment.mockApprovalRate,
-      readerPort: config.tl3600.port,
-      terminalId: config.tl3600.terminalId,
+      readerPort: process.env.TL3600_PORT || config.tl3600.port,
+      terminalId: process.env.TL3600_TERMINAL_ID || config.tl3600.terminalId,
     });
 
     // Connect to card reader
     const result = await cardReader.connect();
     if (result.success) {
-      const mode = useMockCardReader ? 'mock mode' : `TL3600 on ${config.tl3600.port}`;
+      const mode = useMockCardReader ? 'mock mode' : `TL3600 on ${process.env.TL3600_PORT || config.tl3600.port}`;
       console.log(`✅ Card reader reinitialized (${mode})`);
 
       // Re-setup event forwarding
@@ -882,14 +886,26 @@ app.whenReady().then(async () => {
   const paymentConfig = getPaymentConfig();
   const tl3600Config = getTL3600Config();
 
-  // useMockMode=true forces mock, otherwise development=mock, production=real
-  const useMockCardReader = paymentConfig.useMockMode || isDevelopment;
+  // Determine mock mode:
+  // 1. If MOCK_CARD_READER=false in .env, always use real hardware (even in development)
+  // 2. If paymentConfig.useMockMode is explicitly true, use mock
+  // 3. Otherwise fall back to isDevelopment behavior
+  const envMockSetting = process.env.MOCK_CARD_READER;
+  const useMockCardReader = envMockSetting === 'false'
+    ? false  // Explicitly disabled - use real hardware
+    : (paymentConfig.useMockMode || isDevelopment);
+
+  // Use .env settings as priority over config.json (config.json may get reset)
+  const readerPort = process.env.TL3600_PORT || tl3600Config.port;
+  const terminalId = process.env.TL3600_TERMINAL_ID || tl3600Config.terminalId;
+
+  console.log(`[CardReader] Initializing: port=${readerPort}, terminalId=${terminalId}, mockMode=${useMockCardReader}`);
 
   cardReader = new CardReaderController({
     mockMode: useMockCardReader,
     mockApprovalRate: paymentConfig.mockApprovalRate,
-    readerPort: tl3600Config.port,
-    terminalId: tl3600Config.terminalId,
+    readerPort: readerPort,
+    terminalId: terminalId,
   });
   const cardReaderResult = await cardReader.connect();
   if (cardReaderResult.success) {
@@ -1746,6 +1762,7 @@ ipcMain.handle('analytics:record-payment', async (_event, sessionId: string, amo
   approvalNumber?: string;
   salesDate?: string;
   salesTime?: string;
+  transactionId?: string;
   transactionMedia?: string;
   cardNumber?: string;
 }) => {
@@ -1772,6 +1789,12 @@ ipcMain.handle('analytics:insert-sample-data', async () => {
   console.log('📊 [IPC] Inserting sample data...');
   const result = insertSampleData();
   return result;
+});
+
+ipcMain.handle('analytics:update-payment-status', async (_event, approvalNumber: string, newStatus: string) => {
+  console.log(`📊 [IPC] Updating payment status: ${approvalNumber} -> ${newStatus}`);
+  const success = updatePaymentStatusByApproval(approvalNumber, newStatus as any);
+  return { success };
 });
 
 // Configuration IPC Handlers

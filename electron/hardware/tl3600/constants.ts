@@ -174,7 +174,7 @@ export enum SignatureRequired {
 }
 
 // =============================================================================
-// Default Payment Settings (5,000원 고정, 일시불, 비서명)
+// Default Payment Settings (5000원, 일시불, 비서명)
 // =============================================================================
 
 export const PAYMENT_DEFAULTS = {

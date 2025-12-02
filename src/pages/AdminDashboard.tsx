@@ -44,6 +44,7 @@ interface DashboardStats {
     approval_number?: string;
     sales_date?: string;
     sales_time?: string;
+    transaction_id?: string;       // 거래일련번호 (12자리, 취소시 뒷 6자리 사용)
     transaction_media?: string;
     card_number?: string;
   }>;
@@ -146,16 +147,21 @@ export function AdminDashboard() {
 
   /**
    * Handle payment cancellation (무카드 취소)
+   * Requires: approval_number (12자리), sales_date (8자리 YYYYMMDD), transaction_id (뒷 6자리)
    */
   const handleCancelPayment = async (session: DashboardStats['recentSessions'][0]) => {
     // Validate required fields for cancellation
-    if (!session.approval_number || !session.sales_date || !session.sales_time || !session.transaction_media) {
-      setCancelError('취소에 필요한 정보가 부족합니다. (승인번호, 매출일, 매출시간 필요)');
+    // transaction_id의 뒷 6자리가 거래일련번호로 사용됨 (sales_time이 아님!)
+    if (!session.approval_number || !session.sales_date || !session.transaction_id || !session.transaction_media) {
+      setCancelError('취소에 필요한 정보가 부족합니다. (승인번호, 매출일, 거래일련번호 필요)');
       setTimeout(() => setCancelError(null), 5000);
       return;
     }
 
-    if (!confirm(`${session.amount.toLocaleString()}원 결제를 취소하시겠습니까?\n\n승인번호: ${session.approval_number}\n카드번호: ${session.card_number || 'N/A'}`)) {
+    // Extract last 6 digits of transaction_id for cancellation
+    const transactionSerial = session.transaction_id.slice(-6);
+
+    if (!confirm(`${session.amount.toLocaleString()}원 결제를 취소하시겠습니까?\n\n승인번호: ${session.approval_number}\n거래일련번호: ${transactionSerial}\n카드번호: ${session.card_number || 'N/A'}`)) {
       return;
     }
 
@@ -173,12 +179,15 @@ export function AdminDashboard() {
         const result = await window.electron.payment.cancelTransaction({
           approvalNumber: session.approval_number,
           originalDate: session.sales_date,
-          originalTime: session.sales_time,
+          originalTime: transactionSerial, // 거래일련번호 뒷 6자리 사용
           amount: session.amount,
           transactionType: transactionType,
         });
 
         if (result.success) {
+          // Update payment status in database
+          // @ts-ignore
+          await window.electron.analytics.updatePaymentStatus(session.approval_number, 'cancelled');
           alert('결제가 성공적으로 취소되었습니다.');
           // Reload stats to reflect the cancellation
           await loadStats();
@@ -201,13 +210,14 @@ export function AdminDashboard() {
 
   /**
    * Check if a session can be cancelled
+   * Requires: approval_number, sales_date, transaction_id (뒷 6자리), transaction_media
    */
   const canCancelPayment = (session: DashboardStats['recentSessions'][0]) => {
     return (
       session.payment_status === 'approved' &&
       session.approval_number &&
       session.sales_date &&
-      session.sales_time &&
+      session.transaction_id &&
       session.transaction_media
     );
   };

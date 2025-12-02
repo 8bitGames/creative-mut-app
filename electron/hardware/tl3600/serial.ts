@@ -160,12 +160,31 @@ export class TL3600Serial extends EventEmitter {
         console.log(`📤 [TL3600] Sending packet (attempt ${retryCount + 1}/${TIMEOUT.MAX_RETRY})`);
         console.log(`   Data: ${packet.toString('hex').toUpperCase()}`);
 
+        // IMPORTANT: Set up ALL listeners BEFORE sending packet
+        // This ensures we capture ACK and response even if they come immediately
+
+        // 1. Set up ACK listener FIRST (before sending)
+        const ackPromise = this.waitForAck();
+
+        // 2. Set up response listener (before sending)
+        let responsePromise: Promise<ParsedPacket | null> | null = null;
+        if (expectResponse) {
+          responsePromise = this.waitForResponse();
+        }
+
+        // 3. NOW send the packet
         await this.writeToPort(packet);
 
-        // Wait for ACK (for serial, not ethernet)
-        const ackResult = await this.waitForAck();
+        // 4. Wait for ACK (listener was set up before sending)
+        const ackResult = await ackPromise;
 
         if (!ackResult.success) {
+          // Cancel pending response if ACK failed
+          if (this.pendingResponse) {
+            clearTimeout(this.pendingResponse.timeout);
+            this.pendingResponse = null;
+          }
+
           if (ackResult.nack) {
             console.warn(`⚠️ [TL3600] Received NACK, retrying...`);
             retryCount++;
@@ -180,16 +199,16 @@ export class TL3600Serial extends EventEmitter {
         console.log(`✅ [TL3600] ACK received`);
 
         // If no response expected, we're done
-        if (!expectResponse) {
+        if (!expectResponse || !responsePromise) {
           return { success: true };
         }
 
-        // Wait for response
-        const response = await this.waitForResponse();
+        // Wait for response (listener was set up before sending)
+        const response = await responsePromise;
 
         if (response) {
-          // Send ACK for received response
-          await this.sendAck();
+          // ACK is already sent in processReceiveBuffer() when packet is received
+          // No need to send ACK here again
           return { success: true, response };
         }
 
@@ -313,23 +332,31 @@ export class TL3600Serial extends EventEmitter {
   private handleIncomingData(data: Buffer): void {
     console.log(`📥 [TL3600] Received: ${data.toString('hex').toUpperCase()}`);
 
-    // Check for single-byte responses (ACK/NACK)
-    if (data.length === 1) {
-      if (data[0] === ACK) {
+    let offset = 0;
+
+    // Check for ACK/NACK at the start of data
+    while (offset < data.length) {
+      if (data[offset] === ACK) {
+        console.log(`📥 [TL3600] ACK detected at offset ${offset}`);
         this.emit('ack');
-        return;
-      }
-      if (data[0] === NACK) {
+        offset++;
+      } else if (data[offset] === NACK) {
+        console.log(`📥 [TL3600] NACK detected at offset ${offset}`);
         this.emit('nack');
-        return;
+        offset++;
+      } else {
+        // Not ACK/NACK, break to process as packet data
+        break;
       }
     }
 
-    // Append to receive buffer
-    this.receiveBuffer = Buffer.concat([this.receiveBuffer, data]);
-
-    // Try to find complete packet
-    this.processReceiveBuffer();
+    // If there's remaining data after ACK/NACK, add to buffer
+    if (offset < data.length) {
+      const remainingData = data.slice(offset);
+      this.receiveBuffer = Buffer.concat([this.receiveBuffer, remainingData]);
+      // Try to find complete packet
+      this.processReceiveBuffer();
+    }
   }
 
   /**
@@ -376,18 +403,22 @@ export class TL3600Serial extends EventEmitter {
 
     console.log(`✅ [TL3600] Valid packet received: Job Code = ${packet.header.jobCode}`);
 
-    // Handle event responses (no ACK needed, emit directly)
+    // Handle event responses (no ACK needed per protocol spec, emit directly)
     if (packet.header.jobCode === JobCode.EVENT_RESPONSE) {
       this.emit('event', packet);
       return;
     }
 
+    // For non-event responses, send ACK IMMEDIATELY to prevent device retries
+    // This is critical - device will retry if ACK not received within 3 seconds
+    this.sendAck().catch(err => console.error('❌ [TL3600] Failed to send ACK:', err));
+
     // If waiting for response, resolve it
     if (this.pendingResponse) {
       this.pendingResponse.resolve(packet);
     } else {
-      // Unexpected packet
-      console.warn('⚠️ [TL3600] Unexpected packet received');
+      // Unexpected packet (likely device retry) - already ACKed above, just log
+      console.log('📦 [TL3600] Received packet (no pending handler, possibly retry)');
       this.emit('packet', packet);
     }
 

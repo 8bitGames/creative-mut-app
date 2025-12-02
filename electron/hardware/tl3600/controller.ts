@@ -154,6 +154,12 @@ export class TL3600Controller extends EventEmitter {
     console.log(`   RF Module: ${deviceStatus.rfModuleStatus}`);
     console.log(`   VAN Server: ${deviceStatus.vanServerStatus}`);
 
+    // Set display brightness to max to ensure visibility
+    const displaySet = await this.setDisplaySettings(9, 5, 5);
+    if (!displaySet) {
+      console.warn(`⚠️ [TL3600] Failed to set display settings, continuing anyway`);
+    }
+
     return { success: true, deviceStatus };
   }
 
@@ -229,15 +235,81 @@ export class TL3600Controller extends EventEmitter {
 
     const result = await this.serial.sendPacket(packet);
 
-    if (!result.success) {
+    if (!result.success || !result.response) {
       console.error(`❌ [TL3600] Failed to enter payment mode:`, result.error);
+      return false;
+    }
+
+    // Validate response
+    if (result.response.header.jobCode !== JobCode.PAYMENT_STANDBY_RESPONSE) {
+      console.error(`❌ [TL3600] Unexpected response job code: ${result.response.header.jobCode}`);
+      return false;
+    }
+
+    // Check response code (0 = success)
+    const responseCode = result.response.header.responseCode;
+    if (responseCode !== 0) {
+      console.error(`❌ [TL3600] Payment standby failed with response code: ${responseCode}`);
       return false;
     }
 
     this.isInPaymentMode = true;
     this.emit('paymentModeEntered');
-    console.log(`✅ [TL3600] Payment standby mode active`);
+    console.log(`✅ [TL3600] Payment standby mode active (response code: ${responseCode})`);
 
+    return true;
+  }
+
+  /**
+   * Set display settings (Job Code: S)
+   * Controls display brightness, voice volume, and touch sound
+   * @param brightness 0-9 (0=off, 9=max)
+   * @param voiceVolume 0-9 (0=off, 9=max)
+   * @param touchSound 0-9 (0=off, 9=max)
+   */
+  async setDisplaySettings(
+    brightness: number = 9,
+    voiceVolume: number = 5,
+    touchSound: number = 5
+  ): Promise<boolean> {
+    if (!this.isConnected) {
+      console.error(`❌ [TL3600] Not connected`);
+      return false;
+    }
+
+    // Clamp values to 0-9
+    const b = Math.max(0, Math.min(9, brightness)).toString();
+    const v = Math.max(0, Math.min(9, voiceVolume)).toString();
+    const t = Math.max(0, Math.min(9, touchSound)).toString();
+
+    console.log(`🔧 [TL3600] Setting display: brightness=${b}, voice=${v}, touch=${t}`);
+
+    const data = Buffer.from(`${b}${v}${t}`, 'ascii');
+    const packet = buildPacket({
+      terminalId: this.terminalId,
+      jobCode: JobCode.DISPLAY_SETTINGS,
+      data,
+    });
+
+    const result = await this.serial.sendPacket(packet);
+
+    if (!result.success || !result.response) {
+      console.error(`❌ [TL3600] Failed to set display settings:`, result.error);
+      return false;
+    }
+
+    if (result.response.header.jobCode !== JobCode.DISPLAY_SETTINGS_RESPONSE) {
+      console.error(`❌ [TL3600] Unexpected response: ${result.response.header.jobCode}`);
+      return false;
+    }
+
+    const responseCode = result.response.header.responseCode;
+    if (responseCode !== 0) {
+      console.error(`❌ [TL3600] Display settings failed with response code: ${responseCode}`);
+      return false;
+    }
+
+    console.log(`✅ [TL3600] Display settings applied successfully`);
     return true;
   }
 

@@ -74,8 +74,8 @@ export interface AppConfig {
 
 const DEFAULT_CONFIG: AppConfig = {
   tl3600: {
-    port: 'COM3',
-    terminalId: '0000000000000000',
+    port: 'COM6',
+    terminalId: '7804292001',
     timeout: 3000,
     retryCount: 3,
   },
