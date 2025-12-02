@@ -1100,6 +1100,16 @@ ipcMain.handle('video:process', async (_event, params) => {
     };
   }
 
+  // CRITICAL: Check dependencies before processing
+  const depCheck = await pythonBridge.checkDependencies();
+  if (!depCheck.available) {
+    console.error(`❌ [video:process] Dependencies not available: ${depCheck.error}`);
+    return {
+      success: false,
+      error: `Pipeline dependencies missing: ${depCheck.error}. Please ensure pipeline.exe and ffmpeg.exe are in the resources folder.`
+    };
+  }
+
   try {
     // Convert URL path to filesystem path for frame overlay
     let frameOverlayPath = params.chromaVideo;
@@ -1190,6 +1200,17 @@ ipcMain.handle('video:process-from-images', async (_event, params) => {
     return {
       success: false,
       error: 'Python bridge not initialized'
+    };
+  }
+
+  // CRITICAL: Check dependencies before processing
+  const depCheck = await pythonBridge.checkDependencies();
+  if (!depCheck.available) {
+    console.error(`❌ [IPC] Dependencies not available: ${depCheck.error}`);
+    console.log(`${'='.repeat(70)}\n`);
+    return {
+      success: false,
+      error: `Pipeline dependencies missing: ${depCheck.error}. Please ensure pipeline.exe, stitch_images.exe and ffmpeg.exe are in the resources folder.`
     };
   }
 

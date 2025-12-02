@@ -716,10 +716,10 @@ export function CaptureScreen() {
         setCountdown(4); // 4 seconds until first photo
         setPhotoNumber(1);
         startVideoRecording();
-      } else if (elapsedTime > 1 && elapsedTime <= 15) {
-        // Recording phase (1-15s = 15 seconds of recording for 5s, 10s, 15s frame extraction)
-        const recordingElapsed = elapsedTime;
-        setRecordingTime(recordingElapsed);
+      } else if (elapsedTime > 1 && elapsedTime <= 16) {
+        // Recording phase (1-16s = 16 seconds total to ensure 15s+ video for frame extraction at 5s, 10s, 15s)
+        const recordingElapsed = elapsedTime - 1; // Actual recording time (0-15s)
+        setRecordingTime(Math.min(recordingElapsed, 15)); // Cap display at 15s
 
         // Calculate countdown for next photo
         // Photos at recordingElapsed = 5, 10, 15
@@ -744,17 +744,17 @@ export function CaptureScreen() {
           // Update photo number for UI display
           if (recordingElapsed === 5) setPhotoNumber(2);
           if (recordingElapsed === 10) setPhotoNumber(3);
+        }
 
-          // After 3rd photo, stop recording and navigate immediately
-          if (recordingElapsed === 15) {
-            console.log('🏁 [CaptureScreen] 3rd photo taken, stopping recording...');
-            stopVideoRecording();
-            clearInterval(mainTimer);
+        // Stop recording at 16s elapsed (15s of actual recording) to ensure we have frames at 15s
+        if (elapsedTime === 16) {
+          console.log('🏁 [CaptureScreen] Recording complete (16s elapsed, 15s video), stopping...');
+          stopVideoRecording();
+          clearInterval(mainTimer);
 
-            setTimeout(() => {
-              setScreen('processing');
-            }, 500);
-          }
+          setTimeout(() => {
+            setScreen('processing');
+          }, 500);
         }
       }
     }, 1000);
