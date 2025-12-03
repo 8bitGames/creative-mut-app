@@ -156,7 +156,7 @@ export function ShootingGuideScreen() {
 
       const startCamera = async () => {
         try {
-          // Enumerate cameras to find Canon EOS or other DSLR
+          // Enumerate all video devices
           const devices = await navigator.mediaDevices.enumerateDevices();
           const videoDevices = devices.filter(device => device.kind === 'videoinput');
 
@@ -165,40 +165,56 @@ export function ShootingGuideScreen() {
             console.log(`  ${index + 1}. ${device.label || 'Unknown Camera'}`);
           });
 
-          // Priority: 1st camera (index 0) - default camera
-          let deviceId: string | undefined;
-          let selectedCamera: MediaDeviceInfo | undefined;
-
-          if (videoDevices.length >= 1) {
-            // Use 1st camera (index 0) - default camera
-            selectedCamera = videoDevices[0];
-            deviceId = selectedCamera.deviceId;
-            console.log(`✅ [ShootingGuideScreen] Using 1st camera: ${selectedCamera.label || 'Camera 1'}`);
-          } else {
+          if (videoDevices.length === 0) {
             console.error('❌ [ShootingGuideScreen] No cameras found!');
             setVideoReady(true); // Show UI anyway
             return;
           }
 
-          // Request 4K resolution for high-quality output
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              deviceId: deviceId ? { exact: deviceId } : undefined,
-              width: { ideal: 3840 },
-              height: { ideal: 2160 }
-            },
-            audio: false
-          });
+          // Robust camera selection: Try each camera until one works
+          let stream: MediaStream | null = null;
 
-          console.log('✅ [ShootingGuideScreen] Camera access granted!');
+          for (let i = 0; i < videoDevices.length; i++) {
+            const device = videoDevices[i];
+            console.log(`🔄 [ShootingGuideScreen] Trying camera ${i + 1}/${videoDevices.length}: ${device.label || 'Unknown'}`);
+
+            try {
+              stream = await navigator.mediaDevices.getUserMedia({
+                video: {
+                  deviceId: { exact: device.deviceId },
+                  width: { ideal: 3840 },
+                  height: { ideal: 2160 }
+                },
+                audio: false
+              });
+              console.log(`✅ [ShootingGuideScreen] Successfully connected to: ${device.label || 'Camera ' + (i + 1)}`);
+              break;
+            } catch (err) {
+              console.warn(`⚠️ [ShootingGuideScreen] Camera ${i + 1} failed:`, err);
+            }
+          }
+
+          if (!stream) {
+            // Last resort: try without specifying deviceId
+            console.log('🔄 [ShootingGuideScreen] Trying default camera...');
+            try {
+              stream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 3840 }, height: { ideal: 2160 } },
+                audio: false
+              });
+              console.log('✅ [ShootingGuideScreen] Connected to default camera');
+            } catch (err) {
+              console.error('❌ [ShootingGuideScreen] All camera attempts failed:', err);
+              setVideoReady(true);
+              return;
+            }
+          }
 
           // Store in global store for persistence
           setCameraStream(stream);
-
           setupCameraWithRotation(stream);
         } catch (error) {
           console.error('❌ [ShootingGuideScreen] Failed to access camera:', error);
-          // Still show UI even if camera fails (for testing)
           setVideoReady(true);
         }
       };

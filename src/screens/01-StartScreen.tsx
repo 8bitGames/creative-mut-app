@@ -87,38 +87,61 @@ export function StartScreen() {
 
     const startBackgroundCamera = async () => {
       try {
-        // Enumerate cameras to find Canon EOS or other DSLR
+        // Enumerate all video devices
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(device => device.kind === 'videoinput');
 
         console.log('📹 [StartScreen] Available cameras:');
         videoDevices.forEach((device, index) => {
-          console.log(`  ${index + 1}. ${device.label || 'Unknown Camera'}`);
+          console.log(`  ${index + 1}. ${device.label || 'Unknown Camera'} (${device.deviceId.substring(0, 8)}...)`);
         });
 
-        // Priority: 1st camera (index 0) - default camera
-        let deviceId: string | undefined;
-        let selectedCamera: MediaDeviceInfo | undefined;
-
-        if (videoDevices.length >= 1) {
-          // Use 1st camera (index 0) - default camera
-          selectedCamera = videoDevices[0];
-          deviceId = selectedCamera.deviceId;
-          console.log(`✅ [StartScreen] Using 1st camera: ${selectedCamera.label || 'Camera 1'}`);
-        } else {
+        if (videoDevices.length === 0) {
           console.error('❌ [StartScreen] No cameras found!');
           return;
         }
 
-        // Start camera stream and KEEP IT RUNNING in background
-        // Request 4K resolution for high-quality output (3840x2160 landscape, rotated to 2160x3840 portrait)
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            deviceId: deviceId ? { exact: deviceId } : undefined,
-            width: { ideal: 3840 },
-            height: { ideal: 2160 }
+        // Robust camera selection: Try each camera until one works
+        let stream: MediaStream | null = null;
+        let selectedCamera: MediaDeviceInfo | null = null;
+
+        for (let i = 0; i < videoDevices.length; i++) {
+          const device = videoDevices[i];
+          console.log(`🔄 [StartScreen] Trying camera ${i + 1}/${videoDevices.length}: ${device.label || 'Unknown'}`);
+
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: {
+                deviceId: { exact: device.deviceId },
+                width: { ideal: 3840 },
+                height: { ideal: 2160 }
+              }
+            });
+            selectedCamera = device;
+            console.log(`✅ [StartScreen] Successfully connected to: ${device.label || 'Camera ' + (i + 1)}`);
+            break;
+          } catch (err) {
+            console.warn(`⚠️ [StartScreen] Camera ${i + 1} failed:`, err);
+            // Continue to next camera
           }
-        });
+        }
+
+        if (!stream || !selectedCamera) {
+          // Last resort: try without specifying deviceId
+          console.log('🔄 [StartScreen] Trying default camera (no deviceId)...');
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: {
+                width: { ideal: 3840 },
+                height: { ideal: 2160 }
+              }
+            });
+            console.log('✅ [StartScreen] Connected to default camera');
+          } catch (err) {
+            console.error('❌ [StartScreen] All camera attempts failed:', err);
+            return;
+          }
+        }
 
         // Store stream in GLOBAL store (persists across screens!)
         setCameraStream(stream);
