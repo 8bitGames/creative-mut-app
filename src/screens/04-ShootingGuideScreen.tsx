@@ -165,21 +165,15 @@ export function ShootingGuideScreen() {
             console.log(`  ${index + 1}. ${device.label || 'Unknown Camera'}`);
           });
 
-          // Priority: 2nd camera (index 1) > 1st camera (index 0)
-          // This is because the 2nd camera is typically the external/DSLR camera
+          // Priority: 1st camera (index 0) - default camera
           let deviceId: string | undefined;
           let selectedCamera: MediaDeviceInfo | undefined;
 
-          if (videoDevices.length >= 2) {
-            // Use 2nd camera (index 1) - typically external camera
-            selectedCamera = videoDevices[1];
-            deviceId = selectedCamera.deviceId;
-            console.log(`✅ [ShootingGuideScreen] Using 2nd camera: ${selectedCamera.label || 'Camera 2'}`);
-          } else if (videoDevices.length === 1) {
-            // Fallback to 1st camera (index 0)
+          if (videoDevices.length >= 1) {
+            // Use 1st camera (index 0) - default camera
             selectedCamera = videoDevices[0];
             deviceId = selectedCamera.deviceId;
-            console.log(`⚠️ [ShootingGuideScreen] Only 1 camera available, using: ${selectedCamera.label || 'Camera 1'}`);
+            console.log(`✅ [ShootingGuideScreen] Using 1st camera: ${selectedCamera.label || 'Camera 1'}`);
           } else {
             console.error('❌ [ShootingGuideScreen] No cameras found!');
             setVideoReady(true); // Show UI anyway

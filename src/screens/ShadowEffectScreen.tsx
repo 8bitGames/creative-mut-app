@@ -135,7 +135,7 @@ export function ShadowEffectScreen() {
         const videoDevices = devices.filter(d => d.kind === 'videoinput');
         console.log('[ShadowEffect] Available cameras:', videoDevices.map(d => d.label));
 
-        const deviceId = videoDevices.length >= 2 ? videoDevices[1].deviceId : videoDevices[0]?.deviceId;
+        const deviceId = videoDevices[0]?.deviceId;
 
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
